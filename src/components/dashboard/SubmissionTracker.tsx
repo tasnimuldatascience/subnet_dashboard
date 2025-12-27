@@ -559,14 +559,9 @@ export function SubmissionTracker({ minerStats, epochStats, onUidClick, onEpochC
             variant="outline"
             type="button"
             onClick={() => setUidDropdownOpen(!uidDropdownOpen)}
-            className="w-full justify-between font-normal overflow-hidden"
+            className="w-full justify-between font-normal"
           >
-            <span className="truncate font-mono text-xs">
-              {selectedUid === 'all' ? 'All Miners' : (() => {
-                const miner = allUidOptions.find(m => m.uid.toString() === selectedUid)
-                return miner ? `[${miner.uid}] ${miner.hotkey}` : `UID ${selectedUid}`
-              })()}
-            </span>
+            {selectedUid === 'all' ? 'All Miners' : `Miner ${selectedUid}`}
             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
           </Button>
           {uidDropdownOpen && (
