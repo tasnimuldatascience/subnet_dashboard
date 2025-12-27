@@ -69,7 +69,7 @@ async function performSearch(
 
         if (consError) {
           console.error('[Lead Search API] Consensus query error:', consError)
-          return NextResponse.json({ error: 'Database query failed' }, { status: 500 })
+          throw new Error('Database query failed')
         }
 
         if (!consensusData || consensusData.length === 0) {
@@ -98,7 +98,7 @@ async function performSearch(
       console.log(`[Lead Search API] Fetched ${consensusMap.size} consensus results for epoch ${epochNum}`)
 
       if (consensusMap.size === 0) {
-        return NextResponse.json({ results: [], total: 0, returned: 0 })
+        return []
       }
 
       // Get submissions for these email hashes (in batches of 50)
@@ -173,7 +173,7 @@ async function performSearch(
       // UID FILTER: Query SUBMISSION first with batched fetching to bypass 1000 limit
       const targetHotkey = uidToHotkey[parseInt(uid, 10)]
       if (!targetHotkey) {
-        return NextResponse.json({ results: [], total: 0, returned: 0 })
+        return []
       }
 
       // Fetch submissions in batches of 1000 using range() to bypass Supabase limit
@@ -227,7 +227,7 @@ async function performSearch(
       console.log(`[Lead Search API] Fetched ${allSubs.length} unique submissions for UID ${uid}`)
 
       if (allSubs.length === 0) {
-        return NextResponse.json({ results: [], total: 0, returned: 0 })
+        return []
       }
 
       // Get consensus for these email hashes (in batches of 50 for .in() clause)
@@ -320,7 +320,7 @@ async function performSearch(
       }
 
       if (allSubs.length === 0) {
-        return NextResponse.json({ results: [], total: 0, returned: 0 })
+        return []
       }
 
       // Get consensus for email hashes (in batches of 50)
