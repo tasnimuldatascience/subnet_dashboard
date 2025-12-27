@@ -2,9 +2,28 @@
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import path from 'path'
+import fs from 'fs'
 import type { MetagraphData } from './types'
 
 const execAsync = promisify(exec)
+
+// Find a working Python path
+function findPythonPath(): string {
+  const candidates = [
+    process.env.PYTHON_PATH,
+    process.env.HOME + '/bittensor-venv/bin/python',  // AWS/EC2
+    process.env.HOME + '/anaconda3/bin/python3',       // Local anaconda
+    '/usr/bin/python3',                                 // System Python
+    'python3',                                          // PATH fallback
+  ].filter(Boolean) as string[]
+
+  for (const candidate of candidates) {
+    if (candidate && (candidate === 'python3' || fs.existsSync(candidate))) {
+      return candidate
+    }
+  }
+  return 'python3' // Last resort
+}
 
 // Use global to persist metagraph cache across hot reloads
 const globalForMetagraph = globalThis as unknown as {
@@ -23,10 +42,8 @@ async function fetchMetagraphFromBittensor(): Promise<MetagraphData> {
   const startTime = Date.now()
   const scriptPath = path.join(process.cwd(), 'scripts', 'fetch_metagraph.py')
 
-  // Use PYTHON_PATH env var, or try common locations
-  const pythonPath = process.env.PYTHON_PATH
-    || (process.env.HOME + '/bittensor-venv/bin/python')  // AWS default
-    || (process.env.HOME + '/anaconda3/bin/python3')       // Local fallback
+  // Find a working Python interpreter
+  const pythonPath = findPythonPath()
 
   try {
     const { stdout, stderr } = await execAsync(
