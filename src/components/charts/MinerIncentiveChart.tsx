@@ -29,7 +29,6 @@ interface ChartDataItem {
 }
 
 export function MinerIncentiveChart({ minerStats }: MinerIncentiveChartProps) {
-  const [hoveredMiner, setHoveredMiner] = useState<ChartDataItem | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
   const [copiedField, setCopiedField] = useState<string | null>(null)
 
@@ -46,6 +45,13 @@ export function MinerIncentiveChart({ minerStats }: MinerIncentiveChartProps) {
       btIncentive: miner.btIncentive,
     }))
   }, [minerStats])
+
+  // Get rank 1 miner (highest incentive = last in sorted array)
+  const rank1Miner = useMemo(() => {
+    return chartData.find(m => m.rank === 1) || null
+  }, [chartData])
+
+  const [hoveredMiner, setHoveredMiner] = useState<ChartDataItem | null>(null)
 
   // Find miner matching search - prioritize exact UID match
   const searchedMiner = useMemo(() => {
@@ -96,11 +102,11 @@ export function MinerIncentiveChart({ minerStats }: MinerIncentiveChartProps) {
     return `${hotkey.substring(0, 10)}...${hotkey.substring(hotkey.length - 6)}`
   }
 
-  // Display miner (searched takes priority when search is active, then hovered)
-  const displayMiner = searchTerm ? searchedMiner : hoveredMiner
+  // Display miner (searched > hovered > rank 1 default)
+  const displayMiner = searchTerm ? (searchedMiner ?? rank1Miner) : (hoveredMiner ?? rank1Miner)
 
-  // Reference line target (for crosshairs) - show for searched or hovered
-  const crosshairTarget = searchTerm ? searchedMiner : hoveredMiner
+  // Reference line target (for crosshairs) - show for searched, hovered, or rank 1
+  const crosshairTarget = searchTerm ? (searchedMiner ?? rank1Miner) : (hoveredMiner ?? rank1Miner)
 
   if (chartData.length === 0) {
     return (

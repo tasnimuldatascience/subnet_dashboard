@@ -1,5 +1,6 @@
 'use client'
 
+import { useState, useEffect } from 'react'
 import {
   BarChart,
   Bar,
@@ -24,6 +25,15 @@ interface EpochStackedChartProps {
 }
 
 export function EpochStackedChart({ data, maxEpochs = 20, showContinuous = false }: EpochStackedChartProps) {
+  const [isMobile, setIsMobile] = useState(false)
+
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 640)
+    checkMobile()
+    window.addEventListener('resize', checkMobile)
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
+
   // Build chart data
   let chartData: EpochChartData[]
 
@@ -59,7 +69,7 @@ export function EpochStackedChart({ data, maxEpochs = 20, showContinuous = false
       <ResponsiveContainer width="100%" height="100%">
         <BarChart
           data={chartData}
-          margin={{ top: 20, right: 20, left: 20, bottom: 60 }}
+          margin={{ top: 10, right: 20, left: 20, bottom: isMobile ? 50 : 60 }}
         >
           <XAxis
             dataKey="epochId"
@@ -67,7 +77,7 @@ export function EpochStackedChart({ data, maxEpochs = 20, showContinuous = false
             fontSize={10}
             tickFormatter={(value) => value}
             interval="preserveStartEnd"
-            label={{ value: 'Epoch ID', position: 'bottom', offset: 10, style: { fill: '#94a3b8', fontSize: 12 } }}
+            label={{ value: 'Epoch ID', position: 'bottom', offset: 5, style: { fill: '#94a3b8', fontSize: 12 } }}
           />
           <YAxis
             stroke="#94a3b8"
@@ -91,7 +101,7 @@ export function EpochStackedChart({ data, maxEpochs = 20, showContinuous = false
           <Legend
             verticalAlign="bottom"
             align="center"
-            wrapperStyle={{ fontSize: '12px', paddingTop: '35px', width: '100%', display: 'flex', justifyContent: 'center' }}
+            wrapperStyle={{ fontSize: '12px', paddingTop: isMobile ? '25px' : '35px', paddingLeft: '50px' }}
           />
           <Bar
             dataKey="accepted"

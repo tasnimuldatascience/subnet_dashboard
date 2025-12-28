@@ -721,6 +721,7 @@ export function SubmissionTracker({ minerStats, epochStats, onUidClick, onEpochC
             value={leadIdSearch}
             onChange={(e) => setLeadIdSearch(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+            className="h-9"
           />
         </div>
 

@@ -32,6 +32,12 @@ export function cleanRejectionReason(reason: string | null | undefined): string 
 
       const checkName = parsed.check_name || ''
       const message = parsed.message || ''
+
+      // Handle message-only rejections (e.g., {"message": "EmailVerificationUnavailable"})
+      if (!checkName && message) {
+        if (message.includes('EmailVerification')) return 'Email Verification Error'
+      }
+
       const checkNameMap: Record<string, string> = {
         check_truelist_email: 'Invalid Email', check_myemailverifier_email: 'Invalid Email',
         check_email_regex: 'Invalid Email', check_mx_record: 'Invalid Email',
@@ -39,7 +45,9 @@ export function cleanRejectionReason(reason: string | null | undefined): string 
         check_source_provenance: 'Invalid Source URL', check_domain_age: 'Invalid Website',
         check_dnsbl: 'Invalid Website', check_name_email_match: 'Name/Email Mismatch',
         check_free_email_domain: 'Free Email Domain', validation_error: 'Validation Error',
-        deep_verification: 'Deep Verification Failed',
+        deep_verification: 'Deep Verification Error',
+        truelist_inline_verification: 'Invalid Email',
+        truelist_batch_skipped: 'Email Verification Error',
       }
       if (checkName === 'check_stage5_unified') {
         const msgLower = message.toLowerCase()
@@ -76,8 +84,7 @@ export function cleanRejectionReason(reason: string | null | undefined): string 
   if (reasonLower.includes('catchall') || reasonLower.includes('catch-all')) return 'Catch-all Email'
   if (reasonLower.includes('bounced') || reasonLower.includes('bounce')) return 'Email Bounced'
 
-  const clean = reason.replace(/[{}\[\]"':]/g, '').replace(/\s+/g, ' ').trim()
-  return clean.length > 40 ? clean.substring(0, 40) + '...' : clean
+  return 'Unknown Error'
 }
 
 // Types matching the precalc table structure
@@ -108,6 +115,7 @@ interface PrecalcEpochStats {
   rejected: number
   acceptance_rate: number
   unique_miners: number
+  avg_rep_score: number
 }
 
 interface PrecalcLeadInventory {
@@ -417,7 +425,7 @@ function transformEpochStats(
       accepted: stats.accepted,
       rejected: stats.rejected,
       acceptanceRate: stats.acceptance_rate,
-      avgRepScore: 0, // Not stored per-epoch in precalc
+      avgRepScore: stats.avg_rep_score || 0,
       miners: miners.sort((a, b) => b.acceptance_rate - a.acceptance_rate),
     })
   }

@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -403,7 +404,7 @@ export function EpochAnalysis({ epochStats, metagraph, onMinerClick, externalSel
             Search Epoch
           </label>
           <div className="flex gap-2">
-            <input
+            <Input
               type="text"
               inputMode="numeric"
               pattern="[0-9]*"
@@ -419,7 +420,7 @@ export function EpochAnalysis({ epochStats, metagraph, onMinerClick, externalSel
                   }
                 }
               }}
-              className="flex-1 px-3 py-2 bg-background border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="flex-1"
             />
             <button
               onClick={() => {
@@ -448,7 +449,7 @@ export function EpochAnalysis({ epochStats, metagraph, onMinerClick, externalSel
               setEpochSearch('')
             }}
           >
-            <SelectTrigger>
+            <SelectTrigger className="bg-background">
               <SelectValue placeholder="Select Epoch..." />
             </SelectTrigger>
             <SelectContent>

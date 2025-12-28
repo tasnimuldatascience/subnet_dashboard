@@ -232,14 +232,17 @@ export function Overview({
     URL.revokeObjectURL(url)
   }
 
-  // Download CSV function for lead distribution
+  // Download CSV function for lead distribution (uses precalc totals)
   const downloadLeadDistributionCSV = () => {
+    const accepted = leadInventoryCount?.accepted ?? totals.accepted
+    const rejected = leadInventoryCount?.rejected ?? totals.rejected
+    const pending = leadInventoryCount?.pending ?? totals.pending
+    const total = accepted + rejected + pending
     const headers = ['Status', 'Count', 'Percentage']
-    const total = metrics.accepted + metrics.rejected + metrics.pending
     const rows = [
-      ['Accepted', metrics.accepted, total > 0 ? ((metrics.accepted / total) * 100).toFixed(2) + '%' : '0%'],
-      ['Rejected', metrics.rejected, total > 0 ? ((metrics.rejected / total) * 100).toFixed(2) + '%' : '0%'],
-      ['Pending', metrics.pending, total > 0 ? ((metrics.pending / total) * 100).toFixed(2) + '%' : '0%'],
+      ['Accepted', accepted, total > 0 ? ((accepted / total) * 100).toFixed(2) + '%' : '0%'],
+      ['Rejected', rejected, total > 0 ? ((rejected / total) * 100).toFixed(2) + '%' : '0%'],
+      ['Pending', pending, total > 0 ? ((pending / total) * 100).toFixed(2) + '%' : '0%'],
     ]
     const csvContent = [headers, ...rows].map(row => row.join(',')).join('\n')
     const blob = new Blob([csvContent], { type: 'text/csv' })
@@ -405,7 +408,11 @@ export function Overview({
           </CardHeader>
           <CardContent className="p-4 md:p-6 pt-0 md:pt-0">
             {(() => {
-              const total = metrics.accepted + metrics.rejected + metrics.pending
+              // Use leadInventoryCount (from precalc totals) for all submissions
+              const accepted = leadInventoryCount?.accepted ?? totals.accepted
+              const rejected = leadInventoryCount?.rejected ?? totals.rejected
+              const pending = leadInventoryCount?.pending ?? totals.pending
+              const total = accepted + rejected + pending
               const pct = (val: number) => total > 0 ? ((val / total) * 100).toFixed(1) : '0.0'
               return (
                 <div className="overflow-x-auto">
@@ -420,18 +427,18 @@ export function Overview({
                     <tbody>
                       <tr className="border-b border-slate-800 hover:bg-slate-800/50">
                         <td className="py-3 px-4 text-emerald-400 font-medium">Accepted</td>
-                        <td className="py-3 px-4 text-right font-mono">{metrics.accepted.toLocaleString()}</td>
-                        <td className="py-3 px-4 text-right font-mono text-slate-400">{pct(metrics.accepted)}%</td>
+                        <td className="py-3 px-4 text-right font-mono">{accepted.toLocaleString()}</td>
+                        <td className="py-3 px-4 text-right font-mono text-slate-400">{pct(accepted)}%</td>
                       </tr>
                       <tr className="border-b border-slate-800 hover:bg-slate-800/50">
                         <td className="py-3 px-4 text-red-400 font-medium">Denied</td>
-                        <td className="py-3 px-4 text-right font-mono">{metrics.rejected.toLocaleString()}</td>
-                        <td className="py-3 px-4 text-right font-mono text-slate-400">{pct(metrics.rejected)}%</td>
+                        <td className="py-3 px-4 text-right font-mono">{rejected.toLocaleString()}</td>
+                        <td className="py-3 px-4 text-right font-mono text-slate-400">{pct(rejected)}%</td>
                       </tr>
                       <tr className="hover:bg-slate-800/50">
                         <td className="py-3 px-4 text-amber-400 font-medium">Pending</td>
-                        <td className="py-3 px-4 text-right font-mono">{metrics.pending.toLocaleString()}</td>
-                        <td className="py-3 px-4 text-right font-mono text-slate-400">{pct(metrics.pending)}%</td>
+                        <td className="py-3 px-4 text-right font-mono">{pending.toLocaleString()}</td>
+                        <td className="py-3 px-4 text-right font-mono text-slate-400">{pct(pending)}%</td>
                       </tr>
                     </tbody>
                   </table>

@@ -12,7 +12,6 @@ import type {
   MetagraphData,
 } from '@/lib/types'
 import type { AllDashboardData } from '@/lib/db-precalc'
-import Image from 'next/image'
 import {
   LayoutDashboard,
   Pickaxe,
@@ -41,11 +40,12 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
   const [dashboardData] = useState<DashboardData>(initialData)
   const [metagraph] = useState<MetagraphData | null>(initialMetagraph)
 
-  // UI state
-  const [lastRefresh] = useState<Date>(new Date(initialData.fetchedAt))
-  const [activeTab, setActiveTab] = useState('overview')
+  // UI state - use actual data update time from precalc table
+  const [lastRefresh] = useState<Date>(new Date(dashboardData.updatedAt))
   const [selectedMinerHotkey, setSelectedMinerHotkey] = useState<string | null>(null)
   const [selectedEpochId, setSelectedEpochId] = useState<number | null>(null)
+
+  const [activeTab, setActiveTab] = useState('overview')
 
   // Handle navigation from SubmissionTracker to MinerTracker
   const handleUidClick = useCallback((uid: number) => {
@@ -150,8 +150,8 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
         <div className="mb-4 md:mb-6">
           <div className="flex items-center gap-2 md:gap-3">
             <a href="https://leadpoet.com" target="_blank" rel="noopener noreferrer" className="hover:opacity-80 transition-opacity">
-              <Image
-                src="/icon.png"
+              <img
+                src="/icon-64.png"
                 alt="LeadPoet Logo"
                 width={32}
                 height={32}
@@ -197,7 +197,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
             </TabsList>
           </div>
 
-          <TabsContent value="overview">
+          <TabsContent value="overview" keepMounted>
             <Overview
               metrics={metrics}
               minerStats={minerStats}
@@ -209,7 +209,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
             />
           </TabsContent>
 
-          <TabsContent value="miner-tracker">
+          <TabsContent value="miner-tracker" keepMounted>
             <MinerTracker
               minerStats={minerStats}
               activeMiners={activeMiners}
@@ -218,7 +218,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
             />
           </TabsContent>
 
-          <TabsContent value="epoch-analysis">
+          <TabsContent value="epoch-analysis" keepMounted>
             <EpochAnalysis
               epochStats={epochStats}
               metagraph={metagraph}
@@ -228,7 +228,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
             />
           </TabsContent>
 
-          <TabsContent value="submission-tracker">
+          <TabsContent value="submission-tracker" keepMounted>
             <SubmissionTracker
               minerStats={minerStats}
               epochStats={epochStats}

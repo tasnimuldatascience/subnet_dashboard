@@ -4,7 +4,6 @@ import { useState, useMemo, useEffect, useRef } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { MetricCard } from '@/components/shared/MetricCard'
 import { EpochStackedChart, RejectionBarChart } from '@/components/charts'
 import {
@@ -249,20 +248,6 @@ export function MinerTracker({
 
       {selectedMiner && selectedMinerStats && (
         <>
-          {/* Miner Info */}
-          <Card className="bg-blue-500/10 border-blue-500/30 overflow-hidden">
-            <CardContent className="pt-4 px-3 md:px-6">
-              <div className="flex items-center justify-center gap-2 md:gap-4 flex-wrap">
-                <Badge variant="outline" className="text-base md:text-lg px-2 md:px-3 py-1 flex-shrink-0">
-                  UID: {selectedMinerStats.uid ?? 'N/A'}
-                </Badge>
-                <span className="font-mono text-xs md:text-sm text-muted-foreground break-all text-center">
-                  {selectedMiner}
-                </span>
-              </div>
-            </CardContent>
-          </Card>
-
           {/* Performance Metrics */}
           <div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -357,7 +342,7 @@ export function MinerTracker({
               </div>
             </CardHeader>
             <CardContent className="p-4 md:p-6 pt-0 md:pt-0">
-              <RejectionBarChart data={minerRejectionReasons} maxItems={10} />
+              <RejectionBarChart data={minerRejectionReasons} maxItems={10} combineErrorsAsUnknown />
             </CardContent>
           </Card>
         </>
