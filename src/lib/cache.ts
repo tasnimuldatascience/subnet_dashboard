@@ -81,37 +81,76 @@ export async function warmCache(): Promise<void> {
 // Background refresh interval (5 minutes)
 const REFRESH_INTERVAL = 5 * 60 * 1000
 
-// Start background refresh - refreshes cache every 5 minutes
+// Calculate ms until next refresh time (synced to :01, :06, :11, :16, etc.)
+// This ensures we refresh 1 minute after Supabase updates at :00, :05, :10, etc.
+function getMsUntilNextRefresh(): number {
+  const now = new Date()
+  const minutes = now.getMinutes()
+  const seconds = now.getSeconds()
+  const ms = now.getMilliseconds()
+
+  // Find next minute ending in 1 or 6 (i.e., 1, 6, 11, 16, 21, 26, 31, 36, 41, 46, 51, 56)
+  const currentMinuteInCycle = minutes % 5
+  let minutesUntilNext: number
+
+  if (currentMinuteInCycle < 1) {
+    // Current minute is 0, 5, 10, etc. - next refresh is in (1 - currentMinuteInCycle) minutes
+    minutesUntilNext = 1 - currentMinuteInCycle
+  } else {
+    // Current minute is 1-4, 6-9, etc. - next refresh is in (6 - currentMinuteInCycle) minutes
+    minutesUntilNext = 6 - currentMinuteInCycle
+  }
+
+  // Subtract current seconds and ms
+  const msUntilNext = (minutesUntilNext * 60 * 1000) - (seconds * 1000) - ms
+
+  return msUntilNext > 0 ? msUntilNext : REFRESH_INTERVAL
+}
+
+// Perform the actual refresh
+async function doRefresh(): Promise<void> {
+  console.log('[Cache] Background refresh starting...')
+  const startTime = Date.now()
+
+  try {
+    const { fetchMetagraph } = await import('./metagraph')
+    const { fetchAllDashboardData, warmLatestLeadsCache } = await import('./db-precalc')
+
+    // Refresh metagraph
+    const metagraph = await fetchMetagraph()
+
+    // Refresh dashboard data
+    await fetchAllDashboardData(0, metagraph)
+
+    // Refresh latest leads
+    await warmLatestLeadsCache(metagraph)
+
+    console.log(`[Cache] Background refresh completed in ${Date.now() - startTime}ms`)
+  } catch (error) {
+    console.error('[Cache] Background refresh error:', error)
+  }
+}
+
+// Start background refresh - synced to Supabase's 5-minute schedule
 export function startBackgroundRefresh(): void {
   if (globalForCache.refreshInterval) {
     console.log('[Cache] Background refresh already running')
     return
   }
 
-  console.log('[Cache] Starting background refresh (every 5 minutes)')
+  const msUntilFirst = getMsUntilNextRefresh()
+  const nextRefreshTime = new Date(Date.now() + msUntilFirst)
+  console.log(`[Cache] Starting background refresh (synced to Supabase schedule)`)
+  console.log(`[Cache] First refresh in ${Math.round(msUntilFirst / 1000)}s at ${nextRefreshTime.toLocaleTimeString()}`)
 
-  globalForCache.refreshInterval = setInterval(async () => {
-    console.log('[Cache] Background refresh starting...')
-    const startTime = Date.now()
+  // First refresh synced to schedule
+  setTimeout(() => {
+    doRefresh()
 
-    try {
-      const { fetchMetagraph } = await import('./metagraph')
-      const { fetchAllDashboardData, warmLatestLeadsCache } = await import('./db-precalc')
-
-      // Refresh metagraph
-      const metagraph = await fetchMetagraph()
-
-      // Refresh dashboard data
-      await fetchAllDashboardData(0, metagraph)
-
-      // Refresh latest leads
-      await warmLatestLeadsCache(metagraph)
-
-      console.log(`[Cache] Background refresh completed in ${Date.now() - startTime}ms`)
-    } catch (error) {
-      console.error('[Cache] Background refresh error:', error)
-    }
-  }, REFRESH_INTERVAL)
+    // Then refresh every 5 minutes
+    globalForCache.refreshInterval = setInterval(doRefresh, REFRESH_INTERVAL)
+    console.log('[Cache] Background refresh interval started (every 5 minutes)')
+  }, msUntilFirst)
 }
 
 // Fetch with deduplication - prevents multiple concurrent fetches for same key

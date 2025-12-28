@@ -461,7 +461,7 @@ export function Overview({
               </button>
             </div>
           </CardHeader>
-          <CardContent className="p-4 md:p-6 pt-0 md:pt-0">
+          <CardContent className="p-4 md:p-6 pt-0 md:pt-0 pl-0">
             <RejectionBarChart data={rejectionReasons} maxItems={10} />
           </CardContent>
         </Card>

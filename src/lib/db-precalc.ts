@@ -273,8 +273,8 @@ export async function fetchAllDashboardData(_hours: number, metagraph: Metagraph
   // Transform lead_inventory
   const leadInventory = transformLeadInventory(precalc.lead_inventory)
 
-  // Calculate rejection reasons from miner stats
-  const rejectionReasons = calculateRejectionReasons(precalc.miner_stats, activeMiners)
+  // Calculate rejection reasons from miner stats (use all miners, not just active)
+  const rejectionReasons = calculateRejectionReasons(precalc.miner_stats, null)
 
   // Calculate incentive data from miner stats
   const incentiveData = calculateIncentiveData(precalc.miner_stats, activeMiners)

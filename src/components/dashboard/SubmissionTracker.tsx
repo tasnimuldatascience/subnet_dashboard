@@ -714,10 +714,10 @@ export function SubmissionTracker({ minerStats, epochStats, onUidClick, onEpochC
 
         <div>
           <label className="text-sm text-muted-foreground mb-2 block">
-            Lead ID
+            Lead ID / Email Hash
           </label>
           <Input
-            placeholder="Enter Lead ID..."
+            placeholder="Enter Lead ID or Email Hash..."
             value={leadIdSearch}
             onChange={(e) => setLeadIdSearch(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
@@ -766,12 +766,7 @@ export function SubmissionTracker({ minerStats, epochStats, onUidClick, onEpochC
             <div className="text-sm text-muted-foreground mb-4 flex items-center justify-between">
               <div>
                 {selectedUid === 'all' && selectedEpoch === 'all' && !leadIdSearch.trim() ? (
-                  <span>
-                    Latest {searchResults.length} leads
-                    <span className="ml-2 text-sky-400 text-xs">
-                      Use filters for more specific results
-                    </span>
-                  </span>
+                  <span>Latest {searchResults.length} leads</span>
                 ) : (
                   <span>
                     Showing {startIndex + 1}-{Math.min(endIndex, searchResults.length)} of {searchResults.length} leads
@@ -925,7 +920,9 @@ export function SubmissionTracker({ minerStats, epochStats, onUidClick, onEpochC
                         {lead.repScore?.toFixed(4) ?? '-'}
                       </TableCell>
                       <TableCell className="text-xs max-w-[150px] sm:max-w-[200px]">
-                        {lead.rejectionReason ? (
+                        {lead.decision === 'ACCEPTED' ? (
+                          <span className="text-green-400">Pass</span>
+                        ) : lead.rejectionReason ? (
                           <span className={cn(getFeedbackColor(lead.rejectionReason), "block truncate")} title={lead.rejectionReason}>
                             {lead.rejectionReason}
                           </span>
@@ -1111,7 +1108,12 @@ export function SubmissionTracker({ minerStats, epochStats, onUidClick, onEpochC
                             {event.finalRepScore != null && (
                               <p>Score: {event.finalRepScore}</p>
                             )}
-                            {event.rejectionReason && (
+                            {event.finalDecision === 'ACCEPTED' ? (
+                              <p className="flex items-center gap-1">
+                                <span>Feedback:</span>
+                                <span className="text-green-400">Pass</span>
+                              </p>
+                            ) : event.rejectionReason && (
                               <p className="flex items-center gap-1">
                                 <span>Feedback:</span>
                                 <span

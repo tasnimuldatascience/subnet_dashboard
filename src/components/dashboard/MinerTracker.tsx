@@ -341,7 +341,7 @@ export function MinerTracker({
                 </button>
               </div>
             </CardHeader>
-            <CardContent className="p-4 md:p-6 pt-0 md:pt-0">
+            <CardContent className="p-4 md:p-6 pt-0 md:pt-0 pl-0">
               <RejectionBarChart data={minerRejectionReasons} maxItems={10} combineErrorsAsUnknown />
             </CardContent>
           </Card>

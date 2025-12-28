@@ -1,5 +1,6 @@
 'use client'
 
+import { useState, useEffect } from 'react'
 import {
   BarChart,
   Bar,
@@ -79,6 +80,15 @@ export function InventoryGrowthChart({ data }: InventoryChartProps) {
 }
 
 export function DailyLeadsChart({ data }: InventoryChartProps) {
+  const [isMobile, setIsMobile] = useState(false)
+
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 640)
+    checkMobile()
+    window.addEventListener('resize', checkMobile)
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
+
   if (data.length === 0) {
     return (
       <div className="flex items-center justify-center h-[350px] text-muted-foreground">
@@ -92,7 +102,13 @@ export function DailyLeadsChart({ data }: InventoryChartProps) {
 
   return (
     <ResponsiveContainer width="100%" height={350}>
-      <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+      <BarChart
+        data={chartData}
+        margin={isMobile
+          ? { top: 20, right: 20, left: 0, bottom: 5 }
+          : { top: 20, right: 30, left: 20, bottom: 5 }
+        }
+      >
         <XAxis
           dataKey="date"
           stroke="#94a3b8"
@@ -109,6 +125,7 @@ export function DailyLeadsChart({ data }: InventoryChartProps) {
           tickFormatter={(value) => value.toLocaleString()}
         />
         <Tooltip
+          offset={isMobile ? -30 : 10}
           contentStyle={{
             backgroundColor: '#1e293b',
             border: '1px solid #334155',

@@ -123,7 +123,8 @@ async function performSearch(
         }
 
         if (leadId && leadId.trim()) {
-          subQuery = subQuery.ilike('payload->>lead_id', `%${leadId.trim()}%`)
+          // Search both email_hash (exact) and lead_id (partial)
+          subQuery = subQuery.or(`email_hash.eq.${leadId.trim()},payload->>lead_id.ilike.%${leadId.trim()}%`)
         }
 
         const { data: subData, error: subError } = await subQuery
@@ -194,7 +195,8 @@ async function performSearch(
           .range(offset, offset + BATCH_SIZE - 1)
 
         if (leadId && leadId.trim()) {
-          subQuery = subQuery.ilike('payload->>lead_id', `%${leadId.trim()}%`)
+          // Search both email_hash (exact) and lead_id (partial)
+          subQuery = subQuery.or(`email_hash.eq.${leadId.trim()},payload->>lead_id.ilike.%${leadId.trim()}%`)
         }
 
         const { data: subData, error: subError } = await subQuery
@@ -278,44 +280,67 @@ async function performSearch(
       }
 
     } else if (leadId && leadId.trim()) {
-      // LEAD ID SEARCH: Query SUBMISSION by lead_id with batched fetching
+      // LEAD ID / EMAIL HASH SEARCH: Query SUBMISSION by lead_id OR email_hash with batched fetching
+      const searchTerm = leadId.trim()
       const BATCH_SIZE = 1000
       const seenHashes = new Set<string>()
       const allSubs: { email_hash: string, actor_hotkey: string, payload: unknown, ts: string }[] = []
-      let offset = 0
-      let hasMore = true
 
-      while (hasMore && allSubs.length < limit) {
-        const { data: subData, error: subError } = await supabase
-          .from('transparency_log')
-          .select('email_hash, actor_hotkey, payload, ts')
-          .eq('event_type', 'SUBMISSION')
-          .not('email_hash', 'is', null)
-          .ilike('payload->>lead_id', `%${leadId.trim()}%`)
-          .order('ts', { ascending: false })
-          .range(offset, offset + BATCH_SIZE - 1)
+      // First, try exact email_hash match (faster)
+      const { data: emailHashData, error: emailHashError } = await supabase
+        .from('transparency_log')
+        .select('email_hash, actor_hotkey, payload, ts')
+        .eq('event_type', 'SUBMISSION')
+        .eq('email_hash', searchTerm)
+        .order('ts', { ascending: false })
+        .limit(limit)
 
-        if (subError) {
-          console.error('[Lead Search API] Submission batch error:', subError)
-          break
-        }
-
-        if (!subData || subData.length === 0) {
-          hasMore = false
-          break
-        }
-
-        // Deduplicate while collecting
-        for (const sub of subData) {
+      if (!emailHashError && emailHashData && emailHashData.length > 0) {
+        console.log(`[Lead Search API] Found ${emailHashData.length} results by email_hash`)
+        for (const sub of emailHashData) {
           if (!sub.email_hash || seenHashes.has(sub.email_hash)) continue
           seenHashes.add(sub.email_hash)
           allSubs.push(sub)
         }
+      }
 
-        if (subData.length < BATCH_SIZE) {
-          hasMore = false
-        } else {
-          offset += BATCH_SIZE
+      // If no email_hash results or fewer than limit, also search by lead_id
+      if (allSubs.length < limit) {
+        let offset = 0
+        let hasMore = true
+
+        while (hasMore && allSubs.length < limit) {
+          const { data: subData, error: subError } = await supabase
+            .from('transparency_log')
+            .select('email_hash, actor_hotkey, payload, ts')
+            .eq('event_type', 'SUBMISSION')
+            .not('email_hash', 'is', null)
+            .ilike('payload->>lead_id', `%${searchTerm}%`)
+            .order('ts', { ascending: false })
+            .range(offset, offset + BATCH_SIZE - 1)
+
+          if (subError) {
+            console.error('[Lead Search API] Submission batch error:', subError)
+            break
+          }
+
+          if (!subData || subData.length === 0) {
+            hasMore = false
+            break
+          }
+
+          // Deduplicate while collecting
+          for (const sub of subData) {
+            if (!sub.email_hash || seenHashes.has(sub.email_hash)) continue
+            seenHashes.add(sub.email_hash)
+            allSubs.push(sub)
+          }
+
+          if (subData.length < BATCH_SIZE) {
+            hasMore = false
+          } else {
+            offset += BATCH_SIZE
+          }
         }
       }
 

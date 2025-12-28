@@ -1,5 +1,6 @@
 'use client'
 
+import { useState, useEffect } from 'react'
 import {
   BarChart,
   Bar,
@@ -36,6 +37,15 @@ const ALLOWED_REASONS = new Set([
 ])
 
 export function RejectionBarChart({ data, maxItems = 10, combineErrorsAsUnknown = false }: RejectionBarChartProps) {
+  const [isMobile, setIsMobile] = useState(false)
+
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 640)
+    checkMobile()
+    window.addEventListener('resize', checkMobile)
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
+
   // First, aggregate entries with the same reason name
   const aggregatedMap = new Map<string, { count: number; percentage: number }>()
   for (const d of data) {
@@ -99,7 +109,7 @@ export function RejectionBarChart({ data, maxItems = 10, combineErrorsAsUnknown 
 
   // Calculate dynamic YAxis width based on longest label (~7px per char at fontSize 11)
   const maxLabelLength = Math.max(...chartData.map(d => d.reason.length))
-  const yAxisWidth = Math.min(Math.max(maxLabelLength * 7 + 10, 80), 170)
+  const yAxisWidth = Math.max(maxLabelLength * 7 + 10, 80)
 
   return (
     <div className="h-[250px] md:h-[300px]">
@@ -116,24 +126,26 @@ export function RejectionBarChart({ data, maxItems = 10, combineErrorsAsUnknown 
           stroke="#94a3b8"
           fontSize={11}
           width={yAxisWidth}
+          tick={{ style: { whiteSpace: 'nowrap' } }}
         />
         <Tooltip
-          contentStyle={{
-            backgroundColor: '#1e293b',
-            border: '1px solid #475569',
-            borderRadius: '8px',
-            padding: '8px 12px',
-          }}
-          labelStyle={{ display: 'none' }}
-          formatter={(_value, _name, props) => {
-            const data = props.payload as RejectionReason
-            return [
-              <span key="content">
+          content={({ active, payload }) => {
+            if (!active || !payload || !payload[0]) return null
+            const data = payload[0].payload as RejectionReason
+            return (
+              <div
+                style={{
+                  backgroundColor: '#1e293b',
+                  border: '1px solid #475569',
+                  borderRadius: '8px',
+                  padding: '8px 12px',
+                  ...(isMobile && { maxWidth: '220px' }),
+                }}
+              >
                 <span style={{ color: '#94a3b8' }}>{data.reason}</span>
                 <span style={{ color: '#f1f5f9' }}>: {data.count.toLocaleString()} ({data.percentage.toFixed(2)}%)</span>
-              </span>,
-              null
-            ]
+              </div>
+            )
           }}
         />
         <Bar dataKey="count" radius={[0, 4, 4, 0]}>
