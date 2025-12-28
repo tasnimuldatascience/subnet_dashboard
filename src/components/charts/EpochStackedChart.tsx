@@ -86,6 +86,7 @@ export function EpochStackedChart({ data, maxEpochs = 20, showContinuous = false
             label={{ value: 'Leads', angle: -90, position: 'insideLeft', offset: 10, style: { fill: '#94a3b8', fontSize: 12 } }}
           />
           <Tooltip
+            offset={isMobile ? -30 : 10}
             contentStyle={{
               backgroundColor: '#1e293b',
               border: '1px solid #334155',
