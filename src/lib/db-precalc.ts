@@ -282,15 +282,9 @@ export async function fetchAllDashboardData(_hours: number, metagraph: Metagraph
   // Calculate summary (filtered by active miners)
   const summary = calculateSummary(precalc.totals, minerStats)
 
-  // Lead inventory count - use latest cumulative from lead_inventory for accepted
-  // This counts unique lead_ids, not email_hashes (matches original calculateLeadInventoryCountFromData)
-  // Note: lead_inventory is sorted by date descending, so first entry is the newest
-  const latestCumulative = precalc.lead_inventory?.length > 0
-    ? precalc.lead_inventory[0].cumulative
-    : 0
-
+  // Lead inventory count - use totals directly from precalc
   const leadInventoryCount: LeadInventoryCount = {
-    accepted: latestCumulative, // Use cumulative accepted leads (unique lead_ids)
+    accepted: precalc.totals.all_accepted,
     rejected: precalc.totals.all_rejected,
     pending: precalc.totals.all_pending,
   }

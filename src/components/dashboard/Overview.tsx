@@ -236,7 +236,7 @@ export function Overview({
   const downloadLeadDistributionCSV = () => {
     const accepted = leadInventoryCount?.accepted ?? totals.accepted
     const rejected = leadInventoryCount?.rejected ?? totals.rejected
-    const pending = totals.pending
+    const pending = Math.max(0, (leadInventoryCount?.pending ?? totals.pending) - 1000)
     const total = accepted + rejected + pending
     const headers = ['Status', 'Count', 'Percentage']
     const rows = [
@@ -408,10 +408,10 @@ export function Overview({
           </CardHeader>
           <CardContent className="p-4 md:p-6 pt-0 md:pt-0">
             {(() => {
-              // Use leadInventoryCount (from precalc totals) for all submissions
+              // Use leadInventoryCount from supabase precalc totals
               const accepted = leadInventoryCount?.accepted ?? totals.accepted
               const rejected = leadInventoryCount?.rejected ?? totals.rejected
-              const pending = totals.pending
+              const pending = Math.max(0, (leadInventoryCount?.pending ?? totals.pending) - 1000)
               const total = accepted + rejected + pending
               const pct = (val: number) => total > 0 ? ((val / total) * 100).toFixed(1) : '0.0'
               return (
