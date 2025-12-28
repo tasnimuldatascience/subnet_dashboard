@@ -125,8 +125,8 @@ export function RejectionBarChart({ data, maxItems = 10, combineErrorsAsUnknown 
             padding: '8px 12px',
           }}
           labelStyle={{ display: 'none' }}
-          formatter={(value: number, _name: string, props: { payload: RejectionReason }) => {
-            const data = props.payload
+          formatter={(_value, _name, props) => {
+            const data = props.payload as RejectionReason
             return [
               <span key="content">
                 <span style={{ color: '#94a3b8' }}>{data.reason}</span>
