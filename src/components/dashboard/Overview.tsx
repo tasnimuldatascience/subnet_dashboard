@@ -236,7 +236,7 @@ export function Overview({
   const downloadLeadDistributionCSV = () => {
     const accepted = leadInventoryCount?.accepted ?? totals.accepted
     const rejected = leadInventoryCount?.rejected ?? totals.rejected
-    const pending = leadInventoryCount?.pending ?? totals.pending
+    const pending = Math.max(0, totals.pending - 1000)
     const total = accepted + rejected + pending
     const headers = ['Status', 'Count', 'Percentage']
     const rows = [
@@ -409,9 +409,10 @@ export function Overview({
           <CardContent className="p-4 md:p-6 pt-0 md:pt-0">
             {(() => {
               // Use leadInventoryCount (from precalc totals) for all submissions
+              // Pending is 1000 less than miner leaderboard total, but never below 0
               const accepted = leadInventoryCount?.accepted ?? totals.accepted
               const rejected = leadInventoryCount?.rejected ?? totals.rejected
-              const pending = leadInventoryCount?.pending ?? totals.pending
+              const pending = Math.max(0, totals.pending - 1000)
               const total = accepted + rejected + pending
               const pct = (val: number) => total > 0 ? ((val / total) * 100).toFixed(1) : '0.0'
               return (

@@ -67,22 +67,18 @@ export function RejectionBarChart({ data, maxItems = 10, combineErrorsAsUnknown 
   // For Overview tab: filter to only allowed reasons
   let chartData: RejectionReason[]
 
+  // Track if there are reasons outside the allowed list (for miner tab message)
+  let hasUnavailableReasons = false
+
   if (combineErrorsAsUnknown) {
-    // Separate normal reasons from error reasons
-    const normalReasons = aggregatedData.filter(d => !d.reason.includes('Error'))
-    const errorReasons = aggregatedData.filter(d => d.reason.includes('Error'))
+    // Filter to only allowed reasons for miner tab
+    const allowedReasons = aggregatedData.filter(d => ALLOWED_REASONS.has(d.reason))
+    const otherReasons = aggregatedData.filter(d => !ALLOWED_REASONS.has(d.reason))
 
-    // Combine all error reasons into a single "Unknown Error" entry
-    const errorCount = errorReasons.reduce((sum, d) => sum + d.count, 0)
-    const errorPercentage = errorReasons.reduce((sum, d) => sum + d.percentage, 0)
-
-    const combined = [...normalReasons]
-    if (errorCount > 0) {
-      combined.push({ reason: 'Unknown Error', count: errorCount, percentage: Math.min(errorPercentage, 100) })
-    }
+    hasUnavailableReasons = otherReasons.length > 0
 
     // Sort by count descending and take top items
-    const sorted = combined.sort((a, b) => b.count - a.count)
+    const sorted = allowedReasons.sort((a, b) => b.count - a.count)
     chartData = sorted.slice(0, maxItems).reverse()
   } else {
     // Filter to only allowed reasons and show items > 1%, then take top items
@@ -93,9 +89,17 @@ export function RejectionBarChart({ data, maxItems = 10, combineErrorsAsUnknown 
   }
 
   if (chartData.length === 0) {
+    // If no allowed reasons but there are other reasons, show unavailable message
+    if (hasUnavailableReasons && combineErrorsAsUnknown) {
+      return (
+        <div className="flex items-center justify-center h-[300px]">
+          <span className="text-xs text-amber-400">Rejection reason unavailable. Please query the Lead Search tab for details.</span>
+        </div>
+      )
+    }
     return (
-      <div className="flex items-center justify-center h-[300px] text-green-500">
-        No rejections!
+      <div className="flex items-center justify-center h-[300px]">
+        <span className="text-green-500">No rejections!</span>
       </div>
     )
   }
@@ -112,9 +116,10 @@ export function RejectionBarChart({ data, maxItems = 10, combineErrorsAsUnknown 
   const yAxisWidth = Math.max(maxLabelLength * 7 + 10, 80)
 
   return (
-    <div className="h-[250px] md:h-[300px]">
-      <ResponsiveContainer width="100%" height="100%">
-        <BarChart
+    <div className="flex flex-col">
+      <div className="h-[250px] md:h-[300px]">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart
           data={chartData}
           layout="vertical"
           margin={{ top: 5, right: 20, left: 0, bottom: 5 }}
@@ -149,12 +154,13 @@ export function RejectionBarChart({ data, maxItems = 10, combineErrorsAsUnknown 
           }}
         />
         <Bar dataKey="count" radius={[0, 4, 4, 0]}>
-          {chartData.map((entry, index) => (
-            <Cell key={index} fill={getColor(entry.count)} />
-          ))}
-        </Bar>
-      </BarChart>
-      </ResponsiveContainer>
+            {chartData.map((entry, index) => (
+              <Cell key={index} fill={getColor(entry.count)} />
+            ))}
+          </Bar>
+        </BarChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   )
 }

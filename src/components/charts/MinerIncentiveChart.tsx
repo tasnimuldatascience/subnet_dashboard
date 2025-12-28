@@ -180,7 +180,7 @@ export function MinerIncentiveChart({ minerStats }: MinerIncentiveChartProps) {
         <div className="hidden md:block relative w-64">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search Miners by Hotkey or UID..."
+            placeholder="Enter Hotkey or UID..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="pl-9 bg-muted/30"
