@@ -60,7 +60,7 @@ export function InventoryGrowthChart({ data }: InventoryChartProps) {
             const [, month, day] = value.split('-')
             return `${parseInt(month)}/${parseInt(day)}`
           }}
-          interval={0}
+          interval={isMobile ? Math.ceil(chartData.length / 6) : 0}
           angle={isMobile ? -45 : 0}
           textAnchor={isMobile ? 'end' : 'middle'}
           height={isMobile ? 50 : 30}
