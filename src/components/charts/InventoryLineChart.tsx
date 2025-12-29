@@ -41,7 +41,10 @@ export function InventoryGrowthChart({ data }: InventoryChartProps) {
 
   return (
     <ResponsiveContainer width="100%" height={350}>
-      <AreaChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+      <AreaChart data={chartData} margin={isMobile
+        ? { top: 20, right: 20, left: 0, bottom: 5 }
+        : { top: 20, right: 30, left: 20, bottom: 5 }
+      }>
         <defs>
           <linearGradient id="colorInventory" x1="0" y1="0" x2="0" y2="1">
             <stop offset="5%" stopColor="#22c55e" stopOpacity={0.3} />
@@ -169,7 +172,7 @@ export function WeeklyLeadsChart({ data }: WeeklyLeadsChartProps) {
                 }}
               >
                 <div style={{ color: '#94a3b8', marginBottom: '4px' }}>
-                  Week of {formatFullDate(item.week_start)}
+                  {formatFullDate(item.week_start)}-{formatFullDate(item.period_end)}
                 </div>
                 <div style={{ color: '#3b82f6' }}>
                   New Lead Inventory: {item.leads_added.toLocaleString()}
