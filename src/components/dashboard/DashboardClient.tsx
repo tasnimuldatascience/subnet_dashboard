@@ -167,7 +167,14 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
               </h1>
               <p className="text-xs sm:text-sm text-muted-foreground mt-1">
                 {lastRefresh && (
-                  <span>Last updated at {lastRefresh.toLocaleDateString()} {lastRefresh.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })} EST</span>
+                  <span>Updated {(() => {
+                    const now = new Date()
+                    const diff = Math.floor((now.getTime() - lastRefresh.getTime()) / 1000)
+                    if (diff < 60) return 'just now'
+                    if (diff < 3600) return `${Math.floor(diff / 60)} minute${Math.floor(diff / 60) === 1 ? '' : 's'} ago`
+                    if (diff < 86400) return `${Math.floor(diff / 3600)} hour${Math.floor(diff / 3600) === 1 ? '' : 's'} ago`
+                    return `${Math.floor(diff / 86400)} day${Math.floor(diff / 86400) === 1 ? '' : 's'} ago`
+                  })()}</span>
                 )}
                 <span className="hidden sm:inline">{' '}| <strong>{(dashboardData.totalSubmissionCount || metrics.total).toLocaleString()}</strong> total lead submissions</span>
               </p>
