@@ -134,10 +134,8 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
   // Get active miners from miner stats
   const activeMiners = minerStats.map(m => m.minerHotkey)
 
-  // Get active miner count from metagraph (non-validators), fallback to minerStats count
-  const activeMinerCount = metagraph && Object.keys(metagraph.isValidator).length > 0
-    ? Object.entries(metagraph.isValidator).filter(([, isVal]) => !isVal).length
-    : minerStats.length
+  // Get active miner count (miners with incentive > 0)
+  const activeMinerCount = minerStats.filter(m => m.btIncentive > 0).length
 
   // Handler for clicking on a miner hotkey in the leaderboard
   const handleMinerClick = (minerHotkey: string) => {
