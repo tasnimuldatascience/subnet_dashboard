@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Overview,
@@ -20,7 +20,7 @@ import {
 } from 'lucide-react'
 
 // Server handles background refresh every 5 minutes via instrumentation.ts
-// No client-side polling needed
+// Client auto-refreshes data every 5 minutes and updates time display every minute
 
 // Dashboard data from API
 interface DashboardData extends AllDashboardData {
@@ -34,18 +34,64 @@ export interface DashboardClientProps {
   metagraph: MetagraphData | null
 }
 
+// Helper function to calculate relative time string
+function getRelativeTime(date: Date): string {
+  const now = new Date()
+  const diff = Math.floor((now.getTime() - date.getTime()) / 1000)
+  if (diff < 60) return 'just now'
+  if (diff < 3600) return `${Math.floor(diff / 60)} minute${Math.floor(diff / 60) === 1 ? '' : 's'} ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)} hour${Math.floor(diff / 3600) === 1 ? '' : 's'} ago`
+  return `${Math.floor(diff / 86400)} day${Math.floor(diff / 86400) === 1 ? '' : 's'} ago`
+}
+
 export function DashboardClient({ initialData, metagraph: initialMetagraph }: DashboardClientProps) {
   // Dashboard data state (aggregated results only - no raw data!)
-  // Server refreshes cache every 5 minutes, page reload gets fresh data
-  const [dashboardData] = useState<DashboardData>(initialData)
-  const [metagraph] = useState<MetagraphData | null>(initialMetagraph)
+  const [dashboardData, setDashboardData] = useState<DashboardData>(initialData)
+  const [metagraph, setMetagraph] = useState<MetagraphData | null>(initialMetagraph)
 
   // UI state - use actual data update time from precalc table
-  const [lastRefresh] = useState<Date>(new Date(dashboardData.updatedAt))
+  const [lastRefresh, setLastRefresh] = useState<Date>(new Date(dashboardData.updatedAt))
+  const [relativeTime, setRelativeTime] = useState<string>(getRelativeTime(new Date(dashboardData.updatedAt)))
   const [selectedMinerHotkey, setSelectedMinerHotkey] = useState<string | null>(null)
   const [selectedEpochId, setSelectedEpochId] = useState<number | null>(null)
 
   const [activeTab, setActiveTab] = useState('overview')
+
+  // Update relative time display every minute
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setRelativeTime(getRelativeTime(lastRefresh))
+    }, 60000) // Every 60 seconds
+    return () => clearInterval(interval)
+  }, [lastRefresh])
+
+  // Auto-fetch new data every 5 minutes
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const [dashboardRes, metagraphRes] = await Promise.all([
+          fetch('/api/dashboard'),
+          fetch('/api/metagraph')
+        ])
+        if (dashboardRes.ok) {
+          const newData = await dashboardRes.json()
+          setDashboardData(newData)
+          const newRefresh = new Date(newData.updatedAt)
+          setLastRefresh(newRefresh)
+          setRelativeTime(getRelativeTime(newRefresh))
+        }
+        if (metagraphRes.ok) {
+          const newMetagraph = await metagraphRes.json()
+          setMetagraph(newMetagraph)
+        }
+      } catch (error) {
+        console.error('Auto-refresh failed:', error)
+      }
+    }
+
+    const interval = setInterval(fetchData, 5 * 60 * 1000) // Every 5 minutes
+    return () => clearInterval(interval)
+  }, [])
 
   // Handle navigation from SubmissionTracker to MinerTracker
   const handleUidClick = useCallback((uid: number) => {
@@ -167,14 +213,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
               </h1>
               <p className="text-xs sm:text-sm text-muted-foreground mt-1">
                 {lastRefresh && (
-                  <span>Updated {(() => {
-                    const now = new Date()
-                    const diff = Math.floor((now.getTime() - lastRefresh.getTime()) / 1000)
-                    if (diff < 60) return 'just now'
-                    if (diff < 3600) return `${Math.floor(diff / 60)} minute${Math.floor(diff / 60) === 1 ? '' : 's'} ago`
-                    if (diff < 86400) return `${Math.floor(diff / 3600)} hour${Math.floor(diff / 3600) === 1 ? '' : 's'} ago`
-                    return `${Math.floor(diff / 86400)} day${Math.floor(diff / 86400) === 1 ? '' : 's'} ago`
-                  })()}</span>
+                  <span>Updated {relativeTime}</span>
                 )}
                 <span className="hidden sm:inline">{' '}| <strong>{(dashboardData.totalSubmissionCount || metrics.total).toLocaleString()}</strong> total lead submissions</span>
               </p>
