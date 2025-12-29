@@ -54,12 +54,15 @@ export function InventoryGrowthChart({ data }: InventoryChartProps) {
         <XAxis
           dataKey="date"
           stroke="#94a3b8"
-          fontSize={12}
+          fontSize={isMobile ? 10 : 12}
           tickFormatter={(value) => {
             // Parse date string directly to avoid timezone issues
             const [, month, day] = value.split('-')
             return `${parseInt(month)}/${parseInt(day)}`
           }}
+          angle={isMobile ? -45 : 0}
+          textAnchor={isMobile ? 'end' : 'middle'}
+          height={isMobile ? 50 : 30}
         />
         <YAxis
           stroke="#94a3b8"
