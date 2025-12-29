@@ -14,9 +14,14 @@ const jetbrainsMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: "Leadpoet Subnet Dashboard",
-  description: "Real-time transparency tracking for LeadPoet miners on Bittensor subnet 71",
+  description: "Real-time transparency and performance dashboard for Leadpoet on Bittensor Subnet 71.",
   icons: {
     icon: '/icon.png',
+  },
+  openGraph: {
+    siteName: "Leadpoet",
+    title: "Leadpoet Subnet Dashboard",
+    description: "Real-time dashboard for Bittensor Subnet 71 (Leadpoet).",
   },
 };
 

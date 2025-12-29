@@ -151,8 +151,8 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
       <div className="max-w-[1500px] mx-auto px-5 py-4 md:py-6 overflow-auto">
         {/* Header */}
         <div className="mb-4 md:mb-6">
-          <div className="flex items-center gap-2 md:gap-3">
-            <a href="https://leadpoet.com" target="_blank" rel="noopener noreferrer" className="hover:opacity-80 transition-opacity">
+          <div className="flex items-start gap-2 md:gap-3">
+            <a href="https://leadpoet.com" target="_blank" rel="noopener noreferrer" className="hover:opacity-80 transition-opacity mt-0.5">
               <img
                 src="/icon-64.png"
                 alt="LeadPoet Logo"
@@ -161,16 +161,18 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
                 className="rounded"
               />
             </a>
-            <h1 className="text-lg sm:text-xl md:text-2xl font-bold">
-              Leadpoet Subnet Dashboard
-            </h1>
+            <div>
+              <h1 className="text-lg sm:text-xl md:text-2xl font-bold">
+                Leadpoet Subnet Dashboard
+              </h1>
+              <p className="text-xs sm:text-sm text-muted-foreground mt-1">
+                {lastRefresh && (
+                  <span>Last updated at {lastRefresh.toLocaleDateString()} {lastRefresh.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })} EST</span>
+                )}
+                <span className="hidden sm:inline">{' '}| <strong>{(dashboardData.totalSubmissionCount || metrics.total).toLocaleString()}</strong> total lead submissions</span>
+              </p>
+            </div>
           </div>
-          <p className="text-xs sm:text-sm text-muted-foreground mt-1">
-            {lastRefresh && (
-              <span>Last updated at {lastRefresh.toLocaleDateString()} {lastRefresh.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })} EST</span>
-            )}
-            <span className="hidden sm:inline">{' '}| <strong>{(dashboardData.totalSubmissionCount || metrics.total).toLocaleString()}</strong> total lead submissions</span>
-          </p>
         </div>
 
         {/* Tabs */}
