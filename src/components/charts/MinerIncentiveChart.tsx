@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import {
   ScatterChart,
   Scatter,
@@ -31,6 +31,14 @@ interface ChartDataItem {
 export function MinerIncentiveChart({ minerStats }: MinerIncentiveChartProps) {
   const [searchTerm, setSearchTerm] = useState('')
   const [copiedField, setCopiedField] = useState<string | null>(null)
+  const [isMobile, setIsMobile] = useState(false)
+
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 640)
+    checkMobile()
+    window.addEventListener('resize', checkMobile)
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
 
   // Sort miners by incentive (ascending) and assign rank (descending - highest incentive = rank 1)
   const chartData: ChartDataItem[] = useMemo(() => {
@@ -192,7 +200,10 @@ export function MinerIncentiveChart({ minerStats }: MinerIncentiveChartProps) {
       <div className="relative h-[280px] md:h-[400px]">
         <ResponsiveContainer width="100%" height="100%">
           <ScatterChart
-            margin={{ top: 20, right: 60, left: 20, bottom: 20 }}
+            margin={isMobile
+              ? { top: 10, right: 35, left: 0, bottom: 10 }
+              : { top: 20, right: 60, left: 20, bottom: 20 }
+            }
           >
             <XAxis
               dataKey="index"
