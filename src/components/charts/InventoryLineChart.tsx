@@ -19,6 +19,15 @@ interface InventoryChartProps {
 }
 
 export function InventoryGrowthChart({ data }: InventoryChartProps) {
+  const [isMobile, setIsMobile] = useState(false)
+
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 640)
+    checkMobile()
+    window.addEventListener('resize', checkMobile)
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
+
   if (data.length === 0) {
     return (
       <div className="flex items-center justify-center h-[350px] text-muted-foreground">
@@ -65,7 +74,8 @@ export function InventoryGrowthChart({ data }: InventoryChartProps) {
           labelFormatter={(label) => {
             // Parse date string directly to avoid timezone issues
             const [year, month, day] = label.split('-')
-            return `${parseInt(month)}/${parseInt(day)}/${year}`
+            const displayYear = isMobile ? year.slice(-2) : year
+            return `${parseInt(month)}/${parseInt(day)}/${displayYear}`
           }}
         />
         <Area
@@ -113,10 +123,11 @@ export function WeeklyLeadsChart({ data }: WeeklyLeadsChartProps) {
     return `${parseInt(month)}/${parseInt(day)}`
   }
 
-  // Format full date for tooltip (e.g., "12/22/2024")
+  // Format full date for tooltip (e.g., "12/22/2024" or "12/22/24" on mobile)
   const formatFullDate = (dateStr: string) => {
     const [year, month, day] = dateStr.split('-')
-    return `${parseInt(month)}/${parseInt(day)}/${year}`
+    const displayYear = isMobile ? year.slice(-2) : year
+    return `${parseInt(month)}/${parseInt(day)}/${displayYear}`
   }
 
   return (
