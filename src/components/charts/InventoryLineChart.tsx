@@ -171,10 +171,10 @@ export function WeeklyLeadsChart({ data }: WeeklyLeadsChartProps) {
                   padding: '8px 12px',
                 }}
               >
-                <div style={{ color: '#94a3b8', marginBottom: '4px' }}>
+                <div style={{ color: '#94a3b8', marginBottom: '4px', fontSize: '14px' }}>
                   {formatFullDate(item.week_start)}-{formatFullDate(item.period_end)}
                 </div>
-                <div style={{ color: '#3b82f6' }}>
+                <div style={{ color: '#3b82f6', fontSize: '14px' }}>
                   New Lead Inventory: {item.leads_added.toLocaleString()}
                 </div>
               </div>
