@@ -12,6 +12,7 @@ import {
   AreaChart,
 } from 'recharts'
 import { LeadInventoryData } from '@/lib/types'
+import { WeeklyLeadInventory } from '@/lib/db-precalc'
 
 interface InventoryChartProps {
   data: LeadInventoryData[]
@@ -79,7 +80,11 @@ export function InventoryGrowthChart({ data }: InventoryChartProps) {
   )
 }
 
-export function DailyLeadsChart({ data }: InventoryChartProps) {
+interface WeeklyLeadsChartProps {
+  data: WeeklyLeadInventory[]
+}
+
+export function WeeklyLeadsChart({ data }: WeeklyLeadsChartProps) {
   const [isMobile, setIsMobile] = useState(false)
 
   useEffect(() => {
@@ -89,16 +94,30 @@ export function DailyLeadsChart({ data }: InventoryChartProps) {
     return () => window.removeEventListener('resize', checkMobile)
   }, [])
 
-  if (data.length === 0) {
+  if (!data || data.length === 0) {
     return (
       <div className="flex items-center justify-center h-[350px] text-muted-foreground">
-        No daily leads data available
+        No weekly leads data available
       </div>
     )
   }
 
-  // Reverse data so oldest is on left, newest on right
-  const chartData = [...data].reverse()
+  // Sort by week_start ascending (oldest first on left)
+  const chartData = [...data].sort((a, b) =>
+    new Date(a.week_start).getTime() - new Date(b.week_start).getTime()
+  )
+
+  // Format date for display (e.g., "12/22")
+  const formatDate = (dateStr: string) => {
+    const [, month, day] = dateStr.split('-')
+    return `${parseInt(month)}/${parseInt(day)}`
+  }
+
+  // Format full date for tooltip (e.g., "12/22/2024")
+  const formatFullDate = (dateStr: string) => {
+    const [year, month, day] = dateStr.split('-')
+    return `${parseInt(month)}/${parseInt(day)}/${year}`
+  }
 
   return (
     <ResponsiveContainer width="100%" height={350}>
@@ -110,14 +129,10 @@ export function DailyLeadsChart({ data }: InventoryChartProps) {
         }
       >
         <XAxis
-          dataKey="date"
+          dataKey="week_start"
           stroke="#94a3b8"
           fontSize={12}
-          tickFormatter={(value) => {
-            // Parse date string directly to avoid timezone issues
-            const [, month, day] = value.split('-')
-            return `${parseInt(month)}/${parseInt(day)}`
-          }}
+          tickFormatter={formatDate}
         />
         <YAxis
           stroke="#94a3b8"
@@ -126,20 +141,29 @@ export function DailyLeadsChart({ data }: InventoryChartProps) {
         />
         <Tooltip
           offset={isMobile ? -30 : 10}
-          contentStyle={{
-            backgroundColor: '#1e293b',
-            border: '1px solid #334155',
-            borderRadius: '8px',
-          }}
-          separator=": "
-          formatter={(value) => [((value as number) ?? 0).toLocaleString(), 'New Lead Inventory']}
-          labelFormatter={(label) => {
-            // Parse date string directly to avoid timezone issues
-            const [year, month, day] = label.split('-')
-            return `${parseInt(month)}/${parseInt(day)}/${year}`
+          content={({ active, payload }) => {
+            if (!active || !payload || !payload[0]) return null
+            const item = payload[0].payload as WeeklyLeadInventory
+            return (
+              <div
+                style={{
+                  backgroundColor: '#1e293b',
+                  border: '1px solid #334155',
+                  borderRadius: '8px',
+                  padding: '8px 12px',
+                }}
+              >
+                <div style={{ color: '#94a3b8', marginBottom: '4px' }}>
+                  Week of {formatFullDate(item.week_start)}
+                </div>
+                <div style={{ color: '#3b82f6' }}>
+                  New Lead Inventory: {item.leads_added.toLocaleString()}
+                </div>
+              </div>
+            )
           }}
         />
-        <Bar dataKey="newValidLeads" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+        <Bar dataKey="leads_added" fill="#3b82f6" radius={[4, 4, 0, 0]} />
       </BarChart>
     </ResponsiveContainer>
   )

@@ -124,11 +124,19 @@ interface PrecalcLeadInventory {
   cumulative: number
 }
 
+interface PrecalcWeeklyLeadInventory {
+  week_start: string
+  period_end: string
+  is_complete: boolean
+  leads_added: number
+}
+
 interface PrecalcData {
   id: number
   miner_stats: Record<string, PrecalcMinerStats>
   epoch_stats: Record<string, PrecalcEpochStats>
   lead_inventory: PrecalcLeadInventory[]
+  weekly_lead_inventory: PrecalcWeeklyLeadInventory[]
   totals: PrecalcTotals
   updated_at: string
 }
@@ -200,6 +208,13 @@ export interface DailyLeadInventory {
   cumulative_leads: number
 }
 
+export interface WeeklyLeadInventory {
+  week_start: string
+  period_end: string
+  is_complete: boolean
+  leads_added: number
+}
+
 export interface RejectionReasonAggregated {
   reason: string
   count: number
@@ -223,6 +238,7 @@ export interface AllDashboardData {
   minerStats: MinerStats[]
   epochStats: EpochStats[]
   leadInventory: DailyLeadInventory[]
+  weeklyLeadInventory: WeeklyLeadInventory[]
   rejectionReasons: RejectionReasonAggregated[]
   incentiveData: IncentiveDataAggregated[]
   leadInventoryCount: LeadInventoryCount
@@ -273,6 +289,14 @@ export async function fetchAllDashboardData(_hours: number, metagraph: Metagraph
   // Transform lead_inventory
   const leadInventory = transformLeadInventory(precalc.lead_inventory)
 
+  // Weekly lead inventory (already in correct format from db)
+  const weeklyLeadInventory: WeeklyLeadInventory[] = (precalc.weekly_lead_inventory || []).map(w => ({
+    week_start: w.week_start,
+    period_end: w.period_end,
+    is_complete: w.is_complete,
+    leads_added: w.leads_added,
+  }))
+
   // Calculate rejection reasons from miner stats (use all miners, not just active)
   const rejectionReasons = calculateRejectionReasons(precalc.miner_stats, null)
 
@@ -297,6 +321,7 @@ export async function fetchAllDashboardData(_hours: number, metagraph: Metagraph
     minerStats,
     epochStats,
     leadInventory,
+    weeklyLeadInventory,
     rejectionReasons,
     incentiveData,
     leadInventoryCount,

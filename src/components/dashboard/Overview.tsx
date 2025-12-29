@@ -16,7 +16,7 @@ import {
   RejectionBarChart,
   MinerIncentiveChart,
   InventoryGrowthChart,
-  DailyLeadsChart,
+  WeeklyLeadsChart,
 } from '@/components/charts'
 import {
   Users,
@@ -35,6 +35,7 @@ import type {
   LeadInventoryData,
   LeadInventoryCount,
 } from '@/lib/types'
+import type { WeeklyLeadInventory } from '@/lib/db-precalc'
 
 type SortKey = 'uid' | 'minerHotkey' | 'total' | 'accepted' | 'rejected' | 'pending' | 'acceptanceRate' | 'avgRepScore' | 'last20Accepted' | 'last20Rejected' | 'currentAccepted' | 'currentRejected' | 'btIncentive'
 type SortDirection = 'asc' | 'desc'
@@ -45,6 +46,7 @@ interface OverviewProps {
   rejectionReasons: RejectionReason[]
   activeMinerCount: number
   inventoryData: LeadInventoryData[]
+  weeklyInventoryData: WeeklyLeadInventory[]
   leadInventoryCount?: LeadInventoryCount
   onMinerClick?: (minerHotkey: string) => void
 }
@@ -55,6 +57,7 @@ export function Overview({
   rejectionReasons,
   activeMinerCount,
   inventoryData,
+  weeklyInventoryData,
   leadInventoryCount,
   onMinerClick,
 }: OverviewProps) {
@@ -286,16 +289,16 @@ export function Overview({
     URL.revokeObjectURL(url)
   }
 
-  // Download CSV function for daily leads
-  const downloadDailyLeadsCSV = () => {
-    const headers = ['Date', 'New Valid Leads']
-    const rows = inventoryData.map(d => [d.date, d.newValidLeads])
+  // Download CSV function for weekly leads
+  const downloadWeeklyLeadsCSV = () => {
+    const headers = ['Week Start', 'Period End', 'Is Complete', 'Leads Added']
+    const rows = weeklyInventoryData.map(d => [d.week_start, d.period_end, d.is_complete, d.leads_added])
     const csvContent = [headers, ...rows].map(row => row.join(',')).join('\n')
     const blob = new Blob([csvContent], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = 'daily_valid_leads.csv'
+    a.download = 'weekly_lead_inventory.csv'
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -364,9 +367,9 @@ export function Overview({
           <Card>
             <CardHeader className="p-4 md:p-6">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-base md:text-lg">Daily Lead Inventory Growth</CardTitle>
+                <CardTitle className="text-base md:text-lg">Weekly Lead Inventory Growth</CardTitle>
                 <button
-                  onClick={downloadDailyLeadsCSV}
+                  onClick={downloadWeeklyLeadsCSV}
                   className="flex items-center gap-1 px-2 py-1 md:px-3 md:py-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md flex-shrink-0"
                 >
                   <Download className="h-3 w-3" />
@@ -375,7 +378,7 @@ export function Overview({
               </div>
             </CardHeader>
             <CardContent className="p-4 md:p-6 pt-0 md:pt-0">
-              <DailyLeadsChart data={inventoryData} />
+              <WeeklyLeadsChart data={weeklyInventoryData} />
             </CardContent>
           </Card>
         </div>
@@ -461,12 +464,7 @@ export function Overview({
       <Card>
         <CardHeader className="p-4 md:p-6">
           <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="text-base md:text-lg">Miner Incentive Distribution</CardTitle>
-              <p className="text-xs md:text-sm text-muted-foreground">
-                Bittensor on-chain incentive ranked by miner performance
-              </p>
-            </div>
+            <CardTitle className="text-base md:text-lg">Miner Incentive Distribution</CardTitle>
             <button
               onClick={downloadMinerIncentiveCSV}
               className="flex items-center gap-1 px-2 py-1 md:px-3 md:py-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md flex-shrink-0"

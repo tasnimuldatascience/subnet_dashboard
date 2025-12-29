@@ -1,7 +1,6 @@
 export { Overview } from './Overview'
 export { MinerTracker } from './MinerTracker'
 export { EpochAnalysis } from './EpochAnalysis'
-export { LeadInventory } from './LeadInventory'
 export { SubmissionTracker } from './SubmissionTracker'
 export { Export } from './Export'
 export { DashboardClient } from './DashboardClient'

@@ -125,6 +125,9 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
     newValidLeads: l.new_leads,
   }))
 
+  // Weekly lead inventory (already in correct format from db-precalc)
+  const weeklyInventoryData = dashboardData.weeklyLeadInventory || []
+
   // Transform rejection reasons
   const rejectionReasons = dashboardData.rejectionReasons
 
@@ -164,9 +167,9 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
           </div>
           <p className="text-xs sm:text-sm text-muted-foreground mt-1">
             {lastRefresh && (
-              <span>Last updated at {lastRefresh.toLocaleDateString()} {lastRefresh.toLocaleTimeString()} EST</span>
+              <span>Last updated at {lastRefresh.toLocaleDateString()} {lastRefresh.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })} EST</span>
             )}
-            {' '}| <strong>{(dashboardData.totalSubmissionCount || metrics.total).toLocaleString()}</strong> total lead submissions
+            <span className="hidden sm:inline">{' '}| <strong>{(dashboardData.totalSubmissionCount || metrics.total).toLocaleString()}</strong> total lead submissions</span>
           </p>
         </div>
 
@@ -204,6 +207,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
               rejectionReasons={rejectionReasons}
               activeMinerCount={activeMinerCount}
               inventoryData={inventoryData}
+              weeklyInventoryData={weeklyInventoryData}
               leadInventoryCount={dashboardData.leadInventoryCount}
               onMinerClick={handleMinerClick}
             />
