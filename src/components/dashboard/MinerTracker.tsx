@@ -181,7 +181,7 @@ export function MinerTracker({
       {/* Miner Selection - Custom Dropdown with Search */}
       <div ref={dropdownRef} className="relative max-w-2xl">
         <label className="text-sm text-muted-foreground mb-2 block">
-          Miner (UID or Hotkey)
+          Miner
         </label>
         <Button
           variant="outline"
@@ -291,19 +291,19 @@ export function MinerTracker({
                 title="Incentive"
                 value={`${selectedMinerStats.btIncentive.toFixed(4)}%`}
                 icon={Coins}
-                color="green"
+                color="amber"
               />
               <MetricCard
                 title="Emission per Epoch"
                 value={`${(selectedMinerStats.btEmission || 0).toFixed(4)} ㄴ`}
                 icon={Zap}
-                color="purple"
+                color="teal"
               />
               <MetricCard
                 title="Alpha Stake"
                 value={`${selectedMinerStats.stake.toFixed(2)} ㄴ`}
                 icon={Wallet}
-                color="amber"
+                color="indigo"
               />
             </div>
           </div>

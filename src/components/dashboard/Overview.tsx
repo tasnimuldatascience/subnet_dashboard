@@ -236,7 +236,7 @@ export function Overview({
   const downloadLeadDistributionCSV = () => {
     const accepted = leadInventoryCount?.accepted ?? totals.accepted
     const rejected = leadInventoryCount?.rejected ?? totals.rejected
-    const pending = Math.max(0, (leadInventoryCount?.pending ?? totals.pending) - 1000)
+    const pending = Math.max(0, (leadInventoryCount?.pending ?? totals.pending) - 2000)
     const total = accepted + rejected + pending
     const headers = ['Status', 'Count', 'Percentage']
     const rows = [
@@ -346,12 +346,7 @@ export function Overview({
           <Card>
             <CardHeader className="p-4 md:p-6">
               <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="text-base md:text-lg">Lead Inventory</CardTitle>
-                  <p className="text-xs md:text-sm text-muted-foreground">
-                    Sum of accepted leads in inventory over time
-                  </p>
-                </div>
+                <CardTitle className="text-base md:text-lg">Lead Inventory</CardTitle>
                 <button
                   onClick={downloadInventoryGrowthCSV}
                   className="flex items-center gap-1 px-2 py-1 md:px-3 md:py-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md flex-shrink-0"
@@ -369,12 +364,7 @@ export function Overview({
           <Card>
             <CardHeader className="p-4 md:p-6">
               <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="text-base md:text-lg">Daily Lead Inventory Growth</CardTitle>
-                  <p className="text-xs md:text-sm text-muted-foreground">
-                    Number of accepted leads entering inventory each day
-                  </p>
-                </div>
+                <CardTitle className="text-base md:text-lg">Daily Lead Inventory Growth</CardTitle>
                 <button
                   onClick={downloadDailyLeadsCSV}
                   className="flex items-center gap-1 px-2 py-1 md:px-3 md:py-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md flex-shrink-0"
@@ -411,7 +401,7 @@ export function Overview({
               // Use leadInventoryCount from supabase precalc totals
               const accepted = leadInventoryCount?.accepted ?? totals.accepted
               const rejected = leadInventoryCount?.rejected ?? totals.rejected
-              const pending = Math.max(0, (leadInventoryCount?.pending ?? totals.pending) - 1000)
+              const pending = Math.max(0, (leadInventoryCount?.pending ?? totals.pending) - 2000)
               const total = accepted + rejected + pending
               const pct = (val: number) => total > 0 ? ((val / total) * 100).toFixed(1) : '0.0'
               return (

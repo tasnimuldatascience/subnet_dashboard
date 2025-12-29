@@ -553,7 +553,7 @@ export function SubmissionTracker({ minerStats, epochStats, onUidClick, onEpochC
         {/* Custom Miner Dropdown */}
         <div ref={uidDropdownRef} className="relative">
           <label className="text-sm text-muted-foreground mb-2 block">
-            Miner (UID or Hotkey)
+            Miner
           </label>
           <Button
             variant="outline"

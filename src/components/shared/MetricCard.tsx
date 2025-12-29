@@ -8,7 +8,7 @@ interface MetricCardProps {
   title: string
   value: string | number
   icon?: LucideIcon
-  color?: 'blue' | 'green' | 'red' | 'purple' | 'amber' | 'cyan'
+  color?: 'blue' | 'green' | 'red' | 'purple' | 'amber' | 'cyan' | 'teal' | 'indigo'
   trend?: 'up' | 'down' | 'neutral'
   subtitle?: string
   size?: 'default' | 'large'
@@ -21,6 +21,8 @@ const colorClasses = {
   purple: 'from-purple-500/20 to-purple-600/10 border-purple-500/30',
   amber: 'from-amber-500/20 to-amber-600/10 border-amber-500/30',
   cyan: 'from-cyan-500/20 to-cyan-600/10 border-cyan-500/30',
+  teal: 'from-teal-500/20 to-teal-600/10 border-teal-500/30',
+  indigo: 'from-indigo-500/20 to-indigo-600/10 border-indigo-500/30',
 }
 
 const iconColorClasses = {
@@ -30,6 +32,8 @@ const iconColorClasses = {
   purple: 'text-purple-400',
   amber: 'text-amber-400',
   cyan: 'text-cyan-400',
+  teal: 'text-teal-400',
+  indigo: 'text-indigo-400',
 }
 
 export function MetricCard({
@@ -72,7 +76,7 @@ export function MetricCard({
             )}>{title}</p>
             <p className={cn(
               'text-lg md:text-2xl font-bold tracking-tight truncate',
-              isLarge && 'text-xl md:text-5xl'
+              isLarge && 'text-[18px] md:text-4xl'
             )}>{value}</p>
             {subtitle && (
               <p className={cn(

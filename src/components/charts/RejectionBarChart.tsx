@@ -147,7 +147,7 @@ export function RejectionBarChart({ data, maxItems = 10, combineErrorsAsUnknown 
                   ...(isMobile && { maxWidth: '220px' }),
                 }}
               >
-                <span style={{ color: '#94a3b8' }}>{data.reason}</span>
+                <span style={{ color: '#ef4444' }}>{data.reason}</span>
                 <span style={{ color: '#f1f5f9' }}>: {data.count.toLocaleString()} ({data.percentage.toFixed(2)}%)</span>
               </div>
             )
