@@ -201,7 +201,7 @@ export function MinerIncentiveChart({ minerStats }: MinerIncentiveChartProps) {
         <ResponsiveContainer width="100%" height="100%">
           <ScatterChart
             margin={isMobile
-              ? { top: 10, right: 35, left: 0, bottom: 10 }
+              ? { top: 10, right: 10, left: 0, bottom: 10 }
               : { top: 20, right: 60, left: 20, bottom: 20 }
             }
           >
@@ -218,12 +218,13 @@ export function MinerIncentiveChart({ minerStats }: MinerIncentiveChartProps) {
               type="number"
               domain={[0, yAxisMax]}
               stroke="#94a3b8"
-              fontSize={12}
-              tickFormatter={(value) => value.toFixed(3)}
+              fontSize={isMobile ? 10 : 12}
+              tickFormatter={(value) => value.toFixed(isMobile ? 2 : 3)}
               orientation="right"
               axisLine={{ stroke: '#334155' }}
               tickLine={{ stroke: '#334155' }}
-              label={{
+              width={isMobile ? 35 : 60}
+              label={isMobile ? undefined : {
                 value: 'Incentive (%)',
                 angle: 90,
                 position: 'insideRight',
