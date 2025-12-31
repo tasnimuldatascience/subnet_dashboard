@@ -22,8 +22,8 @@ export async function getInitialPageData(): Promise<InitialPageData> {
   // Fetch pre-calculated dashboard data
   const dashboardData = await fetchAllDashboardData(0, metagraph)
 
-  // Get server cache refresh time
-  const serverRefreshedAt = getCacheTimestamp('precalc')?.toISOString() || new Date().toISOString()
+  // Get server cache refresh time (fallback to Supabase updatedAt if cache not yet populated)
+  const serverRefreshedAt = getCacheTimestamp('precalc')?.toISOString() || dashboardData.updatedAt
 
   const fetchTime = Date.now() - startTime
   console.log(`[Server] Initial data fetched in ${fetchTime}ms (precalc)`)

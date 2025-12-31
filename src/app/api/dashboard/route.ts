@@ -13,8 +13,8 @@ export async function GET() {
     // Fetch pre-calculated dashboard data
     const data = await fetchAllDashboardData(0, metagraph)
 
-    // Get server cache refresh time
-    const serverRefreshedAt = getCacheTimestamp('precalc')?.toISOString() || new Date().toISOString()
+    // Get server cache refresh time (fallback to Supabase updatedAt if cache not yet populated)
+    const serverRefreshedAt = getCacheTimestamp('precalc')?.toISOString() || data.updatedAt
 
     const response = NextResponse.json({
       ...data,
