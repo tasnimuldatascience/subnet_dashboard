@@ -52,23 +52,25 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
   const [dashboardData, setDashboardData] = useState<DashboardData>(initialData)
   const [metagraph, setMetagraph] = useState<MetagraphData | null>(initialMetagraph)
 
-  // UI state - use actual data update time from precalc table
-  // Use serverRefreshedAt (when server cache was refreshed) instead of updatedAt (Supabase)
-  const initialRefreshTime = dashboardData.serverRefreshedAt || dashboardData.updatedAt
-  const [lastRefresh, setLastRefresh] = useState<Date>(new Date(initialRefreshTime))
-  const [relativeTime, setRelativeTime] = useState<string>(getRelativeTime(new Date(initialRefreshTime)))
+  // UI state - track both server and user refresh times
+  const initialServerTime = dashboardData.serverRefreshedAt || dashboardData.updatedAt
+  const [serverRefreshTime, setServerRefreshTime] = useState<Date>(new Date(initialServerTime))
+  const [userRefreshTime, setUserRefreshTime] = useState<Date>(new Date())
+  const [serverRelativeTime, setServerRelativeTime] = useState<string>(getRelativeTime(new Date(initialServerTime)))
+  const [userRelativeTime, setUserRelativeTime] = useState<string>(getRelativeTime(new Date()))
   const [selectedMinerHotkey, setSelectedMinerHotkey] = useState<string | null>(null)
   const [selectedEpochId, setSelectedEpochId] = useState<number | null>(null)
 
   const [activeTab, setActiveTab] = useState('overview')
 
-  // Update relative time display every minute
+  // Update relative time displays every minute
   useEffect(() => {
     const interval = setInterval(() => {
-      setRelativeTime(getRelativeTime(lastRefresh))
+      setServerRelativeTime(getRelativeTime(serverRefreshTime))
+      setUserRelativeTime(getRelativeTime(userRefreshTime))
     }, 60000) // Every 60 seconds
     return () => clearInterval(interval)
-  }, [lastRefresh])
+  }, [serverRefreshTime, userRefreshTime])
 
   // Auto-fetch new data every 5 minutes
   useEffect(() => {
@@ -83,10 +85,14 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
         if (dashboardRes.ok) {
           const newData = await dashboardRes.json()
           setDashboardData(newData)
-          // Use serverRefreshedAt (when server cache was refreshed)
-          const refreshTime = new Date(newData.serverRefreshedAt || newData.updatedAt)
-          setLastRefresh(refreshTime)
-          setRelativeTime(getRelativeTime(refreshTime))
+          // Update server refresh time (when server cache was refreshed)
+          const serverTime = new Date(newData.serverRefreshedAt || newData.updatedAt)
+          setServerRefreshTime(serverTime)
+          setServerRelativeTime(getRelativeTime(serverTime))
+          // Update user refresh time (now)
+          const userTime = new Date()
+          setUserRefreshTime(userTime)
+          setUserRelativeTime(getRelativeTime(userTime))
         }
         if (metagraphRes.ok) {
           const newMetagraph = await metagraphRes.json()
@@ -220,9 +226,9 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
                 Leadpoet Subnet Dashboard
               </h1>
               <p className="text-xs sm:text-sm text-muted-foreground mt-1">
-                {lastRefresh && (
-                  <span>Updated {relativeTime}</span>
-                )}
+                <span title="Server cache refresh time">Server: {serverRelativeTime}</span>
+                <span className="mx-1">•</span>
+                <span title="Your last data fetch">You: {userRelativeTime}</span>
                 <span className="hidden sm:inline">{' '}| <strong>{(dashboardData.totalSubmissionCount || metrics.total).toLocaleString()}</strong> total lead submissions</span>
               </p>
             </div>
