@@ -3,10 +3,11 @@
 
 import { fetchAllDashboardData, type AllDashboardData } from './db-precalc'
 import { fetchMetagraph } from './metagraph'
+import { getCacheTimestamp } from './cache'
 import type { MetagraphData } from './types'
 
 export interface InitialPageData {
-  dashboardData: AllDashboardData & { hours: number; fetchedAt: number }
+  dashboardData: AllDashboardData & { hours: number; fetchedAt: number; serverRefreshedAt: string }
   metagraph: MetagraphData | null
 }
 
@@ -21,6 +22,9 @@ export async function getInitialPageData(): Promise<InitialPageData> {
   // Fetch pre-calculated dashboard data
   const dashboardData = await fetchAllDashboardData(0, metagraph)
 
+  // Get server cache refresh time
+  const serverRefreshedAt = getCacheTimestamp('precalc')?.toISOString() || new Date().toISOString()
+
   const fetchTime = Date.now() - startTime
   console.log(`[Server] Initial data fetched in ${fetchTime}ms (precalc)`)
 
@@ -29,6 +33,7 @@ export async function getInitialPageData(): Promise<InitialPageData> {
       ...dashboardData,
       hours: 0,
       fetchedAt: Date.now(),
+      serverRefreshedAt,
     },
     metagraph,
   }

@@ -31,13 +31,14 @@ import {
   ArrowUp,
   ArrowDown,
   Download,
+  Wallet,
 } from 'lucide-react'
 
 const ITEMS_PER_PAGE = 100
 import { cn } from '@/lib/utils'
 import { fetchLeadJourney } from '@/lib/supabase'
 import { cleanRejectionReason } from '@/lib/utils-rejection'
-import type { JourneyEvent, MinerStats, EpochStats } from '@/lib/types'
+import type { JourneyEvent, MinerStats, EpochStats, MetagraphData } from '@/lib/types'
 
 interface SearchResult {
   emailHash: string
@@ -69,6 +70,7 @@ let searchCache: SearchCache | null = null
 interface SubmissionTrackerProps {
   minerStats: MinerStats[]
   epochStats: EpochStats[]
+  metagraph: MetagraphData | null
   onUidClick?: (uid: number) => void
   onEpochClick?: (epochId: number) => void
 }
@@ -100,8 +102,9 @@ function CopyableText({ text, maxLength }: { text: string; maxLength?: number })
     }
   }
 
+  // Show first and last characters when truncating (e.g., "5Dna...vEis")
   const displayText = maxLength && text.length > maxLength
-    ? text.substring(0, maxLength) + '...'
+    ? text.substring(0, Math.ceil(maxLength / 2)) + '...' + text.substring(text.length - Math.floor(maxLength / 2))
     : text
 
   return (
@@ -120,15 +123,17 @@ function CopyableText({ text, maxLength }: { text: string; maxLength?: number })
   )
 }
 
-export function SubmissionTracker({ minerStats, epochStats, onUidClick, onEpochClick }: SubmissionTrackerProps) {
+export function SubmissionTracker({ minerStats, epochStats, metagraph, onUidClick, onEpochClick }: SubmissionTrackerProps) {
   // Filters - restore from cache if available
   const [selectedUid, setSelectedUid] = useState<string>(searchCache?.filters.uid ?? 'all')
   const [selectedEpoch, setSelectedEpoch] = useState<string>(searchCache?.filters.epoch ?? 'all')
   const [leadIdSearch, setLeadIdSearch] = useState(searchCache?.filters.leadId ?? '')
+  const [selectedColdkey, setSelectedColdkey] = useState<string | null>(null)
 
   // Search state - restore from cache if available
   const [searchResults, setSearchResults] = useState<SearchResult[]>(searchCache?.results ?? [])
   const [totalResults, setTotalResults] = useState<number>(searchCache?.totalResults ?? 0)
+  const [hasMoreResults, setHasMoreResults] = useState(false)
   const [isSearching, setIsSearching] = useState(false)
   const [hasSearched, setHasSearched] = useState(searchCache !== null)
   const [currentPage, setCurrentPage] = useState(searchCache?.currentPage ?? 1)
@@ -183,6 +188,7 @@ export function SubmissionTracker({ minerStats, epochStats, onUidClick, onEpochC
 
       setSearchResults(results)
       setTotalResults(results.length)
+      setHasMoreResults(false) // Latest leads are limited to 100, no "more" message needed
       setCurrentPage(1)
 
       // Save to cache
@@ -196,6 +202,7 @@ export function SubmissionTracker({ minerStats, epochStats, onUidClick, onEpochC
     } catch (err) {
       console.error('Error loading latest leads:', err)
       setSearchResults([])
+      setHasMoreResults(false)
     } finally {
       setIsSearching(false)
     }
@@ -258,10 +265,19 @@ export function SubmissionTracker({ minerStats, epochStats, onUidClick, onEpochC
   }, [searchResults, sortField, sortOrder])
 
   // Pagination calculations (use sorted results)
-  const totalPages = Math.ceil(sortedResults.length / ITEMS_PER_PAGE)
-  const startIndex = (currentPage - 1) * ITEMS_PER_PAGE
+  const totalPages = Math.max(1, Math.ceil(sortedResults.length / ITEMS_PER_PAGE))
+  // Clamp currentPage to valid range
+  const validCurrentPage = Math.min(Math.max(1, currentPage), totalPages)
+  const startIndex = (validCurrentPage - 1) * ITEMS_PER_PAGE
   const endIndex = startIndex + ITEMS_PER_PAGE
   const paginatedResults = sortedResults.slice(startIndex, endIndex)
+
+  // Reset currentPage if it's out of bounds
+  useEffect(() => {
+    if (currentPage > totalPages && totalPages > 0) {
+      setCurrentPage(totalPages)
+    }
+  }, [currentPage, totalPages])
 
   // Lead journey viewer
   const [selectedEmailHash, setSelectedEmailHash] = useState<string | null>(null)
@@ -309,6 +325,27 @@ export function SubmissionTracker({ minerStats, epochStats, onUidClick, onEpochC
       }))
       .sort((a, b) => a.uid - b.uid)
   }, [minerStats])
+
+  // Check if search query matches a coldkey
+  const matchedColdkey = useMemo(() => {
+    if (!uidSearchQuery.trim() || !metagraph?.coldkeyToHotkeys) return null
+    const query = uidSearchQuery.trim()
+    // Check if it's a coldkey (exists in coldkeyToHotkeys)
+    if (metagraph.coldkeyToHotkeys[query]) {
+      return query
+    }
+    // Also check for partial match at start
+    const matchingColdkey = Object.keys(metagraph.coldkeyToHotkeys).find(ck =>
+      ck.toLowerCase().startsWith(query.toLowerCase())
+    )
+    return matchingColdkey || null
+  }, [uidSearchQuery, metagraph?.coldkeyToHotkeys])
+
+  // Get hotkeys under selected coldkey
+  const coldkeyHotkeys = useMemo(() => {
+    if (!selectedColdkey || !metagraph?.coldkeyToHotkeys) return []
+    return metagraph.coldkeyToHotkeys[selectedColdkey] || []
+  }, [selectedColdkey, metagraph?.coldkeyToHotkeys])
 
   // All epoch options with miner data for cross-filtering
   const allEpochOptions = useMemo(() => {
@@ -378,8 +415,8 @@ export function SubmissionTracker({ minerStats, epochStats, onUidClick, onEpochC
 
   // Search using API (server-side cache for speed)
   const handleSearch = async () => {
-    // Need at least one filter
-    if (selectedUid === 'all' && selectedEpoch === 'all' && !leadIdSearch.trim()) {
+    // Need at least one filter (coldkey counts as a filter)
+    if (selectedUid === 'all' && selectedEpoch === 'all' && !leadIdSearch.trim() && !selectedColdkey) {
       return
     }
 
@@ -393,7 +430,11 @@ export function SubmissionTracker({ minerStats, epochStats, onUidClick, onEpochC
       if (selectedUid !== 'all') params.set('uid', selectedUid)
       if (selectedEpoch !== 'all') params.set('epoch', selectedEpoch)
       if (leadIdSearch.trim()) params.set('leadId', leadIdSearch.trim())
-      params.set('limit', '50000') // Fetch up to 50k results for pagination
+      // For coldkey, pass comma-separated hotkeys
+      if (selectedColdkey && coldkeyHotkeys.length > 0) {
+        params.set('hotkeys', coldkeyHotkeys.join(','))
+      }
+      params.set('limit', '1000') // Fetch up to 1000 results (10 pages)
 
       console.log(`[Lead Search] Calling API: /api/lead-search?${params}`)
 
@@ -406,7 +447,7 @@ export function SubmissionTracker({ minerStats, epochStats, onUidClick, onEpochC
       }
 
       const data = await response.json()
-      console.log(`[Lead Search] API returned ${data.returned} of ${data.total} results`)
+      console.log(`[Lead Search] API returned ${data.returned} of ${data.total} results, hasMore: ${data.hasMore}`)
 
       // Transform to SearchResult format (API already returns the correct format)
       const results: SearchResult[] = data.results.map((r: SearchResult) => ({
@@ -423,6 +464,7 @@ export function SubmissionTracker({ minerStats, epochStats, onUidClick, onEpochC
 
       setSearchResults(results)
       setTotalResults(data.total || results.length)
+      setHasMoreResults(data.hasMore || false)
       setCurrentPage(1) // Reset to first page on new search
 
       // Save to cache
@@ -440,6 +482,7 @@ export function SubmissionTracker({ minerStats, epochStats, onUidClick, onEpochC
     } catch (err) {
       console.error('Search error:', err)
       setSearchResults([])
+      setHasMoreResults(false)
     } finally {
       setIsSearching(false)
     }
@@ -524,11 +567,13 @@ export function SubmissionTracker({ minerStats, epochStats, onUidClick, onEpochC
   const downloadLeadSearchCSV = () => {
     if (sortedResults.length === 0) return
 
-    const headers = ['UID', 'Lead ID', 'Email Hash', 'Epoch', 'Status', 'Score', 'Feedback', 'Timestamp']
+    const headers = ['UID', 'Lead ID', 'Email Hash', 'Hotkey', 'Coldkey', 'Epoch', 'Status', 'Score', 'Feedback', 'Timestamp']
     const rows = sortedResults.map(lead => [
       lead.uid ?? '',
       lead.leadId ?? '',
       lead.emailHash,
+      lead.minerHotkey,
+      metagraph?.hotkeyToColdkey?.[lead.minerHotkey] ?? '',
       lead.epochId ?? '',
       lead.decision,
       lead.repScore?.toFixed(4) ?? '',
@@ -561,22 +606,34 @@ export function SubmissionTracker({ minerStats, epochStats, onUidClick, onEpochC
             onClick={() => setUidDropdownOpen(!uidDropdownOpen)}
             className="w-full justify-between font-normal"
           >
-            {selectedUid === 'all' ? 'All Miners' : `Miner ${selectedUid}`}
+            <span className="truncate">
+              {selectedColdkey ? (
+                <span className="flex items-center gap-1">
+                  <Wallet className="h-3 w-3 text-blue-400 inline" />
+                  [Coldkey] {selectedColdkey.slice(0, 8)}...{selectedColdkey.slice(-8)}
+                </span>
+              ) : selectedUid === 'all' ? 'All Miners' : `Miner ${selectedUid}`}
+            </span>
             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
           </Button>
           {uidDropdownOpen && (
             <div className="absolute z-50 mt-1 w-full sm:w-[500px] max-w-[95vw] bg-popover border rounded-md shadow-md">
               <div className="p-2 border-b">
                 <Input
-                  placeholder="Search by UID or Hotkey..."
+                  placeholder="Search by UID, Hotkey, or Coldkey..."
                   value={uidSearchQuery}
                   onChange={(e) => setUidSearchQuery(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
-                      if (uidSearchQuery.trim() && filteredUidOptions.length > 0) {
+                      if (matchedColdkey) {
+                        setSelectedColdkey(matchedColdkey)
+                        setSelectedUid('all')
+                      } else if (uidSearchQuery.trim() && filteredUidOptions.length > 0) {
                         setSelectedUid(filteredUidOptions[0].uid.toString())
+                        setSelectedColdkey(null)
                       } else {
                         setSelectedUid('all')
+                        setSelectedColdkey(null)
                       }
                       setUidDropdownOpen(false)
                       setUidSearchQuery('')
@@ -587,19 +644,40 @@ export function SubmissionTracker({ minerStats, epochStats, onUidClick, onEpochC
                 />
               </div>
               <div className="max-h-[300px] overflow-y-auto p-1">
-                {!uidSearchQuery.trim() && (
+                {/* Coldkey option if matched */}
+                {matchedColdkey && (
                   <div
                     className={cn(
                       "relative flex cursor-pointer items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground",
-                      selectedUid === 'all' && "bg-accent text-accent-foreground"
+                      selectedColdkey === matchedColdkey ? "bg-accent text-accent-foreground" : ""
                     )}
                     onClick={() => {
+                      setSelectedColdkey(matchedColdkey)
                       setSelectedUid('all')
                       setUidDropdownOpen(false)
                       setUidSearchQuery('')
                     }}
                   >
-                    <Check className={cn("mr-2 h-4 w-4", selectedUid === 'all' ? "opacity-100" : "opacity-0")} />
+                    <Wallet className="mr-2 h-4 w-4 flex-shrink-0" />
+                    <span className="font-mono text-xs break-all">
+                      [Coldkey] {matchedColdkey.slice(0, 8)}...{matchedColdkey.slice(-8)} ({metagraph?.coldkeyToHotkeys[matchedColdkey]?.length || 0} miners)
+                    </span>
+                  </div>
+                )}
+                {!uidSearchQuery.trim() && (
+                  <div
+                    className={cn(
+                      "relative flex cursor-pointer items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground",
+                      selectedUid === 'all' && !selectedColdkey && "bg-accent text-accent-foreground"
+                    )}
+                    onClick={() => {
+                      setSelectedUid('all')
+                      setSelectedColdkey(null)
+                      setUidDropdownOpen(false)
+                      setUidSearchQuery('')
+                    }}
+                  >
+                    <Check className={cn("mr-2 h-4 w-4", selectedUid === 'all' && !selectedColdkey ? "opacity-100" : "opacity-0")} />
                     All Miners
                   </div>
                 )}
@@ -608,20 +686,21 @@ export function SubmissionTracker({ minerStats, epochStats, onUidClick, onEpochC
                     key={opt.uid}
                     className={cn(
                       "relative flex cursor-pointer items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground",
-                      selectedUid === opt.uid.toString() && "bg-accent text-accent-foreground",
-                      uidSearchQuery.trim() && idx === 0 && "bg-accent/50"
+                      selectedUid === opt.uid.toString() && !selectedColdkey && "bg-accent text-accent-foreground",
+                      uidSearchQuery.trim() && idx === 0 && !matchedColdkey && "bg-accent/50"
                     )}
                     onClick={() => {
                       setSelectedUid(opt.uid.toString())
+                      setSelectedColdkey(null)
                       setUidDropdownOpen(false)
                       setUidSearchQuery('')
                     }}
                   >
-                    <Check className={cn("mr-2 h-4 w-4 flex-shrink-0", selectedUid === opt.uid.toString() ? "opacity-100" : "opacity-0")} />
+                    <Check className={cn("mr-2 h-4 w-4 flex-shrink-0", selectedUid === opt.uid.toString() && !selectedColdkey ? "opacity-100" : "opacity-0")} />
                     <span className="font-mono text-xs break-all">[{opt.uid}] {opt.hotkey}</span>
                   </div>
                 ))}
-                {filteredUidOptions.length === 0 && (
+                {filteredUidOptions.length === 0 && !matchedColdkey && (
                   <div className="py-6 text-center text-sm text-muted-foreground">
                     No miner found.
                   </div>
@@ -728,7 +807,7 @@ export function SubmissionTracker({ minerStats, epochStats, onUidClick, onEpochC
         <div className="flex items-end">
           <Button
             onClick={() => {
-              if (selectedUid === 'all' && selectedEpoch === 'all' && !leadIdSearch.trim()) {
+              if (selectedUid === 'all' && selectedEpoch === 'all' && !leadIdSearch.trim() && !selectedColdkey) {
                 loadLatestLeads()
               } else {
                 handleSearch()
@@ -787,7 +866,7 @@ export function SubmissionTracker({ minerStats, epochStats, onUidClick, onEpochC
                   CSV
                 </button>
                 <span className="text-sm">
-                  Page {currentPage} of {totalPages}
+                  Page {validCurrentPage} of {totalPages}
                 </span>
               </div>
             </div>
@@ -812,6 +891,8 @@ export function SubmissionTracker({ minerStats, epochStats, onUidClick, onEpochC
                     </TableHead>
                     <TableHead className="font-semibold text-foreground">Lead ID</TableHead>
                     <TableHead className="font-semibold text-foreground">Email Hash</TableHead>
+                    <TableHead className="font-semibold text-foreground">Hotkey</TableHead>
+                    <TableHead className="font-semibold text-foreground">Coldkey</TableHead>
                     <TableHead className="w-20 font-semibold text-foreground">
                       <button
                         onClick={() => handleSort('epochId')}
@@ -876,13 +957,23 @@ export function SubmissionTracker({ minerStats, epochStats, onUidClick, onEpochC
                       </TableCell>
                       <TableCell className="font-mono text-xs text-slate-300">
                         {lead.leadId ? (
-                          <CopyableText text={lead.leadId} />
+                          <CopyableText text={lead.leadId} maxLength={12} />
                         ) : (
                           <span className="text-muted-foreground">N/A</span>
                         )}
                       </TableCell>
                       <TableCell className="font-mono text-xs text-slate-400">
-                        <CopyableText text={lead.emailHash} />
+                        <CopyableText text={lead.emailHash} maxLength={12} />
+                      </TableCell>
+                      <TableCell className="font-mono text-xs text-slate-300">
+                        <CopyableText text={lead.minerHotkey} maxLength={10} />
+                      </TableCell>
+                      <TableCell className="font-mono text-xs text-slate-400">
+                        {metagraph?.hotkeyToColdkey?.[lead.minerHotkey] ? (
+                          <CopyableText text={metagraph.hotkeyToColdkey[lead.minerHotkey]} maxLength={10} />
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
                       </TableCell>
                       <TableCell className="font-medium">
                         {lead.epochId != null ? (
@@ -950,95 +1041,89 @@ export function SubmissionTracker({ minerStats, epochStats, onUidClick, onEpochC
 
             {/* Pagination Controls */}
             {totalPages > 1 && (
-              <div className="flex items-center justify-center gap-2 mt-4">
+              <div className="flex items-center justify-center gap-2 sm:gap-3 mt-4 px-2">
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                  disabled={currentPage === 1}
+                  onClick={() => setCurrentPage(Math.max(1, validCurrentPage - 1))}
+                  disabled={validCurrentPage <= 1}
                   className="gap-1"
                 >
                   <ChevronLeft className="h-4 w-4" />
-                  Prev
+                  <span className="hidden sm:inline">Prev</span>
                 </Button>
 
                 {/* Page Numbers */}
-                <div className="flex items-center gap-1">
-                  {/* First page */}
-                  {currentPage > 3 && (
-                    <>
-                      <Button
-                        variant={currentPage === 1 ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => setCurrentPage(1)}
-                        className="w-9"
-                      >
-                        1
-                      </Button>
-                      {currentPage > 4 && (
-                        <span className="px-2 text-muted-foreground">...</span>
-                      )}
-                    </>
-                  )}
+                <div className="flex items-center gap-1 mx-1 sm:mx-2">
+                  {(() => {
+                    const pages: number[] = []
+                    const maxVisible = 5
 
-                  {/* Page numbers around current */}
-                  {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                    let pageNum: number
-                    if (totalPages <= 5) {
-                      pageNum = i + 1
-                    } else if (currentPage <= 3) {
-                      pageNum = i + 1
-                    } else if (currentPage >= totalPages - 2) {
-                      pageNum = totalPages - 4 + i
+                    if (totalPages <= maxVisible) {
+                      // Show all pages if total is small
+                      for (let i = 1; i <= totalPages; i++) pages.push(i)
                     } else {
-                      pageNum = currentPage - 2 + i
+                      // Always show first page
+                      pages.push(1)
+
+                      // Calculate middle range
+                      let start = Math.max(2, validCurrentPage - 1)
+                      let end = Math.min(totalPages - 1, validCurrentPage + 1)
+
+                      // Adjust if at edges
+                      if (validCurrentPage <= 3) {
+                        end = Math.min(4, totalPages - 1)
+                      } else if (validCurrentPage >= totalPages - 2) {
+                        start = Math.max(2, totalPages - 3)
+                      }
+
+                      // Add ellipsis or pages
+                      if (start > 2) pages.push(-1) // -1 represents ellipsis
+                      for (let i = start; i <= end; i++) pages.push(i)
+                      if (end < totalPages - 1) pages.push(-2) // -2 represents ellipsis
+
+                      // Always show last page
+                      if (totalPages > 1) pages.push(totalPages)
                     }
 
-                    if (pageNum < 1 || pageNum > totalPages) return null
-                    if (currentPage > 3 && pageNum === 1) return null
-                    if (currentPage < totalPages - 2 && pageNum === totalPages) return null
-
-                    return (
-                      <Button
-                        key={pageNum}
-                        variant={currentPage === pageNum ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => setCurrentPage(pageNum)}
-                        className="w-9"
-                      >
-                        {pageNum}
-                      </Button>
-                    )
-                  })}
-
-                  {/* Last page */}
-                  {currentPage < totalPages - 2 && totalPages > 5 && (
-                    <>
-                      {currentPage < totalPages - 3 && (
-                        <span className="px-2 text-muted-foreground">...</span>
-                      )}
-                      <Button
-                        variant={currentPage === totalPages ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => setCurrentPage(totalPages)}
-                        className="w-9"
-                      >
-                        {totalPages}
-                      </Button>
-                    </>
-                  )}
+                    return pages.map((pageNum, idx) => {
+                      if (pageNum < 0) {
+                        return <span key={`ellipsis-${idx}`} className="px-2 text-muted-foreground">...</span>
+                      }
+                      return (
+                        <Button
+                          key={pageNum}
+                          variant={validCurrentPage === pageNum ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => setCurrentPage(pageNum)}
+                          className="w-9"
+                        >
+                          {pageNum}
+                        </Button>
+                      )
+                    })
+                  })()}
                 </div>
 
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                  disabled={currentPage === totalPages}
+                  onClick={() => setCurrentPage(Math.min(totalPages, validCurrentPage + 1))}
+                  disabled={validCurrentPage >= totalPages}
                   className="gap-1"
                 >
-                  Next
+                  <span className="hidden sm:inline">Next</span>
                   <ChevronRight className="h-4 w-4" />
                 </Button>
+              </div>
+            )}
+
+            {/* More results message */}
+            {hasMoreResults && (
+              <div className="mt-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-center">
+                <p className="text-sm text-amber-400">
+                  Showing first 1,000 results. Select a specific epoch for more results.
+                </p>
               </div>
             )}
           </CardContent>

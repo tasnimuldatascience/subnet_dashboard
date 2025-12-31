@@ -7,6 +7,7 @@ import {
   MinerTracker,
   EpochAnalysis,
   SubmissionTracker,
+  FAQ,
 } from '@/components/dashboard'
 import type {
   MetagraphData,
@@ -17,6 +18,7 @@ import {
   Pickaxe,
   Layers,
   Search,
+  HelpCircle,
 } from 'lucide-react'
 
 // Server handles background refresh every 5 minutes via instrumentation.ts
@@ -26,6 +28,7 @@ import {
 interface DashboardData extends AllDashboardData {
   hours: number
   fetchedAt: number
+  serverRefreshedAt?: string
 }
 
 // Props received from Server Component
@@ -50,8 +53,10 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
   const [metagraph, setMetagraph] = useState<MetagraphData | null>(initialMetagraph)
 
   // UI state - use actual data update time from precalc table
-  const [lastRefresh, setLastRefresh] = useState<Date>(new Date(dashboardData.updatedAt))
-  const [relativeTime, setRelativeTime] = useState<string>(getRelativeTime(new Date(dashboardData.updatedAt)))
+  // Use serverRefreshedAt (when server cache was refreshed) instead of updatedAt (Supabase)
+  const initialRefreshTime = dashboardData.serverRefreshedAt || dashboardData.updatedAt
+  const [lastRefresh, setLastRefresh] = useState<Date>(new Date(initialRefreshTime))
+  const [relativeTime, setRelativeTime] = useState<string>(getRelativeTime(new Date(initialRefreshTime)))
   const [selectedMinerHotkey, setSelectedMinerHotkey] = useState<string | null>(null)
   const [selectedEpochId, setSelectedEpochId] = useState<number | null>(null)
 
@@ -69,16 +74,19 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
   useEffect(() => {
     const fetchData = async () => {
       try {
+        // Add cache-busting timestamp to bypass browser HTTP cache
+        const cacheBuster = `?t=${Date.now()}`
         const [dashboardRes, metagraphRes] = await Promise.all([
-          fetch('/api/dashboard'),
-          fetch('/api/metagraph')
+          fetch(`/api/dashboard${cacheBuster}`),
+          fetch(`/api/metagraph${cacheBuster}`)
         ])
         if (dashboardRes.ok) {
           const newData = await dashboardRes.json()
           setDashboardData(newData)
-          const newRefresh = new Date(newData.updatedAt)
-          setLastRefresh(newRefresh)
-          setRelativeTime(getRelativeTime(newRefresh))
+          // Use serverRefreshedAt (when server cache was refreshed)
+          const refreshTime = new Date(newData.serverRefreshedAt || newData.updatedAt)
+          setLastRefresh(refreshTime)
+          setRelativeTime(getRelativeTime(refreshTime))
         }
         if (metagraphRes.ok) {
           const newMetagraph = await metagraphRes.json()
@@ -224,7 +232,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4 md:space-y-6">
           <div className="overflow-x-auto -mx-4 px-4 md:mx-0 md:px-0">
-            <TabsList className="inline-flex w-auto min-w-full md:grid md:w-full md:grid-cols-4 gap-1">
+            <TabsList className="inline-flex w-auto min-w-full md:grid md:w-full md:grid-cols-5 gap-1">
               <TabsTrigger value="overview" className="gap-1 md:gap-2 px-2 md:px-4 text-xs md:text-sm whitespace-nowrap">
                 <LayoutDashboard className="h-3 w-3 md:h-4 md:w-4" />
                 <span className="hidden sm:inline">Overview</span>
@@ -244,6 +252,11 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
                 <Search className="h-3 w-3 md:h-4 md:w-4" />
                 <span className="hidden sm:inline">Lead Search</span>
                 <span className="sm:hidden">Search</span>
+              </TabsTrigger>
+              <TabsTrigger value="faq" className="gap-1 md:gap-2 px-2 md:px-4 text-xs md:text-sm whitespace-nowrap">
+                <HelpCircle className="h-3 w-3 md:h-4 md:w-4" />
+                <span className="hidden sm:inline">FAQ</span>
+                <span className="sm:hidden">FAQ</span>
               </TabsTrigger>
             </TabsList>
           </div>
@@ -265,6 +278,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
             <MinerTracker
               minerStats={minerStats}
               activeMiners={activeMiners}
+              metagraph={metagraph}
               externalSelectedMiner={selectedMinerHotkey}
               onMinerSelected={() => setSelectedMinerHotkey(null)}
             />
@@ -284,9 +298,14 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
             <SubmissionTracker
               minerStats={minerStats}
               epochStats={epochStats}
+              metagraph={metagraph}
               onUidClick={handleUidClick}
               onEpochClick={handleEpochClick}
             />
+          </TabsContent>
+
+          <TabsContent value="faq" keepMounted>
+            <FAQ />
           </TabsContent>
         </Tabs>
       </div>

@@ -92,6 +92,8 @@ export interface LeadInventoryCount {
 export interface MetagraphData {
   hotkeyToUid: Record<string, number>
   uidToHotkey: Record<number, string>
+  hotkeyToColdkey: Record<string, string>
+  coldkeyToHotkeys: Record<string, string[]>
   incentives: Record<string, number>
   emissions: Record<string, number>
   stakes: Record<string, number>

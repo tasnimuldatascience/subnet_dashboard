@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { fetchAllDashboardData } from '@/lib/db-precalc'
 import { fetchMetagraph } from '@/lib/metagraph'
+import { getCacheTimestamp } from '@/lib/cache'
 
 export async function GET() {
   try {
@@ -12,10 +13,14 @@ export async function GET() {
     // Fetch pre-calculated dashboard data
     const data = await fetchAllDashboardData(0, metagraph)
 
+    // Get server cache refresh time
+    const serverRefreshedAt = getCacheTimestamp('precalc')?.toISOString() || new Date().toISOString()
+
     const response = NextResponse.json({
       ...data,
       hours: 0,
       fetchedAt: Date.now(),
+      serverRefreshedAt,
     })
 
     // Short HTTP cache (data refreshes every 5 min via pg_cron)

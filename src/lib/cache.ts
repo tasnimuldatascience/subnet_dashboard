@@ -49,6 +49,18 @@ export function setCache<T>(key: string, data: T): void {
   })
 }
 
+// Get the timestamp when cache was last refreshed
+export function getCacheTimestamp(key: string): Date | null {
+  const entry = cache.get(key)
+  if (!entry) return null
+  return new Date(entry.timestamp)
+}
+
+// Clear cache entry to force fresh fetch
+export function clearCache(key: string): void {
+  cache.delete(key)
+}
+
 // Warm cache on server start - called from instrumentation.ts
 export async function warmCache(): Promise<void> {
   console.log('[Cache] Warming cache...')
@@ -81,24 +93,24 @@ export async function warmCache(): Promise<void> {
 // Background refresh interval (5 minutes)
 const REFRESH_INTERVAL = 5 * 60 * 1000
 
-// Calculate ms until next refresh time (synced to :01, :06, :11, :16, etc.)
-// This ensures we refresh 1 minute after Supabase updates at :00, :05, :10, etc.
+// Calculate ms until next refresh time (synced to :02, :07, :12, :17, etc.)
+// This ensures we refresh 2 minutes after Supabase updates at :00, :05, :10, etc.
 function getMsUntilNextRefresh(): number {
   const now = new Date()
   const minutes = now.getMinutes()
   const seconds = now.getSeconds()
   const ms = now.getMilliseconds()
 
-  // Find next minute ending in 1 or 6 (i.e., 1, 6, 11, 16, 21, 26, 31, 36, 41, 46, 51, 56)
+  // Find next minute ending in 2 or 7 (i.e., 2, 7, 12, 17, 22, 27, 32, 37, 42, 47, 52, 57)
   const currentMinuteInCycle = minutes % 5
   let minutesUntilNext: number
 
-  if (currentMinuteInCycle < 1) {
-    // Current minute is 0, 5, 10, etc. - next refresh is in (1 - currentMinuteInCycle) minutes
-    minutesUntilNext = 1 - currentMinuteInCycle
+  if (currentMinuteInCycle < 2) {
+    // Current minute is 0-1, 5-6, 10-11, etc. - next refresh is in (2 - currentMinuteInCycle) minutes
+    minutesUntilNext = 2 - currentMinuteInCycle
   } else {
-    // Current minute is 1-4, 6-9, etc. - next refresh is in (6 - currentMinuteInCycle) minutes
-    minutesUntilNext = 6 - currentMinuteInCycle
+    // Current minute is 2-4, 7-9, etc. - next refresh is in (7 - currentMinuteInCycle) minutes
+    minutesUntilNext = 7 - currentMinuteInCycle
   }
 
   // Subtract current seconds and ms
@@ -113,6 +125,10 @@ async function doRefresh(): Promise<void> {
   const startTime = Date.now()
 
   try {
+    // Clear existing cache to force fresh fetch from database
+    clearCache('dashboard_precalc')
+    clearCache('metagraph')
+
     const { fetchMetagraph } = await import('./metagraph')
     const { fetchAllDashboardData, warmLatestLeadsCache } = await import('./db-precalc')
 

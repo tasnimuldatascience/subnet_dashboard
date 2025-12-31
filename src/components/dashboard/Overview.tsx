@@ -83,18 +83,14 @@ export function Overview({
   }, [])
 
   // Get current lead inventory from unique lead_ids count (CONSENSUS_RESULT)
-  const currentLeadInventory = useMemo(() => {
-    // Use the new leadInventoryCount if available (unique lead_ids from CONSENSUS_RESULT)
-    if (leadInventoryCount) {
-      return leadInventoryCount.accepted
-    }
-    // Fallback to old calculation from inventoryData
-    if (inventoryData.length === 0) return 0
-    const sorted = [...inventoryData].sort((a, b) =>
-      new Date(b.date).getTime() - new Date(a.date).getTime()
-    )
-    return sorted[0]?.totalValidInventory ?? 0
-  }, [leadInventoryCount, inventoryData])
+  // Use leadInventoryCount if available, otherwise fallback to latest inventoryData
+  const currentLeadInventory = leadInventoryCount
+    ? leadInventoryCount.accepted
+    : (inventoryData.length > 0
+        ? [...inventoryData].sort((a, b) =>
+            new Date(b.date).getTime() - new Date(a.date).getTime()
+          )[0]?.totalValidInventory ?? 0
+        : 0)
 
   // Leaderboard data uses pre-calculated epoch stats from minerStats
   const leaderboardData = minerStats

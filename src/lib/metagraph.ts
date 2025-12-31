@@ -67,6 +67,8 @@ async function fetchMetagraphFromBittensor(): Promise<MetagraphData> {
     return {
       hotkeyToUid: {},
       uidToHotkey: {},
+      hotkeyToColdkey: {},
+      coldkeyToHotkeys: {},
       incentives: {},
       emissions: {},
       stakes: {},

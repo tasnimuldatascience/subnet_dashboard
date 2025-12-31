@@ -33,6 +33,7 @@ async function performSearch(
   uid: string | null,
   epoch: string | null,
   leadId: string | null,
+  hotkeys: string[] | null,
   limit: number
 ): Promise<SearchResult[]> {
   const startTime = Date.now()
@@ -396,6 +397,109 @@ async function performSearch(
 
         if (results.length >= limit) break
       }
+    } else if (hotkeys && hotkeys.length > 0) {
+      // HOTKEYS FILTER (for coldkey search): Query by multiple hotkeys
+      const BATCH_SIZE = 1000
+      const seenHashes = new Set<string>()
+      const allSubs: { email_hash: string, actor_hotkey: string, payload: unknown, ts: string }[] = []
+
+      // Fetch submissions for each hotkey
+      for (const hotkey of hotkeys) {
+        if (allSubs.length >= limit * 2) break
+
+        let offset = 0
+        let hasMore = true
+
+        while (hasMore && allSubs.length < limit * 2) {
+          const { data: subData, error: subError } = await supabase
+            .from('transparency_log')
+            .select('email_hash, actor_hotkey, payload, ts')
+            .eq('event_type', 'SUBMISSION')
+            .eq('actor_hotkey', hotkey)
+            .not('email_hash', 'is', null)
+            .order('ts', { ascending: false })
+            .range(offset, offset + BATCH_SIZE - 1)
+
+          if (subError) {
+            console.error('[Lead Search API] Submission batch error:', subError)
+            break
+          }
+
+          if (!subData || subData.length === 0) {
+            hasMore = false
+            break
+          }
+
+          for (const sub of subData) {
+            if (!sub.email_hash || seenHashes.has(sub.email_hash)) continue
+            seenHashes.add(sub.email_hash)
+            allSubs.push(sub)
+          }
+
+          if (subData.length < BATCH_SIZE) {
+            hasMore = false
+          } else {
+            offset += BATCH_SIZE
+          }
+        }
+      }
+
+      console.log(`[Lead Search API] Fetched ${allSubs.length} unique submissions for ${hotkeys.length} hotkeys`)
+
+      if (allSubs.length === 0) {
+        return []
+      }
+
+      // Get consensus for email hashes (in batches of 50)
+      const hashes = Array.from(seenHashes)
+      const consensusMap = new Map<string, { epochId: number | null, decision: string, repScore: number | null, rejectionReason: string | null }>()
+
+      for (let i = 0; i < hashes.length; i += 50) {
+        const batch = hashes.slice(i, i + 50)
+        const { data: consData } = await supabase
+          .from('transparency_log')
+          .select('email_hash, payload')
+          .eq('event_type', 'CONSENSUS_RESULT')
+          .in('email_hash', batch)
+
+        if (consData) {
+          for (const c of consData) {
+            if (!c.email_hash) continue
+            const p = c.payload as { epoch_id?: number, final_decision?: string, final_rep_score?: number, primary_rejection_reason?: string }
+            consensusMap.set(c.email_hash, {
+              epochId: p?.epoch_id ?? null,
+              decision: p?.final_decision ?? '',
+              repScore: p?.final_rep_score ?? null,
+              rejectionReason: cleanRejectionReason(p?.primary_rejection_reason)
+            })
+          }
+        }
+      }
+
+      // Build results (sorted by timestamp)
+      allSubs.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime())
+
+      for (const sub of allSubs) {
+        const uidVal = hotkeyToUid[sub.actor_hotkey]
+        if (uidVal === undefined) continue // Skip inactive miners
+
+        const cons = consensusMap.get(sub.email_hash)
+        const payload = sub.payload as { lead_id?: string }
+
+        results.push({
+          emailHash: sub.email_hash,
+          minerHotkey: sub.actor_hotkey,
+          leadId: payload?.lead_id ?? null,
+          uid: uidVal,
+          epochId: cons?.epochId ?? null,
+          decision: cons ? normalizeDecision(cons.decision) : 'PENDING',
+          repScore: cons?.repScore ?? null,
+          rejectionReason: cons?.rejectionReason ?? null,
+          timestamp: sub.ts
+        })
+
+        if (results.length >= limit) break
+      }
     }
 
   const elapsed = Date.now() - startTime
@@ -410,20 +514,22 @@ export async function GET(request: NextRequest) {
     const uid = searchParams.get('uid')
     const epoch = searchParams.get('epoch')
     const leadId = searchParams.get('leadId')
+    const hotkeysParam = searchParams.get('hotkeys')
+    const hotkeys = hotkeysParam ? hotkeysParam.split(',').filter(h => h.trim()) : null
     const limit = Math.min(parseInt(searchParams.get('limit') || '10000', 10), 50000)
 
     // Need at least one filter
-    if (!uid && !epoch && !leadId) {
+    if (!uid && !epoch && !leadId && (!hotkeys || hotkeys.length === 0)) {
       return NextResponse.json(
-        { error: 'At least one filter (uid, epoch, or leadId) is required' },
+        { error: 'At least one filter (uid, epoch, leadId, or hotkeys) is required' },
         { status: 400 }
       )
     }
 
     // Create cache key from search params
-    const cacheKey = `${uid || ''}-${epoch || ''}-${leadId || ''}-${limit}`
+    const cacheKey = `${uid || ''}-${epoch || ''}-${leadId || ''}-${hotkeysParam || ''}-${limit}`
 
-    console.log(`[Lead Search API] Searching: uid=${uid}, epoch=${epoch}, leadId=${leadId}`)
+    console.log(`[Lead Search API] Searching: uid=${uid}, epoch=${epoch}, leadId=${leadId}, hotkeys=${hotkeys?.length || 0}`)
 
     // Check if identical search is already in-flight
     if (inFlightSearches.has(cacheKey)) {
@@ -437,15 +543,17 @@ export async function GET(request: NextRequest) {
     }
 
     // Start new search and track it
-    const searchPromise = performSearch(uid, epoch, leadId, limit)
+    const searchPromise = performSearch(uid, epoch, leadId, hotkeys, limit)
     inFlightSearches.set(cacheKey, searchPromise)
 
     try {
       const results = await searchPromise
+      const hasMore = results.length >= limit
       return NextResponse.json({
         results,
         total: results.length,
         returned: results.length,
+        hasMore,
       })
     } finally {
       // Clean up after search completes (success or error)

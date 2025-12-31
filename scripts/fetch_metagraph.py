@@ -15,6 +15,8 @@ try:
 
     hotkey_to_uid = {}
     uid_to_hotkey = {}
+    hotkey_to_coldkey = {}
+    coldkey_to_hotkeys = {}
     incentives = {}
     emissions = {}
     stakes = {}
@@ -24,8 +26,16 @@ try:
 
     for uid in range(n_neurons):
         hotkey = metagraph.hotkeys[uid]
+        coldkey = metagraph.coldkeys[uid]
+
         hotkey_to_uid[hotkey] = uid
         uid_to_hotkey[uid] = hotkey
+        hotkey_to_coldkey[hotkey] = coldkey
+
+        # Group hotkeys by coldkey
+        if coldkey not in coldkey_to_hotkeys:
+            coldkey_to_hotkeys[coldkey] = []
+        coldkey_to_hotkeys[coldkey].append(hotkey)
 
         # Get incentive (normalized 0-1)
         if hasattr(metagraph, 'incentive'):
@@ -74,6 +84,8 @@ try:
     result = {
         'hotkeyToUid': hotkey_to_uid,
         'uidToHotkey': uid_to_hotkey,
+        'hotkeyToColdkey': hotkey_to_coldkey,
+        'coldkeyToHotkeys': coldkey_to_hotkeys,
         'incentives': incentives,
         'emissions': emissions,
         'stakes': stakes,
@@ -87,6 +99,8 @@ except Exception as e:
     result = {
         'hotkeyToUid': {},
         'uidToHotkey': {},
+        'hotkeyToColdkey': {},
+        'coldkeyToHotkeys': {},
         'incentives': {},
         'emissions': {},
         'stakes': {},
