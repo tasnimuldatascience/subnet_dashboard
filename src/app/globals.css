@@ -173,3 +173,13 @@
 *::-webkit-scrollbar-corner {
   background: transparent;
 }
+
+/* Hide scrollbar on mobile */
+@media (max-width: 768px) {
+  * {
+    scrollbar-width: none;
+  }
+  *::-webkit-scrollbar {
+    display: none;
+  }
+}

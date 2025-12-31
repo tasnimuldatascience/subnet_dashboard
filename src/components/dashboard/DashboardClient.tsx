@@ -226,9 +226,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
                 Leadpoet Subnet Dashboard
               </h1>
               <p className="text-xs sm:text-sm text-muted-foreground mt-1">
-                <span title="Server cache refresh time">Server: {serverRelativeTime}</span>
-                <span className="mx-1">•</span>
-                <span title="Your last data fetch">You: {userRelativeTime}</span>
+                <span>Updated {serverRelativeTime}</span>
                 <span className="hidden sm:inline">{' '}| <strong>{(dashboardData.totalSubmissionCount || metrics.total).toLocaleString()}</strong> total lead submissions</span>
               </p>
             </div>
