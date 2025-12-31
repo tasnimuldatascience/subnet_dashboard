@@ -235,35 +235,32 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4 md:space-y-6">
-          <div className="overflow-x-auto -mx-4 px-4 md:mx-0 md:px-0">
-            <TabsList className="inline-flex w-auto min-w-full md:grid md:w-full md:grid-cols-5 gap-1">
-              <TabsTrigger value="overview" className="gap-1 md:gap-2 px-2 md:px-4 text-xs md:text-sm whitespace-nowrap">
-                <LayoutDashboard className="h-3 w-3 md:h-4 md:w-4" />
-                <span className="hidden sm:inline">Overview</span>
-                <span className="sm:hidden">Home</span>
-              </TabsTrigger>
-              <TabsTrigger value="miner-tracker" className="gap-1 md:gap-2 px-2 md:px-4 text-xs md:text-sm whitespace-nowrap">
-                <Pickaxe className="h-3 w-3 md:h-4 md:w-4" />
-                <span className="hidden sm:inline">Miner Tracker</span>
-                <span className="sm:hidden">Miners</span>
-              </TabsTrigger>
-              <TabsTrigger value="epoch-analysis" className="gap-1 md:gap-2 px-2 md:px-4 text-xs md:text-sm whitespace-nowrap">
-                <Layers className="h-3 w-3 md:h-4 md:w-4" />
-                <span className="hidden sm:inline">Epoch Analysis</span>
-                <span className="sm:hidden">Epochs</span>
-              </TabsTrigger>
-              <TabsTrigger value="submission-tracker" className="gap-1 md:gap-2 px-2 md:px-4 text-xs md:text-sm whitespace-nowrap">
-                <Search className="h-3 w-3 md:h-4 md:w-4" />
-                <span className="hidden sm:inline">Lead Search</span>
-                <span className="sm:hidden">Search</span>
-              </TabsTrigger>
-              <TabsTrigger value="faq" className="gap-1 md:gap-2 px-2 md:px-4 text-xs md:text-sm whitespace-nowrap">
-                <HelpCircle className="h-3 w-3 md:h-4 md:w-4" />
-                <span className="hidden sm:inline">FAQ</span>
-                <span className="sm:hidden">FAQ</span>
-              </TabsTrigger>
-            </TabsList>
-          </div>
+          <TabsList className="grid w-full grid-cols-5 gap-0.5 sm:gap-1">
+            <TabsTrigger value="overview" className="flex-1 gap-0.5 sm:gap-1 md:gap-2 px-1 sm:px-2 md:px-4 text-[10px] sm:text-xs md:text-sm">
+              <LayoutDashboard className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4" />
+              <span className="hidden xs:inline sm:hidden">Home</span>
+              <span className="hidden sm:inline">Overview</span>
+            </TabsTrigger>
+            <TabsTrigger value="miner-tracker" className="flex-1 gap-0.5 sm:gap-1 md:gap-2 px-1 sm:px-2 md:px-4 text-[10px] sm:text-xs md:text-sm">
+              <Pickaxe className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4" />
+              <span className="hidden xs:inline sm:hidden">Miners</span>
+              <span className="hidden sm:inline">Miner Tracker</span>
+            </TabsTrigger>
+            <TabsTrigger value="epoch-analysis" className="flex-1 gap-0.5 sm:gap-1 md:gap-2 px-1 sm:px-2 md:px-4 text-[10px] sm:text-xs md:text-sm">
+              <Layers className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4" />
+              <span className="hidden xs:inline sm:hidden">Epochs</span>
+              <span className="hidden sm:inline">Epoch Analysis</span>
+            </TabsTrigger>
+            <TabsTrigger value="submission-tracker" className="flex-1 gap-0.5 sm:gap-1 md:gap-2 px-1 sm:px-2 md:px-4 text-[10px] sm:text-xs md:text-sm">
+              <Search className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4" />
+              <span className="hidden xs:inline sm:hidden">Search</span>
+              <span className="hidden sm:inline">Lead Search</span>
+            </TabsTrigger>
+            <TabsTrigger value="faq" className="flex-1 gap-0.5 sm:gap-1 md:gap-2 px-1 sm:px-2 md:px-4 text-[10px] sm:text-xs md:text-sm">
+              <HelpCircle className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4" />
+              <span className="hidden sm:inline">FAQ</span>
+            </TabsTrigger>
+          </TabsList>
 
           <TabsContent value="overview" keepMounted>
             <Overview
