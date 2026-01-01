@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server'
 import { fetchAllDashboardData } from '@/lib/db-precalc'
 import { fetchMetagraph } from '@/lib/metagraph'
-import { getCacheTimestamp } from '@/lib/cache'
 import { getRelativeTime } from '@/lib/server-data'
 
 export async function GET() {
@@ -14,8 +13,8 @@ export async function GET() {
     // Fetch pre-calculated dashboard data
     const data = await fetchAllDashboardData(0, metagraph)
 
-    // Get server cache refresh time (fallback to Supabase updatedAt if cache not yet populated)
-    const serverRefreshedAt = getCacheTimestamp('dashboard_precalc')?.toISOString() || data.updatedAt
+    // Use Supabase updatedAt directly - this is when pg_cron last refreshed the data
+    const serverRefreshedAt = data.updatedAt
     const serverRelativeTime = getRelativeTime(new Date(serverRefreshedAt))
 
     const response = NextResponse.json({

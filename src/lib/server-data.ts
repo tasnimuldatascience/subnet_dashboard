@@ -3,7 +3,6 @@
 
 import { fetchAllDashboardData, type AllDashboardData } from './db-precalc'
 import { fetchMetagraph } from './metagraph'
-import { getCacheTimestamp } from './cache'
 import type { MetagraphData } from './types'
 
 // Helper function to calculate relative time string (server-side)
@@ -32,8 +31,8 @@ export async function getInitialPageData(): Promise<InitialPageData> {
   // Fetch pre-calculated dashboard data
   const dashboardData = await fetchAllDashboardData(0, metagraph)
 
-  // Get server cache refresh time (fallback to Supabase updatedAt if cache not yet populated)
-  const serverRefreshedAt = getCacheTimestamp('dashboard_precalc')?.toISOString() || dashboardData.updatedAt
+  // Use Supabase updatedAt directly - this is when pg_cron last refreshed the data
+  const serverRefreshedAt = dashboardData.updatedAt
   const serverRelativeTime = getRelativeTime(new Date(serverRefreshedAt))
 
   const fetchTime = Date.now() - startTime
