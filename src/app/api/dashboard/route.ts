@@ -3,6 +3,9 @@ import { fetchAllDashboardData } from '@/lib/db-precalc'
 import { fetchMetagraph } from '@/lib/metagraph'
 import { getRelativeTime } from '@/lib/server-data'
 
+// Build version - changes on each deploy, triggers client reload
+const BUILD_VERSION = process.env.BUILD_TIME || Date.now().toString()
+
 export async function GET() {
   try {
     console.log('[Dashboard API] Fetching data from precalc...')
@@ -23,6 +26,7 @@ export async function GET() {
       fetchedAt: Date.now(),
       serverRefreshedAt,
       serverRelativeTime,
+      buildVersion: BUILD_VERSION,
     })
 
     // Short HTTP cache (data refreshes every 5 min via pg_cron)

@@ -5,6 +5,9 @@ import { fetchAllDashboardData, type AllDashboardData } from './db-precalc'
 import { fetchMetagraph } from './metagraph'
 import type { MetagraphData } from './types'
 
+// Build version - changes on each deploy, triggers client reload
+const BUILD_VERSION = process.env.BUILD_TIME || Date.now().toString()
+
 // Helper function to calculate relative time string (server-side)
 export function getRelativeTime(date: Date): string {
   const now = new Date()
@@ -16,7 +19,7 @@ export function getRelativeTime(date: Date): string {
 }
 
 export interface InitialPageData {
-  dashboardData: AllDashboardData & { hours: number; fetchedAt: number; serverRefreshedAt: string; serverRelativeTime: string }
+  dashboardData: AllDashboardData & { hours: number; fetchedAt: number; serverRefreshedAt: string; serverRelativeTime: string; buildVersion: string }
   metagraph: MetagraphData | null
 }
 
@@ -45,6 +48,7 @@ export async function getInitialPageData(): Promise<InitialPageData> {
       fetchedAt: Date.now(),
       serverRefreshedAt,
       serverRelativeTime,
+      buildVersion: BUILD_VERSION,
     },
     metagraph,
   }

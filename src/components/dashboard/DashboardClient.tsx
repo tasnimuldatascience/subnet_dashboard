@@ -30,6 +30,7 @@ interface DashboardData extends AllDashboardData {
   fetchedAt: number
   serverRefreshedAt?: string
   serverRelativeTime?: string
+  buildVersion?: string
 }
 
 // Props received from Server Component
@@ -53,6 +54,8 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
 
   // Auto-fetch new data every 60 seconds to stay synced with server
   useEffect(() => {
+    const initialBuildVersion = initialData.buildVersion
+
     const fetchData = async () => {
       try {
         // Add cache-busting timestamp to bypass browser HTTP cache
@@ -63,6 +66,15 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
         ])
         if (dashboardRes.ok) {
           const newData = await dashboardRes.json()
+
+          // Check if server was redeployed - reload page to get new JS
+          if (initialBuildVersion && newData.buildVersion &&
+              newData.buildVersion !== initialBuildVersion) {
+            console.log('[Dashboard] New version detected, reloading...')
+            window.location.reload()
+            return
+          }
+
           setDashboardData(newData)
         }
         if (metagraphRes.ok) {
@@ -76,7 +88,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
 
     const interval = setInterval(fetchData, 60 * 1000) // Every 60 seconds to sync with server
     return () => clearInterval(interval)
-  }, [])
+  }, [initialData.buildVersion])
 
   // Handle navigation from SubmissionTracker to MinerTracker
   const handleUidClick = useCallback((uid: number) => {
