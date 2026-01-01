@@ -10,10 +10,14 @@ interface CacheEntry<T> {
 const globalForCache = globalThis as unknown as {
   precalcCache: Map<string, CacheEntry<unknown>>
   refreshInterval: NodeJS.Timeout | null
+  lastBackgroundRefresh: Date | null  // Separate timestamp for background refresh only
 }
 
 if (!globalForCache.precalcCache) {
   globalForCache.precalcCache = new Map()
+}
+if (!globalForCache.lastBackgroundRefresh) {
+  globalForCache.lastBackgroundRefresh = null
 }
 
 const cache = globalForCache.precalcCache
@@ -49,11 +53,22 @@ export function setCache<T>(key: string, data: T): void {
   })
 }
 
-// Get the timestamp when cache was last refreshed
+// Get the timestamp when cache was last refreshed by background task
 export function getCacheTimestamp(key: string): Date | null {
+  // Return the background refresh timestamp (not the cache entry timestamp)
+  // This ensures we show when data was actually refreshed, not when it was last fetched
+  if (key === 'dashboard_precalc' && globalForCache.lastBackgroundRefresh) {
+    return globalForCache.lastBackgroundRefresh
+  }
+  // Fallback to cache entry timestamp
   const entry = cache.get(key)
   if (!entry) return null
   return new Date(entry.timestamp)
+}
+
+// Set the background refresh timestamp (called only during background refresh)
+export function setBackgroundRefreshTimestamp(): void {
+  globalForCache.lastBackgroundRefresh = new Date()
 }
 
 // Clear cache entry to force fresh fetch
@@ -82,6 +97,9 @@ export async function warmCache(): Promise<void> {
     // Warm latest leads cache
     await warmLatestLeadsCache(metagraph)
     console.log('[Cache] Latest leads cached')
+
+    // Set the background refresh timestamp
+    setBackgroundRefreshTimestamp()
 
     console.log(`[Cache] Warm-up completed in ${Date.now() - startTime}ms`)
   } catch (error) {
@@ -140,6 +158,9 @@ async function doRefresh(): Promise<void> {
 
     // Refresh latest leads
     await warmLatestLeadsCache(metagraph)
+
+    // Set the background refresh timestamp
+    setBackgroundRefreshTimestamp()
 
     console.log(`[Cache] Background refresh completed in ${Date.now() - startTime}ms`)
   } catch (error) {
