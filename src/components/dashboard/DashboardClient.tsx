@@ -22,7 +22,7 @@ import {
 } from 'lucide-react'
 
 // Server handles background refresh every 5 minutes via instrumentation.ts
-// Client auto-refreshes data every 5 minutes; relative time is calculated server-side
+// Client polls every 30 seconds to stay in sync with server cache
 
 // Dashboard data from API
 interface DashboardData extends AllDashboardData {
@@ -99,7 +99,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
       }
     }
 
-    const interval = setInterval(fetchData, 5 * 60 * 1000) // Every 5 minutes
+    const interval = setInterval(fetchData, 30 * 1000) // Every 30 seconds to sync with server
     return () => clearInterval(interval)
   }, [])
 
