@@ -38,41 +38,19 @@ export interface DashboardClientProps {
   metagraph: MetagraphData | null
 }
 
-// Helper function to calculate relative time string (client-side updates)
-function getRelativeTime(date: Date): string {
-  const now = new Date()
-  const diff = Math.floor((now.getTime() - date.getTime()) / 1000)
-  if (diff < 60) return 'just now'
-  if (diff < 3600) return `${Math.floor(diff / 60)} minute${Math.floor(diff / 60) === 1 ? '' : 's'} ago`
-  if (diff < 86400) return `${Math.floor(diff / 3600)} hour${Math.floor(diff / 3600) === 1 ? '' : 's'} ago`
-  return `${Math.floor(diff / 86400)} day${Math.floor(diff / 86400) === 1 ? '' : 's'} ago`
-}
-
 export function DashboardClient({ initialData, metagraph: initialMetagraph }: DashboardClientProps) {
   // Dashboard data state (aggregated results only - no raw data!)
   const [dashboardData, setDashboardData] = useState<DashboardData>(initialData)
   const [metagraph, setMetagraph] = useState<MetagraphData | null>(initialMetagraph)
 
-  // UI state - initial value from server, then updated client-side
-  const [serverRefreshTime, setServerRefreshTime] = useState<Date>(
-    new Date(initialData.serverRefreshedAt || initialData.updatedAt)
-  )
+  // UI state - always use server-provided relative time (no client-side recalculation)
   const [serverRelativeTime, setServerRelativeTime] = useState<string>(initialData.serverRelativeTime || 'just now')
   const [selectedMinerHotkey, setSelectedMinerHotkey] = useState<string | null>(null)
   const [selectedEpochId, setSelectedEpochId] = useState<number | null>(null)
 
   const [activeTab, setActiveTab] = useState('overview')
 
-  // Update relative time display every minute (client-side)
-  useEffect(() => {
-    // Update immediately on mount/change, then every 60 seconds
-    const updateTime = () => setServerRelativeTime(getRelativeTime(serverRefreshTime))
-    updateTime() // Run immediately
-    const interval = setInterval(updateTime, 60000)
-    return () => clearInterval(interval)
-  }, [serverRefreshTime])
-
-  // Auto-fetch new data every 5 minutes
+  // Auto-fetch new data every 30 seconds to stay synced with server
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -85,10 +63,8 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
         if (dashboardRes.ok) {
           const newData = await dashboardRes.json()
           setDashboardData(newData)
-          // Update server refresh time and relative time
-          const serverTime = new Date(newData.serverRefreshedAt || newData.updatedAt)
-          setServerRefreshTime(serverTime)
-          setServerRelativeTime(newData.serverRelativeTime || getRelativeTime(serverTime))
+          // Use server-provided relative time directly
+          setServerRelativeTime(newData.serverRelativeTime || 'just now')
         }
         if (metagraphRes.ok) {
           const newMetagraph = await metagraphRes.json()
