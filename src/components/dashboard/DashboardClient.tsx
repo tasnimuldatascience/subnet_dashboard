@@ -75,7 +75,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
       }
     }
 
-    const interval = setInterval(fetchData, 30 * 1000) // Every 30 seconds to sync with server
+    const interval = setInterval(fetchData, 60 * 1000) // Every 60 seconds to sync with server
     return () => clearInterval(interval)
   }, [])
 
