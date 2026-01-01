@@ -1,10 +1,7 @@
 import { NextResponse } from 'next/server'
 import { fetchAllDashboardData } from '@/lib/db-precalc'
 import { fetchMetagraph } from '@/lib/metagraph'
-import { getRelativeTime } from '@/lib/server-data'
-
-// Build version - changes on each deploy, triggers client reload
-const BUILD_VERSION = process.env.BUILD_TIME || Date.now().toString()
+import { getRelativeTime, BUILD_VERSION } from '@/lib/server-data'
 
 export async function GET() {
   try {
