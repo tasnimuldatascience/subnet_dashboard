@@ -22,13 +22,14 @@ import {
 } from 'lucide-react'
 
 // Server handles background refresh every 5 minutes via instrumentation.ts
-// Client auto-refreshes data every 5 minutes and updates time display every minute
+// Client auto-refreshes data every 5 minutes; relative time is calculated server-side
 
 // Dashboard data from API
 interface DashboardData extends AllDashboardData {
   hours: number
   fetchedAt: number
   serverRefreshedAt?: string
+  serverRelativeTime?: string
 }
 
 // Props received from Server Component
@@ -37,7 +38,7 @@ export interface DashboardClientProps {
   metagraph: MetagraphData | null
 }
 
-// Helper function to calculate relative time string
+// Helper function to calculate relative time string (client-side updates)
 function getRelativeTime(date: Date): string {
   const now = new Date()
   const diff = Math.floor((now.getTime() - date.getTime()) / 1000)
@@ -52,25 +53,24 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
   const [dashboardData, setDashboardData] = useState<DashboardData>(initialData)
   const [metagraph, setMetagraph] = useState<MetagraphData | null>(initialMetagraph)
 
-  // UI state - track both server and user refresh times
-  const initialServerTime = dashboardData.serverRefreshedAt || dashboardData.updatedAt
-  const [serverRefreshTime, setServerRefreshTime] = useState<Date>(new Date(initialServerTime))
-  const [userRefreshTime, setUserRefreshTime] = useState<Date>(new Date())
-  const [serverRelativeTime, setServerRelativeTime] = useState<string>(getRelativeTime(new Date(initialServerTime)))
-  const [userRelativeTime, setUserRelativeTime] = useState<string>(getRelativeTime(new Date()))
+  // UI state - initial value from server, then updated client-side
+  const [serverRefreshTime, setServerRefreshTime] = useState<Date>(
+    new Date(initialData.serverRefreshedAt || initialData.updatedAt)
+  )
+  const [serverRelativeTime, setServerRelativeTime] = useState<string>(initialData.serverRelativeTime || 'just now')
   const [selectedMinerHotkey, setSelectedMinerHotkey] = useState<string | null>(null)
   const [selectedEpochId, setSelectedEpochId] = useState<number | null>(null)
 
   const [activeTab, setActiveTab] = useState('overview')
 
-  // Update relative time displays every minute
+  // Update relative time display every minute (client-side)
   useEffect(() => {
-    const interval = setInterval(() => {
-      setServerRelativeTime(getRelativeTime(serverRefreshTime))
-      setUserRelativeTime(getRelativeTime(userRefreshTime))
-    }, 60000) // Every 60 seconds
+    // Update immediately on mount/change, then every 60 seconds
+    const updateTime = () => setServerRelativeTime(getRelativeTime(serverRefreshTime))
+    updateTime() // Run immediately
+    const interval = setInterval(updateTime, 60000)
     return () => clearInterval(interval)
-  }, [serverRefreshTime, userRefreshTime])
+  }, [serverRefreshTime])
 
   // Auto-fetch new data every 5 minutes
   useEffect(() => {
@@ -85,14 +85,10 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
         if (dashboardRes.ok) {
           const newData = await dashboardRes.json()
           setDashboardData(newData)
-          // Update server refresh time (when server cache was refreshed)
+          // Update server refresh time and relative time
           const serverTime = new Date(newData.serverRefreshedAt || newData.updatedAt)
           setServerRefreshTime(serverTime)
-          setServerRelativeTime(getRelativeTime(serverTime))
-          // Update user refresh time (now)
-          const userTime = new Date()
-          setUserRefreshTime(userTime)
-          setUserRelativeTime(getRelativeTime(userTime))
+          setServerRelativeTime(newData.serverRelativeTime || getRelativeTime(serverTime))
         }
         if (metagraphRes.ok) {
           const newMetagraph = await metagraphRes.json()

@@ -6,8 +6,18 @@ import { fetchMetagraph } from './metagraph'
 import { getCacheTimestamp } from './cache'
 import type { MetagraphData } from './types'
 
+// Helper function to calculate relative time string (server-side)
+export function getRelativeTime(date: Date): string {
+  const now = new Date()
+  const diff = Math.floor((now.getTime() - date.getTime()) / 1000)
+  if (diff < 60) return 'just now'
+  if (diff < 3600) return `${Math.floor(diff / 60)} minute${Math.floor(diff / 60) === 1 ? '' : 's'} ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)} hour${Math.floor(diff / 3600) === 1 ? '' : 's'} ago`
+  return `${Math.floor(diff / 86400)} day${Math.floor(diff / 86400) === 1 ? '' : 's'} ago`
+}
+
 export interface InitialPageData {
-  dashboardData: AllDashboardData & { hours: number; fetchedAt: number; serverRefreshedAt: string }
+  dashboardData: AllDashboardData & { hours: number; fetchedAt: number; serverRefreshedAt: string; serverRelativeTime: string }
   metagraph: MetagraphData | null
 }
 
@@ -24,6 +34,7 @@ export async function getInitialPageData(): Promise<InitialPageData> {
 
   // Get server cache refresh time (fallback to Supabase updatedAt if cache not yet populated)
   const serverRefreshedAt = getCacheTimestamp('precalc')?.toISOString() || dashboardData.updatedAt
+  const serverRelativeTime = getRelativeTime(new Date(serverRefreshedAt))
 
   const fetchTime = Date.now() - startTime
   console.log(`[Server] Initial data fetched in ${fetchTime}ms (precalc)`)
@@ -34,6 +45,7 @@ export async function getInitialPageData(): Promise<InitialPageData> {
       hours: 0,
       fetchedAt: Date.now(),
       serverRefreshedAt,
+      serverRelativeTime,
     },
     metagraph,
   }
