@@ -24,6 +24,16 @@ import {
 // Server handles background refresh every 5 minutes via instrumentation.ts
 // Client polls every 5 minutes to stay in sync with server cache
 
+// Helper function to calculate relative time on the client
+function getRelativeTime(date: Date): string {
+  const now = new Date()
+  const diff = Math.floor((now.getTime() - date.getTime()) / 1000)
+  if (diff < 60) return 'just now'
+  if (diff < 3600) return `${Math.floor(diff / 60)} minute${Math.floor(diff / 60) === 1 ? '' : 's'} ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)} hour${Math.floor(diff / 3600) === 1 ? '' : 's'} ago`
+  return `${Math.floor(diff / 86400)} day${Math.floor(diff / 86400) === 1 ? '' : 's'} ago`
+}
+
 // Dashboard data from API
 interface DashboardData extends AllDashboardData {
   hours: number
@@ -44,8 +54,29 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
   const [dashboardData, setDashboardData] = useState<DashboardData>(initialData)
   const [metagraph, setMetagraph] = useState<MetagraphData | null>(initialMetagraph)
 
-  // Read serverRelativeTime directly from dashboardData (no separate state)
-  const serverRelativeTime = dashboardData.serverRelativeTime || 'loading...'
+  // Calculate relative time on client and update every minute
+  const [relativeTime, setRelativeTime] = useState<string>(() => {
+    if (dashboardData.serverRefreshedAt) {
+      return getRelativeTime(new Date(dashboardData.serverRefreshedAt))
+    }
+    return dashboardData.serverRelativeTime || 'loading...'
+  })
+
+  // Update relative time every minute
+  useEffect(() => {
+    const updateRelativeTime = () => {
+      if (dashboardData.serverRefreshedAt) {
+        setRelativeTime(getRelativeTime(new Date(dashboardData.serverRefreshedAt)))
+      }
+    }
+
+    // Update immediately when dashboardData changes
+    updateRelativeTime()
+
+    // Then update every minute
+    const interval = setInterval(updateRelativeTime, 60 * 1000)
+    return () => clearInterval(interval)
+  }, [dashboardData.serverRefreshedAt])
 
   const [selectedMinerHotkey, setSelectedMinerHotkey] = useState<string | null>(null)
   const [selectedEpochId, setSelectedEpochId] = useState<number | null>(null)
@@ -247,7 +278,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
                 Leadpoet Subnet Dashboard
               </h1>
               <p className="text-xs sm:text-sm text-muted-foreground mt-1">
-                <span>Updated {serverRelativeTime}</span>
+                <span>Updated {relativeTime}</span>
                 <span className="hidden sm:inline">{' '}| <strong>{(dashboardData.totalSubmissionCount || metrics.total).toLocaleString()}</strong> total lead submissions</span>
               </p>
             </div>
