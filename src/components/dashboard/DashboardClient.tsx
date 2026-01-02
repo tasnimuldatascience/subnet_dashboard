@@ -84,7 +84,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
 
   const [activeTab, setActiveTab] = useState('overview')
 
-  // Sync client refresh with server's 5-minute schedule (at :02, :07, :12, :17, etc.)
+  // Poll for fresh data every 5 minutes
   useEffect(() => {
     const initialBuildVersion = initialData.buildVersion
 
@@ -118,45 +118,11 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
       }
     }
 
-    // Calculate ms until next server refresh (at :02, :07, :12, :17, etc.)
-    // Add 10 seconds buffer to ensure server has fresh data
-    const getMsUntilNextRefresh = () => {
-      const now = new Date()
-      const minutes = now.getMinutes()
-      const seconds = now.getSeconds()
-      const ms = now.getMilliseconds()
-
-      const currentMinuteInCycle = minutes % 5
-      let minutesUntilNext: number
-
-      if (currentMinuteInCycle < 2) {
-        minutesUntilNext = 2 - currentMinuteInCycle
-      } else {
-        minutesUntilNext = 7 - currentMinuteInCycle
-      }
-
-      // Add 10 second buffer, subtract current seconds/ms
-      const msUntilNext = (minutesUntilNext * 60 * 1000) + (10 * 1000) - (seconds * 1000) - ms
-
-      return msUntilNext > 0 ? msUntilNext : 5 * 60 * 1000
-    }
-
-    // Schedule first fetch synced to server schedule
-    const msUntilFirst = getMsUntilNextRefresh()
-    console.log(`[Dashboard] Next refresh in ${Math.round(msUntilFirst / 1000)}s`)
-
-    const firstTimeout = setTimeout(() => {
-      fetchData()
-      // Then refresh every 5 minutes
-      const interval = setInterval(fetchData, 5 * 60 * 1000)
-      // Store interval ID for cleanup
-      ;(window as unknown as { dashboardInterval?: NodeJS.Timeout }).dashboardInterval = interval
-    }, msUntilFirst)
+    // Poll every 5 minutes
+    const interval = setInterval(fetchData, 5 * 60 * 1000)
 
     return () => {
-      clearTimeout(firstTimeout)
-      const interval = (window as unknown as { dashboardInterval?: NodeJS.Timeout }).dashboardInterval
-      if (interval) clearInterval(interval)
+      clearInterval(interval)
     }
   }, [initialData.buildVersion])
 
