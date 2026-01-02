@@ -6,8 +6,9 @@ import { fetchMetagraph } from './metagraph'
 import type { MetagraphData } from './types'
 
 // Build version - changes on each deploy, triggers client reload
-// Use a fixed timestamp from server start, exported for consistency across SSR and API
-export const BUILD_VERSION = process.env.BUILD_TIME || String(Date.now())
+// In dev mode, use a fixed string to prevent constant reloads
+// In production, use BUILD_TIME env var set at build time
+export const BUILD_VERSION = process.env.BUILD_TIME || (process.env.NODE_ENV === 'development' ? 'dev' : String(Date.now()))
 
 // Helper function to calculate relative time string (server-side)
 export function getRelativeTime(date: Date): string {

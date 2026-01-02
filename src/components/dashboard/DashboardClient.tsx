@@ -24,6 +24,16 @@ import {
 // Server handles background refresh every 5 minutes via instrumentation.ts
 // Client polls every 30 seconds to stay in sync with server cache
 
+// Helper function to calculate relative time on the client
+function getRelativeTime(date: Date): string {
+  const now = new Date()
+  const diff = Math.floor((now.getTime() - date.getTime()) / 1000)
+  if (diff < 60) return 'just now'
+  if (diff < 3600) return `${Math.floor(diff / 60)} minute${Math.floor(diff / 60) === 1 ? '' : 's'} ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)} hour${Math.floor(diff / 3600) === 1 ? '' : 's'} ago`
+  return `${Math.floor(diff / 86400)} day${Math.floor(diff / 86400) === 1 ? '' : 's'} ago`
+}
+
 // Dashboard data from API
 interface DashboardData extends AllDashboardData {
   hours: number
@@ -44,15 +54,36 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
   const [dashboardData, setDashboardData] = useState<DashboardData>(initialData)
   const [metagraph, setMetagraph] = useState<MetagraphData | null>(initialMetagraph)
 
-  // Read serverRelativeTime directly from dashboardData (no separate state)
-  const serverRelativeTime = dashboardData.serverRelativeTime || 'loading...'
+  // Calculate relative time on client and update every minute
+  const [relativeTime, setRelativeTime] = useState<string>(() => {
+    if (dashboardData.serverRefreshedAt) {
+      return getRelativeTime(new Date(dashboardData.serverRefreshedAt))
+    }
+    return dashboardData.serverRelativeTime || 'loading...'
+  })
+
+  // Update relative time every minute
+  useEffect(() => {
+    const updateRelativeTime = () => {
+      if (dashboardData.serverRefreshedAt) {
+        setRelativeTime(getRelativeTime(new Date(dashboardData.serverRefreshedAt)))
+      }
+    }
+
+    // Update immediately when dashboardData changes
+    updateRelativeTime()
+
+    // Then update every minute
+    const interval = setInterval(updateRelativeTime, 60 * 1000)
+    return () => clearInterval(interval)
+  }, [dashboardData.serverRefreshedAt])
 
   const [selectedMinerHotkey, setSelectedMinerHotkey] = useState<string | null>(null)
   const [selectedEpochId, setSelectedEpochId] = useState<number | null>(null)
 
   const [activeTab, setActiveTab] = useState('overview')
 
-  // Auto-fetch new data every 60 seconds to stay synced with server
+  // Sync client refresh with server's 5-minute schedule (at :02, :07, :12, :17, etc.)
   useEffect(() => {
     const initialBuildVersion = initialData.buildVersion
 
@@ -86,8 +117,46 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
       }
     }
 
-    const interval = setInterval(fetchData, 60 * 1000) // Every 60 seconds to sync with server
-    return () => clearInterval(interval)
+    // Calculate ms until next server refresh (at :02, :07, :12, :17, etc.)
+    // Add 10 seconds buffer to ensure server has fresh data
+    const getMsUntilNextRefresh = () => {
+      const now = new Date()
+      const minutes = now.getMinutes()
+      const seconds = now.getSeconds()
+      const ms = now.getMilliseconds()
+
+      const currentMinuteInCycle = minutes % 5
+      let minutesUntilNext: number
+
+      if (currentMinuteInCycle < 2) {
+        minutesUntilNext = 2 - currentMinuteInCycle
+      } else {
+        minutesUntilNext = 7 - currentMinuteInCycle
+      }
+
+      // Add 10 second buffer, subtract current seconds/ms
+      const msUntilNext = (minutesUntilNext * 60 * 1000) + (10 * 1000) - (seconds * 1000) - ms
+
+      return msUntilNext > 0 ? msUntilNext : 5 * 60 * 1000
+    }
+
+    // Schedule first fetch synced to server schedule
+    const msUntilFirst = getMsUntilNextRefresh()
+    console.log(`[Dashboard] Next refresh in ${Math.round(msUntilFirst / 1000)}s`)
+
+    const firstTimeout = setTimeout(() => {
+      fetchData()
+      // Then refresh every 5 minutes
+      const interval = setInterval(fetchData, 5 * 60 * 1000)
+      // Store interval ID for cleanup
+      ;(window as unknown as { dashboardInterval?: NodeJS.Timeout }).dashboardInterval = interval
+    }, msUntilFirst)
+
+    return () => {
+      clearTimeout(firstTimeout)
+      const interval = (window as unknown as { dashboardInterval?: NodeJS.Timeout }).dashboardInterval
+      if (interval) clearInterval(interval)
+    }
   }, [initialData.buildVersion])
 
   // Handle navigation from SubmissionTracker to MinerTracker
@@ -209,7 +278,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
                 Leadpoet Subnet Dashboard
               </h1>
               <p className="text-xs sm:text-sm text-muted-foreground mt-1">
-                <span>Updated {serverRelativeTime}</span>
+                <span>Updated {relativeTime}</span>
                 <span className="hidden sm:inline">{' '}| <strong>{(dashboardData.totalSubmissionCount || metrics.total).toLocaleString()}</strong> total lead submissions</span>
               </p>
             </div>
