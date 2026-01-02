@@ -82,12 +82,12 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
         setRelativeTime(getRelativeTime(new Date(timestampRef.current)))
       }
 
-      // Schedule next tick in 1 minute
-      timeoutId = window.setTimeout(tick, 60000)
+      // Schedule next tick in 10 seconds (for testing, change to 60000 for 1 minute)
+      timeoutId = window.setTimeout(tick, 10000)
     }
 
-    // Start after a short delay to ensure hydration is complete
-    timeoutId = window.setTimeout(tick, 1000)
+    // Start after 2 seconds
+    timeoutId = window.setTimeout(tick, 2000)
 
     return () => {
       mounted = false
