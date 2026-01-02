@@ -26,10 +26,10 @@ export async function GET() {
       buildVersion: BUILD_VERSION,
     })
 
-    // Short HTTP cache (data refreshes every 5 min via pg_cron)
+    // No HTTP caching - always return fresh data from server cache
     response.headers.set(
       'Cache-Control',
-      'public, max-age=60, stale-while-revalidate=30'
+      'no-store, no-cache, must-revalidate'
     )
 
     return response

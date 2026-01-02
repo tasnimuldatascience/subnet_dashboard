@@ -115,8 +115,8 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
       }
     }
 
-    // Fetch immediately, then every 5 minutes
-    fetchData()
+    // Don't fetch immediately - Server Component already provides fresh data
+    // Only poll every 5 minutes for updates
     const interval = setInterval(fetchData, 5 * 60 * 1000)
 
     return () => {
