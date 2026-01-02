@@ -54,14 +54,15 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
   const [dashboardData, setDashboardData] = useState<DashboardData>(initialData)
   const [metagraph, setMetagraph] = useState<MetagraphData | null>(initialMetagraph)
 
-  // Track when client last received data (for "Updated X minutes ago")
-  const [lastClientFetch, setLastClientFetch] = useState<Date>(new Date())
-  const [relativeTime, setRelativeTime] = useState<string>('just now')
+  // "Updated X minutes ago" - based on server's data refresh time
+  const [relativeTime, setRelativeTime] = useState<string>(
+    initialData.serverRelativeTime || 'just now'
+  )
 
-  // Track timestamp in ref for interval access
-  const lastFetchRef = useRef<Date>(new Date())
+  // Track server timestamp in ref for interval access
+  const serverTimestampRef = useRef<string | undefined>(initialData.serverRefreshedAt)
 
-  // Client-side timer to update relative time every minute using recursive setTimeout
+  // Update relative time every minute based on server refresh timestamp
   useEffect(() => {
     let timeoutId: number
     let mounted = true
@@ -69,13 +70,15 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
     const tick = () => {
       if (!mounted) return
 
-      setRelativeTime(getRelativeTime(lastFetchRef.current))
+      if (serverTimestampRef.current) {
+        setRelativeTime(getRelativeTime(new Date(serverTimestampRef.current)))
+      }
 
       // Schedule next tick in 60 seconds
       timeoutId = window.setTimeout(tick, 60000)
     }
 
-    // Start after 60 seconds (first update after 1 minute)
+    // Start after 60 seconds
     timeoutId = window.setTimeout(tick, 60000)
 
     return () => {
@@ -98,7 +101,6 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
     const fetchData = async () => {
       if (!mounted) return
 
-      console.log('[Client] Fetching data...')
       try {
         const cacheBuster = `?t=${Date.now()}`
         const [dashboardRes, metagraphRes] = await Promise.all([
@@ -107,24 +109,22 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
         ])
         if (dashboardRes.ok && mounted) {
           const newData = await dashboardRes.json()
-          console.log('[Client] Got data, total submissions:', newData.totalSubmissionCount)
 
           // Check if server was redeployed - reload page to get new JS
           if (initialBuildVersion && newData.buildVersion &&
               newData.buildVersion !== initialBuildVersion) {
-            console.log('[Client] Build version changed, reloading...')
             window.location.reload()
             return
           }
 
+          // Update dashboard data - this triggers re-render
           setDashboardData(newData)
-          console.log('[Client] State updated')
 
-          // Reset the "Updated X minutes ago" timestamp
-          const now = new Date()
-          lastFetchRef.current = now
-          setLastClientFetch(now)
-          setRelativeTime('just now')
+          // Update server timestamp for "Updated X minutes ago"
+          if (newData.serverRefreshedAt) {
+            serverTimestampRef.current = newData.serverRefreshedAt
+            setRelativeTime(getRelativeTime(new Date(newData.serverRefreshedAt)))
+          }
         }
         if (metagraphRes.ok && mounted) {
           const newMetagraph = await metagraphRes.json()
@@ -140,8 +140,8 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
       }
     }
 
-    // Start first fetch after 30 seconds (testing)
-    timeoutId = window.setTimeout(fetchData, 30 * 1000)
+    // Start first fetch after 5 minutes
+    timeoutId = window.setTimeout(fetchData, 5 * 60 * 1000)
 
     return () => {
       mounted = false
@@ -270,7 +270,6 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
               <p className="text-xs sm:text-sm text-muted-foreground mt-1">
                 <span>Updated {relativeTime}</span>
                 <span className="hidden sm:inline">{' '}| <strong>{(dashboardData.totalSubmissionCount || metrics.total).toLocaleString()}</strong> total lead submissions</span>
-                <span className="text-[10px] opacity-50 ml-2">(fetch: {dashboardData.fetchedAt})</span>
               </p>
             </div>
           </div>
