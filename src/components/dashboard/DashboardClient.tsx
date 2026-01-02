@@ -54,21 +54,12 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
   const [dashboardData, setDashboardData] = useState<DashboardData>(initialData)
   const [metagraph, setMetagraph] = useState<MetagraphData | null>(initialMetagraph)
 
-  // Relative time - calculated from serverRefreshedAt
-  const [relativeTime, setRelativeTime] = useState<string>(
-    initialData.serverRelativeTime || 'loading...'
-  )
+  // Track when client last received data (for "Updated X minutes ago")
+  const [lastClientFetch, setLastClientFetch] = useState<Date>(new Date())
+  const [relativeTime, setRelativeTime] = useState<string>('just now')
 
   // Track timestamp in ref for interval access
-  const timestampRef = useRef<string | undefined>(initialData.serverRefreshedAt)
-
-  // Update ref and recalculate time when dashboardData changes
-  useEffect(() => {
-    timestampRef.current = dashboardData.serverRefreshedAt
-    if (dashboardData.serverRefreshedAt) {
-      setRelativeTime(getRelativeTime(new Date(dashboardData.serverRefreshedAt)))
-    }
-  }, [dashboardData.serverRefreshedAt])
+  const lastFetchRef = useRef<Date>(new Date())
 
   // Client-side timer to update relative time every minute using recursive setTimeout
   useEffect(() => {
@@ -78,16 +69,14 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
     const tick = () => {
       if (!mounted) return
 
-      if (timestampRef.current) {
-        setRelativeTime(getRelativeTime(new Date(timestampRef.current)))
-      }
+      setRelativeTime(getRelativeTime(lastFetchRef.current))
 
       // Schedule next tick in 60 seconds
       timeoutId = window.setTimeout(tick, 60000)
     }
 
-    // Start after 2 seconds
-    timeoutId = window.setTimeout(tick, 2000)
+    // Start after 60 seconds (first update after 1 minute)
+    timeoutId = window.setTimeout(tick, 60000)
 
     return () => {
       mounted = false
@@ -126,6 +115,12 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
           }
 
           setDashboardData(newData)
+
+          // Reset the "Updated X minutes ago" timestamp
+          const now = new Date()
+          lastFetchRef.current = now
+          setLastClientFetch(now)
+          setRelativeTime('just now')
         }
         if (metagraphRes.ok && mounted) {
           const newMetagraph = await metagraphRes.json()
