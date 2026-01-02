@@ -270,6 +270,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
               <p className="text-xs sm:text-sm text-muted-foreground mt-1">
                 <span>Updated {relativeTime}</span>
                 <span className="hidden sm:inline">{' '}| <strong>{(dashboardData.totalSubmissionCount || metrics.total).toLocaleString()}</strong> total lead submissions</span>
+                <span className="text-[10px] opacity-50 ml-2">(fetch: {dashboardData.fetchedAt})</span>
               </p>
             </div>
           </div>
