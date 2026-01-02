@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Overview,
@@ -59,21 +59,32 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
     initialData.serverRelativeTime || 'loading...'
   )
 
+  // Use ref to always have latest serverRefreshedAt in interval
+  const serverRefreshedAtRef = useRef(dashboardData.serverRefreshedAt)
+  serverRefreshedAtRef.current = dashboardData.serverRefreshedAt
+
   // Update relative time every minute on client
   useEffect(() => {
     // Calculate immediately on mount
-    if (dashboardData.serverRefreshedAt) {
-      setRelativeTime(getRelativeTime(new Date(dashboardData.serverRefreshedAt)))
+    if (serverRefreshedAtRef.current) {
+      setRelativeTime(getRelativeTime(new Date(serverRefreshedAtRef.current)))
     }
 
-    // Update every minute
+    // Update every minute using ref to get latest timestamp
     const interval = setInterval(() => {
-      if (dashboardData.serverRefreshedAt) {
-        setRelativeTime(getRelativeTime(new Date(dashboardData.serverRefreshedAt)))
+      if (serverRefreshedAtRef.current) {
+        setRelativeTime(getRelativeTime(new Date(serverRefreshedAtRef.current)))
       }
     }, 60 * 1000)
 
     return () => clearInterval(interval)
+  }, []) // Empty deps - only run once on mount
+
+  // Also update relative time when new data arrives
+  useEffect(() => {
+    if (dashboardData.serverRefreshedAt) {
+      setRelativeTime(getRelativeTime(new Date(dashboardData.serverRefreshedAt)))
+    }
   }, [dashboardData.serverRefreshedAt])
 
   const [selectedMinerHotkey, setSelectedMinerHotkey] = useState<string | null>(null)
