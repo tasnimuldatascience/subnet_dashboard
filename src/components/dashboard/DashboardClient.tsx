@@ -54,28 +54,25 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
   const [dashboardData, setDashboardData] = useState<DashboardData>(initialData)
   const [metagraph, setMetagraph] = useState<MetagraphData | null>(initialMetagraph)
 
-  // Calculate relative time on client and update every minute
-  // Resets when serverRefreshedAt changes (new data fetched)
-  const [relativeTime, setRelativeTime] = useState<string>(() => {
-    if (initialData.serverRefreshedAt) {
-      return getRelativeTime(new Date(initialData.serverRefreshedAt))
-    }
-    return initialData.serverRelativeTime || 'loading...'
-  })
+  // Relative time - start with server value, then calculate on client
+  const [relativeTime, setRelativeTime] = useState<string>(
+    initialData.serverRelativeTime || 'loading...'
+  )
 
-  // Update relative time every minute, reset when new data arrives
+  // Update relative time every minute on client
   useEffect(() => {
-    const updateRelativeTime = () => {
+    // Calculate immediately on mount
+    if (dashboardData.serverRefreshedAt) {
+      setRelativeTime(getRelativeTime(new Date(dashboardData.serverRefreshedAt)))
+    }
+
+    // Update every minute
+    const interval = setInterval(() => {
       if (dashboardData.serverRefreshedAt) {
         setRelativeTime(getRelativeTime(new Date(dashboardData.serverRefreshedAt)))
       }
-    }
+    }, 60 * 1000)
 
-    // Update immediately when dashboardData changes (resets on new fetch)
-    updateRelativeTime()
-
-    // Then update every minute
-    const interval = setInterval(updateRelativeTime, 60 * 1000)
     return () => clearInterval(interval)
   }, [dashboardData.serverRefreshedAt])
 
@@ -118,7 +115,8 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
       }
     }
 
-    // Poll every 5 minutes
+    // Fetch immediately, then every 5 minutes
+    fetchData()
     const interval = setInterval(fetchData, 5 * 60 * 1000)
 
     return () => {
