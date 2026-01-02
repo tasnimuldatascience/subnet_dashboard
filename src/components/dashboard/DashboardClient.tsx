@@ -98,6 +98,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
     const fetchData = async () => {
       if (!mounted) return
 
+      console.log('[Client] Fetching data...')
       try {
         const cacheBuster = `?t=${Date.now()}`
         const [dashboardRes, metagraphRes] = await Promise.all([
@@ -106,15 +107,18 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
         ])
         if (dashboardRes.ok && mounted) {
           const newData = await dashboardRes.json()
+          console.log('[Client] Got data, total submissions:', newData.totalSubmissionCount)
 
           // Check if server was redeployed - reload page to get new JS
           if (initialBuildVersion && newData.buildVersion &&
               newData.buildVersion !== initialBuildVersion) {
+            console.log('[Client] Build version changed, reloading...')
             window.location.reload()
             return
           }
 
           setDashboardData(newData)
+          console.log('[Client] State updated')
 
           // Reset the "Updated X minutes ago" timestamp
           const now = new Date()
@@ -136,8 +140,8 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
       }
     }
 
-    // Start first fetch after 5 minutes
-    timeoutId = window.setTimeout(fetchData, 5 * 60 * 1000)
+    // Start first fetch after 30 seconds (testing)
+    timeoutId = window.setTimeout(fetchData, 30 * 1000)
 
     return () => {
       mounted = false
