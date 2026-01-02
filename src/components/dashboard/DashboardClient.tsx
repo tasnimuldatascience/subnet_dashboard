@@ -94,6 +94,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
 
   // Poll for fresh data every 5 minutes using recursive setTimeout
   useEffect(() => {
+    console.log('[Dashboard] Starting polling useEffect')
     let timeoutId: number
     let mounted = true
     const initialBuildVersion = initialData.buildVersion
@@ -101,6 +102,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
     const fetchData = async () => {
       if (!mounted) return
 
+      console.log('[Dashboard] Polling for new data...')
       try {
         const cacheBuster = `?t=${Date.now()}`
         const [dashboardRes, metagraphRes] = await Promise.all([
@@ -134,14 +136,15 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
         console.error('Auto-refresh failed:', error)
       }
 
-      // Schedule next fetch in 5 minutes
+      // Schedule next fetch in 1 minute (for testing)
       if (mounted) {
-        timeoutId = window.setTimeout(fetchData, 5 * 60 * 1000)
+        timeoutId = window.setTimeout(fetchData, 60 * 1000)
       }
     }
 
-    // Start first fetch after 5 minutes
-    timeoutId = window.setTimeout(fetchData, 5 * 60 * 1000)
+    // Start first fetch after 1 minute (for testing)
+    timeoutId = window.setTimeout(fetchData, 60 * 1000)
+    console.log('[Dashboard] First poll scheduled in 60 seconds')
 
     return () => {
       mounted = false
