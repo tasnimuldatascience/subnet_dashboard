@@ -54,38 +54,41 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
   const [dashboardData, setDashboardData] = useState<DashboardData>(initialData)
   const [metagraph, setMetagraph] = useState<MetagraphData | null>(initialMetagraph)
 
-  // Relative time - start with server value, then calculate on client
+  // Relative time - calculated from serverRefreshedAt
   const [relativeTime, setRelativeTime] = useState<string>(
     initialData.serverRelativeTime || 'loading...'
   )
 
-  // Use ref to always have latest serverRefreshedAt in interval
-  const serverRefreshedAtRef = useRef(dashboardData.serverRefreshedAt)
-  serverRefreshedAtRef.current = dashboardData.serverRefreshedAt
+  // Track timestamp in ref for interval access
+  const timestampRef = useRef<string | undefined>(initialData.serverRefreshedAt)
 
-  // Update relative time every minute on client
+  // Update ref when dashboardData changes
   useEffect(() => {
-    // Calculate immediately on mount
-    if (serverRefreshedAtRef.current) {
-      setRelativeTime(getRelativeTime(new Date(serverRefreshedAtRef.current)))
-    }
-
-    // Update every minute using ref to get latest timestamp
-    const interval = setInterval(() => {
-      if (serverRefreshedAtRef.current) {
-        setRelativeTime(getRelativeTime(new Date(serverRefreshedAtRef.current)))
-      }
-    }, 60 * 1000)
-
-    return () => clearInterval(interval)
-  }, []) // Empty deps - only run once on mount
-
-  // Also update relative time when new data arrives
-  useEffect(() => {
+    timestampRef.current = dashboardData.serverRefreshedAt
     if (dashboardData.serverRefreshedAt) {
       setRelativeTime(getRelativeTime(new Date(dashboardData.serverRefreshedAt)))
     }
   }, [dashboardData.serverRefreshedAt])
+
+  // Client-side interval to update relative time every minute
+  useEffect(() => {
+    let intervalId: ReturnType<typeof setInterval>
+
+    // Only run on client
+    if (typeof window !== 'undefined') {
+      intervalId = window.setInterval(() => {
+        if (timestampRef.current) {
+          setRelativeTime(getRelativeTime(new Date(timestampRef.current)))
+        }
+      }, 60000) // 1 minute
+    }
+
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId)
+      }
+    }
+  }, [])
 
   const [selectedMinerHotkey, setSelectedMinerHotkey] = useState<string | null>(null)
   const [selectedEpochId, setSelectedEpochId] = useState<number | null>(null)
@@ -94,44 +97,49 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
 
   // Poll for fresh data every 5 minutes
   useEffect(() => {
-    const initialBuildVersion = initialData.buildVersion
+    let intervalId: ReturnType<typeof setInterval>
 
-    const fetchData = async () => {
-      try {
-        // Add cache-busting timestamp to bypass browser HTTP cache
-        const cacheBuster = `?t=${Date.now()}`
-        const [dashboardRes, metagraphRes] = await Promise.all([
-          fetch(`/api/dashboard${cacheBuster}`),
-          fetch(`/api/metagraph${cacheBuster}`)
-        ])
-        if (dashboardRes.ok) {
-          const newData = await dashboardRes.json()
+    // Only run on client
+    if (typeof window !== 'undefined') {
+      const initialBuildVersion = initialData.buildVersion
 
-          // Check if server was redeployed - reload page to get new JS
-          if (initialBuildVersion && newData.buildVersion &&
-              newData.buildVersion !== initialBuildVersion) {
-            console.log('[Dashboard] New version detected, reloading...')
-            window.location.reload()
-            return
+      const fetchData = async () => {
+        try {
+          const cacheBuster = `?t=${Date.now()}`
+          const [dashboardRes, metagraphRes] = await Promise.all([
+            fetch(`/api/dashboard${cacheBuster}`),
+            fetch(`/api/metagraph${cacheBuster}`)
+          ])
+          if (dashboardRes.ok) {
+            const newData = await dashboardRes.json()
+
+            // Check if server was redeployed - reload page to get new JS
+            if (initialBuildVersion && newData.buildVersion &&
+                newData.buildVersion !== initialBuildVersion) {
+              console.log('[Dashboard] New version detected, reloading...')
+              window.location.reload()
+              return
+            }
+
+            setDashboardData(newData)
           }
-
-          setDashboardData(newData)
+          if (metagraphRes.ok) {
+            const newMetagraph = await metagraphRes.json()
+            setMetagraph(newMetagraph)
+          }
+        } catch (error) {
+          console.error('Auto-refresh failed:', error)
         }
-        if (metagraphRes.ok) {
-          const newMetagraph = await metagraphRes.json()
-          setMetagraph(newMetagraph)
-        }
-      } catch (error) {
-        console.error('Auto-refresh failed:', error)
       }
+
+      // Poll every 5 minutes for updates
+      intervalId = window.setInterval(fetchData, 5 * 60 * 1000)
     }
 
-    // Don't fetch immediately - Server Component already provides fresh data
-    // Only poll every 5 minutes for updates
-    const interval = setInterval(fetchData, 5 * 60 * 1000)
-
     return () => {
-      clearInterval(interval)
+      if (intervalId) {
+        clearInterval(intervalId)
+      }
     }
   }, [initialData.buildVersion])
 
