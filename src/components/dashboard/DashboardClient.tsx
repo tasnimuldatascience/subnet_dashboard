@@ -109,6 +109,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
     const fetchData = async () => {
       if (!mounted) return
 
+      console.log('[Dashboard] Auto-refresh triggered at', new Date().toISOString())
       try {
         const cacheBuster = `?t=${Date.now()}`
         const [dashboardRes, metagraphRes] = await Promise.all([
@@ -117,6 +118,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
         ])
         if (dashboardRes.ok && mounted) {
           const newData = await dashboardRes.json()
+          console.log('[Dashboard] Received new data, serverRefreshedAt:', newData.serverRefreshedAt)
 
           // Check if server was redeployed - reload page to get new JS
           if (initialBuildVersion && newData.buildVersion &&
@@ -135,14 +137,14 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
         console.error('Auto-refresh failed:', error)
       }
 
-      // Schedule next fetch in 5 minutes
+      // Schedule next fetch in 30 seconds (testing - change to 5 * 60 * 1000 for production)
       if (mounted) {
-        timeoutId = window.setTimeout(fetchData, 5 * 60 * 1000)
+        timeoutId = window.setTimeout(fetchData, 30 * 1000)
       }
     }
 
-    // Start first fetch after 5 minutes
-    timeoutId = window.setTimeout(fetchData, 5 * 60 * 1000)
+    // Start first fetch after 30 seconds (testing - change to 5 * 60 * 1000 for production)
+    timeoutId = window.setTimeout(fetchData, 30 * 1000)
 
     return () => {
       mounted = false
