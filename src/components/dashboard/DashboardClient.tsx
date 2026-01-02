@@ -72,7 +72,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
 
   // Client-side interval to update relative time every minute
   useEffect(() => {
-    let intervalId: ReturnType<typeof setInterval>
+    let intervalId: number | undefined
 
     // Only run on client
     if (typeof window !== 'undefined') {
@@ -84,8 +84,8 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
     }
 
     return () => {
-      if (intervalId) {
-        clearInterval(intervalId)
+      if (intervalId !== undefined) {
+        window.clearInterval(intervalId)
       }
     }
   }, [])
@@ -97,7 +97,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
 
   // Poll for fresh data every 5 minutes
   useEffect(() => {
-    let intervalId: ReturnType<typeof setInterval>
+    let intervalId: number | undefined
 
     // Only run on client
     if (typeof window !== 'undefined') {
@@ -137,8 +137,8 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
     }
 
     return () => {
-      if (intervalId) {
-        clearInterval(intervalId)
+      if (intervalId !== undefined) {
+        window.clearInterval(intervalId)
       }
     }
   }, [initialData.buildVersion])
