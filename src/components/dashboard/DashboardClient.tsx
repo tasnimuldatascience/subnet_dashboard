@@ -62,7 +62,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
   // Track timestamp in ref for interval access
   const timestampRef = useRef<string | undefined>(initialData.serverRefreshedAt)
 
-  // Update ref when dashboardData changes
+  // Update ref and recalculate time when dashboardData changes
   useEffect(() => {
     timestampRef.current = dashboardData.serverRefreshedAt
     if (dashboardData.serverRefreshedAt) {
@@ -70,23 +70,28 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
     }
   }, [dashboardData.serverRefreshedAt])
 
-  // Client-side interval to update relative time every minute
+  // Client-side timer to update relative time every minute using recursive setTimeout
   useEffect(() => {
-    let intervalId: number | undefined
+    let timeoutId: number
+    let mounted = true
 
-    // Only run on client
-    if (typeof window !== 'undefined') {
-      intervalId = window.setInterval(() => {
-        if (timestampRef.current) {
-          setRelativeTime(getRelativeTime(new Date(timestampRef.current)))
-        }
-      }, 60000) // 1 minute
+    const tick = () => {
+      if (!mounted) return
+
+      if (timestampRef.current) {
+        setRelativeTime(getRelativeTime(new Date(timestampRef.current)))
+      }
+
+      // Schedule next tick in 1 minute
+      timeoutId = window.setTimeout(tick, 60000)
     }
 
+    // Start after a short delay to ensure hydration is complete
+    timeoutId = window.setTimeout(tick, 1000)
+
     return () => {
-      if (intervalId !== undefined) {
-        window.clearInterval(intervalId)
-      }
+      mounted = false
+      window.clearTimeout(timeoutId)
     }
   }, [])
 
@@ -95,51 +100,53 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
 
   const [activeTab, setActiveTab] = useState('overview')
 
-  // Poll for fresh data every 5 minutes
+  // Poll for fresh data every 5 minutes using recursive setTimeout
   useEffect(() => {
-    let intervalId: number | undefined
+    let timeoutId: number
+    let mounted = true
+    const initialBuildVersion = initialData.buildVersion
 
-    // Only run on client
-    if (typeof window !== 'undefined') {
-      const initialBuildVersion = initialData.buildVersion
+    const fetchData = async () => {
+      if (!mounted) return
 
-      const fetchData = async () => {
-        try {
-          const cacheBuster = `?t=${Date.now()}`
-          const [dashboardRes, metagraphRes] = await Promise.all([
-            fetch(`/api/dashboard${cacheBuster}`),
-            fetch(`/api/metagraph${cacheBuster}`)
-          ])
-          if (dashboardRes.ok) {
-            const newData = await dashboardRes.json()
+      try {
+        const cacheBuster = `?t=${Date.now()}`
+        const [dashboardRes, metagraphRes] = await Promise.all([
+          fetch(`/api/dashboard${cacheBuster}`),
+          fetch(`/api/metagraph${cacheBuster}`)
+        ])
+        if (dashboardRes.ok && mounted) {
+          const newData = await dashboardRes.json()
 
-            // Check if server was redeployed - reload page to get new JS
-            if (initialBuildVersion && newData.buildVersion &&
-                newData.buildVersion !== initialBuildVersion) {
-              console.log('[Dashboard] New version detected, reloading...')
-              window.location.reload()
-              return
-            }
-
-            setDashboardData(newData)
+          // Check if server was redeployed - reload page to get new JS
+          if (initialBuildVersion && newData.buildVersion &&
+              newData.buildVersion !== initialBuildVersion) {
+            window.location.reload()
+            return
           }
-          if (metagraphRes.ok) {
-            const newMetagraph = await metagraphRes.json()
-            setMetagraph(newMetagraph)
-          }
-        } catch (error) {
-          console.error('Auto-refresh failed:', error)
+
+          setDashboardData(newData)
         }
+        if (metagraphRes.ok && mounted) {
+          const newMetagraph = await metagraphRes.json()
+          setMetagraph(newMetagraph)
+        }
+      } catch (error) {
+        console.error('Auto-refresh failed:', error)
       }
 
-      // Poll every 5 minutes for updates
-      intervalId = window.setInterval(fetchData, 5 * 60 * 1000)
+      // Schedule next fetch in 5 minutes
+      if (mounted) {
+        timeoutId = window.setTimeout(fetchData, 5 * 60 * 1000)
+      }
     }
 
+    // Start first fetch after 5 minutes
+    timeoutId = window.setTimeout(fetchData, 5 * 60 * 1000)
+
     return () => {
-      if (intervalId !== undefined) {
-        window.clearInterval(intervalId)
-      }
+      mounted = false
+      window.clearTimeout(timeoutId)
     }
   }, [initialData.buildVersion])
 
