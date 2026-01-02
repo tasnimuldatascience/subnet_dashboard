@@ -2,10 +2,14 @@ import { NextResponse } from 'next/server'
 import { fetchAllDashboardData } from '@/lib/db-precalc'
 import { fetchMetagraph } from '@/lib/metagraph'
 import { getRelativeTime, BUILD_VERSION } from '@/lib/server-data'
+import { clearCache } from '@/lib/cache'
 
 export async function GET() {
   try {
     console.log('[Dashboard API] Fetching data from precalc...')
+
+    // Clear cache to always get fresh data from DB for API calls
+    clearCache('dashboard_precalc')
 
     // Fetch metagraph first (needed for filtering active miners)
     const metagraph = await fetchMetagraph()
