@@ -50,25 +50,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
   const [selectedMinerHotkey, setSelectedMinerHotkey] = useState<string | null>(null)
   const [selectedEpochId, setSelectedEpochId] = useState<number | null>(null)
 
-  // Persist active tab in URL hash
-  const getInitialTab = () => {
-    if (typeof window !== 'undefined') {
-      const hash = window.location.hash.slice(1)
-      if (['overview', 'miner-tracker', 'epoch-analysis', 'submission-tracker', 'faq'].includes(hash)) {
-        return hash
-      }
-    }
-    return 'overview'
-  }
-  const [activeTab, setActiveTab] = useState(getInitialTab)
-
-  // Update URL hash when tab changes
-  const handleTabChange = (tab: string) => {
-    setActiveTab(tab)
-    if (typeof window !== 'undefined') {
-      window.history.replaceState(null, '', `#${tab}`)
-    }
-  }
+  const [activeTab, setActiveTab] = useState('overview')
 
   // Auto-fetch new data every 60 seconds to stay synced with server
   useEffect(() => {
@@ -114,14 +96,14 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
     const hotkey = Object.entries(metagraph?.hotkeyToUid ?? {}).find(([, u]) => u === uid)?.[0]
     if (hotkey) {
       setSelectedMinerHotkey(hotkey)
-      handleTabChange('miner-tracker')
+      setActiveTab('miner-tracker')
     }
   }, [metagraph?.hotkeyToUid])
 
   // Handle navigation from SubmissionTracker to EpochAnalysis
   const handleEpochClick = useCallback((epochId: number) => {
     setSelectedEpochId(epochId)
-    handleTabChange('epoch-analysis')
+    setActiveTab('epoch-analysis')
   }, [])
 
 
@@ -203,7 +185,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
   // Handler for clicking on a miner hotkey in the leaderboard
   const handleMinerClick = (minerHotkey: string) => {
     setSelectedMinerHotkey(minerHotkey)
-    handleTabChange('miner-tracker')
+    setActiveTab('miner-tracker')
   }
 
   return (
@@ -235,7 +217,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
         </div>
 
         {/* Tabs */}
-        <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4 md:space-y-6">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4 md:space-y-6">
           <TabsList className="grid w-full grid-cols-5 gap-0.5 sm:gap-1">
             <TabsTrigger value="overview" className="flex-1 gap-0.5 sm:gap-1 md:gap-2 px-1 sm:px-2 md:px-4 text-[10px] sm:text-xs md:text-sm">
               <LayoutDashboard className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4" />
