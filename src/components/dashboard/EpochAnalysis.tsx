@@ -73,9 +73,27 @@ export function EpochAnalysis({ epochStats, metagraph, onMinerClick, externalSel
   const [copiedMiner, setCopiedMiner] = useState<string | null>(null)
 
   // Get selected epoch stats (pre-calculated, no raw data needed)
+  // Returns placeholder with 0 values if epoch has no validation data
   const selectedEpochStats = useMemo(() => {
     if (selectedEpoch === null) return null
-    return epochStats.find(e => e.epochId === selectedEpoch) || null
+    const found = epochStats.find(e => e.epochId === selectedEpoch)
+    if (found) return found
+
+    // Return placeholder for epochs with no validation data
+    const maxEpoch = epochStats.length > 0 ? Math.max(...epochStats.map(e => e.epochId)) : 0
+    const minEpoch = maxEpoch - 599
+    if (selectedEpoch >= minEpoch && selectedEpoch <= maxEpoch) {
+      return {
+        epochId: selectedEpoch,
+        total: 0,
+        accepted: 0,
+        rejected: 0,
+        avgRepScore: 0,
+        acceptanceRate: 0,
+        miners: []
+      }
+    }
+    return null
   }, [epochStats, selectedEpoch])
 
   // Get miner stats for selected epoch (pre-calculated, with metagraph enrichment)
@@ -193,11 +211,40 @@ export function EpochAnalysis({ epochStats, metagraph, onMinerClick, externalSel
     return <ArrowDown className="h-3 w-3 ml-1" />
   }
 
-  // Sorted epoch stats
+  // Sorted epoch stats with last 600 epochs shown (missing epochs shown as 0)
   const sortedEpochStats = useMemo(() => {
-    if (!epochSortField || !epochSortOrder) return epochStats
+    if (epochStats.length === 0) return epochStats
 
-    return [...epochStats].sort((a, b) => {
+    // Find max epoch ID
+    const maxEpoch = Math.max(...epochStats.map(e => e.epochId))
+    const minEpoch = maxEpoch - 599 // Show last 600 epochs
+
+    // Create a map of existing epochs for quick lookup
+    const epochMap = new Map(epochStats.map(e => [e.epochId, e]))
+
+    // Fill in last 600 epochs
+    const filledEpochs: EpochStats[] = []
+    for (let epochId = maxEpoch; epochId >= minEpoch; epochId--) {
+      const existing = epochMap.get(epochId)
+      if (existing) {
+        filledEpochs.push(existing)
+      } else {
+        // Create a placeholder epoch with 0 values
+        filledEpochs.push({
+          epochId,
+          total: 0,
+          accepted: 0,
+          rejected: 0,
+          avgRepScore: 0,
+          acceptanceRate: 0,
+          miners: []
+        })
+      }
+    }
+
+    if (!epochSortField || !epochSortOrder) return filledEpochs
+
+    return [...filledEpochs].sort((a, b) => {
       const aVal = a[epochSortField]
       const bVal = b[epochSortField]
       return epochSortOrder === 'asc' ? aVal - bVal : bVal - aVal
@@ -499,8 +546,8 @@ export function EpochAnalysis({ epochStats, metagraph, onMinerClick, externalSel
             />
           </div>
 
-          {/* Miners in Epoch */}
-          <Card>
+          {/* Miners in Epoch - only show if there are miners */}
+          {epochMinerStats.length > 0 && <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle className="text-lg">
@@ -624,7 +671,7 @@ export function EpochAnalysis({ epochStats, metagraph, onMinerClick, externalSel
                 </Table>
               </div>
             </CardContent>
-          </Card>
+          </Card>}
         </div>
       )}
     </div>
