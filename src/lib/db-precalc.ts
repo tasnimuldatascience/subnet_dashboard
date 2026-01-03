@@ -413,10 +413,19 @@ function transformEpochStats(
   minerStats: Record<string, PrecalcMinerStats>,
   activeMiners: Set<string> | null
 ): EpochStats[] {
+  // Get all epoch IDs and find the last 600
+  const allEpochIds = Object.keys(epochStats).map(Number).sort((a, b) => b - a)
+  const maxEpoch = allEpochIds[0] || 0
+  const minEpoch = maxEpoch - 599 // Last 600 epochs
+  const epochIdsToInclude = new Set(allEpochIds.filter(id => id >= minEpoch))
+
   const result: EpochStats[] = []
 
   for (const [epochId, stats] of Object.entries(epochStats)) {
     const eid = parseInt(epochId)
+
+    // Only include last 600 epochs
+    if (!epochIdsToInclude.has(eid)) continue
 
     // Build per-miner breakdown for this epoch
     const miners: EpochMinerStats[] = []

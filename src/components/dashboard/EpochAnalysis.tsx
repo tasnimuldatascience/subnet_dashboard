@@ -211,8 +211,8 @@ export function EpochAnalysis({ epochStats, metagraph, onMinerClick, externalSel
     return <ArrowDown className="h-3 w-3 ml-1" />
   }
 
-  // Sorted epoch stats with last 600 epochs shown (missing epochs shown as 0)
-  const sortedEpochStats = useMemo(() => {
+  // All epochs for last 600 (for dropdown and search) - always sorted by epochId desc
+  const allEpochs = useMemo(() => {
     if (epochStats.length === 0) return epochStats
 
     // Find max epoch ID
@@ -222,7 +222,7 @@ export function EpochAnalysis({ epochStats, metagraph, onMinerClick, externalSel
     // Create a map of existing epochs for quick lookup
     const epochMap = new Map(epochStats.map(e => [e.epochId, e]))
 
-    // Fill in last 600 epochs
+    // Fill in last 600 epochs (sorted by epochId descending)
     const filledEpochs: EpochStats[] = []
     for (let epochId = maxEpoch; epochId >= minEpoch; epochId--) {
       const existing = epochMap.get(epochId)
@@ -241,15 +241,19 @@ export function EpochAnalysis({ epochStats, metagraph, onMinerClick, externalSel
         })
       }
     }
+    return filledEpochs
+  }, [epochStats])
 
-    if (!epochSortField || !epochSortOrder) return filledEpochs
+  // Sorted epoch stats for table display (can be sorted by different columns)
+  const sortedEpochStats = useMemo(() => {
+    if (!epochSortField || !epochSortOrder) return allEpochs
 
-    return [...filledEpochs].sort((a, b) => {
+    return [...allEpochs].sort((a, b) => {
       const aVal = a[epochSortField]
       const bVal = b[epochSortField]
       return epochSortOrder === 'asc' ? aVal - bVal : bVal - aVal
     })
-  }, [epochStats, epochSortField, epochSortOrder])
+  }, [allEpochs, epochSortField, epochSortOrder])
 
   // Copy miner hotkey to clipboard
   const handleCopyMiner = async (hotkey: string, e: React.MouseEvent) => {
@@ -460,7 +464,7 @@ export function EpochAnalysis({ epochStats, metagraph, onMinerClick, externalSel
               onChange={(e) => setEpochSearch(e.target.value.replace(/\D/g, ''))}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && epochSearch) {
-                  const found = epochStats.find(ep => ep.epochId.toString() === epochSearch)
+                  const found = allEpochs.find(ep => ep.epochId.toString() === epochSearch)
                   if (found) {
                     setSelectedEpoch(found.epochId)
                     setEpochSearch('')
@@ -472,7 +476,7 @@ export function EpochAnalysis({ epochStats, metagraph, onMinerClick, externalSel
             <button
               onClick={() => {
                 if (epochSearch) {
-                  const found = epochStats.find(ep => ep.epochId.toString() === epochSearch)
+                  const found = allEpochs.find(ep => ep.epochId.toString() === epochSearch)
                   if (found) {
                     setSelectedEpoch(found.epochId)
                     setEpochSearch('')
@@ -500,7 +504,7 @@ export function EpochAnalysis({ epochStats, metagraph, onMinerClick, externalSel
               <SelectValue placeholder="Select Epoch..." />
             </SelectTrigger>
             <SelectContent>
-              {epochStats.map((epoch) => (
+              {allEpochs.map((epoch) => (
                 <SelectItem key={epoch.epochId} value={epoch.epochId.toString()}>
                   Epoch {epoch.epochId}
                 </SelectItem>
