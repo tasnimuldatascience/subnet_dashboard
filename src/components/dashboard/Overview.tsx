@@ -235,7 +235,7 @@ export function Overview({
   const downloadLeadDistributionCSV = () => {
     const accepted = leadInventoryCount?.accepted ?? totals.accepted
     const rejected = leadInventoryCount?.rejected ?? totals.rejected
-    const pending = Math.max(0, (leadInventoryCount?.pending ?? totals.pending) - 2000)
+    const pending = Math.max(0, (leadInventoryCount?.pending ?? totals.pending) - 2500)
     const total = accepted + rejected + pending
     const headers = ['Status', 'Count', 'Percentage']
     const rows = [
@@ -400,7 +400,7 @@ export function Overview({
               // Use leadInventoryCount from supabase precalc totals
               const accepted = leadInventoryCount?.accepted ?? totals.accepted
               const rejected = leadInventoryCount?.rejected ?? totals.rejected
-              const pending = Math.max(0, (leadInventoryCount?.pending ?? totals.pending) - 2000)
+              const pending = Math.max(0, (leadInventoryCount?.pending ?? totals.pending) - 2500)
               const total = accepted + rejected + pending
               const pct = (val: number) => total > 0 ? ((val / total) * 100).toFixed(1) : '0.0'
               return (
@@ -598,23 +598,23 @@ export function Overview({
                       {miner.uid ?? 'N/A'}
                     </TableCell>
                     <TableCell className="font-mono text-xs px-2 md:px-4">
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-1 group">
                         <span
-                          className="text-blue-400 hover:text-blue-300 cursor-pointer hover:underline break-all md:break-normal"
+                          className="text-blue-400 hover:text-blue-300 cursor-pointer"
                           onClick={() => handleHotkeyClick(miner.minerHotkey)}
                           title={miner.minerHotkey}
                         >
-                          {miner.minerHotkey}
+                          {miner.minerHotkey.slice(0, 5)}...{miner.minerHotkey.slice(-5)}
                         </span>
                         <button
                           onClick={(e) => handleCopyHotkey(miner.minerHotkey, e)}
-                          className="p-1 hover:bg-muted rounded opacity-50 hover:opacity-100 flex-shrink-0"
+                          className="flex-shrink-0"
                           title="Copy hotkey"
                         >
                           {copiedHotkey === miner.minerHotkey ? (
                             <Check className="h-3 w-3 text-green-500" />
                           ) : (
-                            <Copy className="h-3 w-3" />
+                            <Copy className="h-3 w-3 opacity-0 group-hover:opacity-50" />
                           )}
                         </button>
                       </div>
