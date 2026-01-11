@@ -199,6 +199,7 @@ export interface EpochStats {
   rejected: number
   acceptanceRate: number
   avgRepScore: number
+  uniqueMiners: number
   miners: EpochMinerStats[]
 }
 
@@ -427,7 +428,7 @@ function transformEpochStats(
     // Only include last 600 epochs
     if (!epochIdsToInclude.has(eid)) continue
 
-    // Build per-miner breakdown for this epoch
+    // Build per-miner breakdown for this epoch (derived from miner_stats.epochs)
     const miners: EpochMinerStats[] = []
     for (const [hotkey, mStats] of Object.entries(minerStats)) {
       // Filter by active miners if metagraph available
@@ -447,6 +448,10 @@ function transformEpochStats(
       })
     }
 
+    // FIXED: Derive unique_miners from actual miner count instead of stored value
+    // The stored unique_miners was incorrectly summed in incremental mode
+    const uniqueMiners = miners.length
+
     result.push({
       epochId: eid,
       total: stats.total,
@@ -454,6 +459,7 @@ function transformEpochStats(
       rejected: stats.rejected,
       acceptanceRate: stats.acceptance_rate,
       avgRepScore: stats.avg_rep_score || 0,
+      uniqueMiners, // Use derived count
       miners: miners.sort((a, b) => b.acceptance_rate - a.acceptance_rate),
     })
   }

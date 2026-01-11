@@ -13,6 +13,13 @@ try:
     subtensor = bt.Subtensor(network=network)
     metagraph = subtensor.metagraph(netuid=netuid)
 
+    # Get subnet info for alpha price
+    try:
+        subnet_info = subtensor.subnet(netuid=netuid)
+        alpha_price = float(subnet_info.price) if hasattr(subnet_info, 'price') else None
+    except Exception:
+        alpha_price = None
+
     hotkey_to_uid = {}
     uid_to_hotkey = {}
     hotkey_to_coldkey = {}
@@ -91,6 +98,7 @@ try:
         'stakes': stakes,
         'isValidator': is_validator,
         'totalNeurons': n_neurons,
+        'alphaPrice': alpha_price,
         'error': None
     }
     print(json.dumps(result))
@@ -106,6 +114,7 @@ except Exception as e:
         'stakes': {},
         'isValidator': {},
         'totalNeurons': 0,
+        'alphaPrice': None,
         'error': str(e)
     }
     print(json.dumps(result))

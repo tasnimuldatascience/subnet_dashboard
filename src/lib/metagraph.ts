@@ -74,6 +74,7 @@ async function fetchMetagraphFromBittensor(): Promise<MetagraphData> {
       stakes: {},
       isValidator: {},
       totalNeurons: 0,
+      alphaPrice: null,
       error: error instanceof Error ? error.message : 'Failed to fetch metagraph data'
     }
   }

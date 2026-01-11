@@ -316,6 +316,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
               inventoryData={inventoryData}
               weeklyInventoryData={weeklyInventoryData}
               leadInventoryCount={dashboardData.leadInventoryCount}
+              alphaPrice={metagraph?.alphaPrice ?? null}
               onMinerClick={handleMinerClick}
             />
           </TabsContent>

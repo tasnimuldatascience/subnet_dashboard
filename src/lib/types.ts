@@ -99,6 +99,7 @@ export interface MetagraphData {
   stakes: Record<string, number>
   isValidator: Record<string, boolean>
   totalNeurons: number
+  alphaPrice: number | null
   error: string | null
 }
 

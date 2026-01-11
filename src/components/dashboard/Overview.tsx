@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Table,
@@ -48,6 +48,7 @@ interface OverviewProps {
   inventoryData: LeadInventoryData[]
   weeklyInventoryData: WeeklyLeadInventory[]
   leadInventoryCount?: LeadInventoryCount
+  alphaPrice: number | null
   onMinerClick?: (minerHotkey: string) => void
 }
 
@@ -59,28 +60,12 @@ export function Overview({
   inventoryData,
   weeklyInventoryData,
   leadInventoryCount,
+  alphaPrice,
   onMinerClick,
 }: OverviewProps) {
   const [sortKey, setSortKey] = useState<SortKey>('accepted')
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
-  const [taoPrice, setTaoPrice] = useState<number | null>(null)
   const [copiedHotkey, setCopiedHotkey] = useState<string | null>(null)
-
-  // Fetch TAO price from CoinGecko
-  useEffect(() => {
-    const fetchTaoPrice = async () => {
-      try {
-        const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bittensor&vs_currencies=usd')
-        const data = await res.json()
-        if (data?.bittensor?.usd) {
-          setTaoPrice(data.bittensor.usd)
-        }
-      } catch (err) {
-        console.error('Failed to fetch TAO price:', err)
-      }
-    }
-    fetchTaoPrice()
-  }, [])
 
   // Get current lead inventory from unique lead_ids count (CONSENSUS_RESULT)
   // Use leadInventoryCount if available, otherwise fallback to latest inventoryData
@@ -677,9 +662,9 @@ export function Overview({
                   </TableCell>
                   <TableCell className="text-right px-2 md:px-4 whitespace-nowrap">
                     <div>{totals.btIncentive.toFixed(4)}%</div>
-                    {taoPrice && (
+                    {alphaPrice && (
                       <div className="text-xs text-muted-foreground">
-                        ≈ ${((totals.btIncentive / 100) * taoPrice).toFixed(2)}
+                        ≈ {((totals.btIncentive / 100) * 2952 * alphaPrice).toFixed(2)} T
                       </div>
                     )}
                   </TableCell>
