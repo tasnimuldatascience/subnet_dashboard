@@ -89,6 +89,7 @@ export async function GET() {
         epoch_id?: number
         final_decision?: string
         final_rep_score?: number
+        is_icp_multiplier?: number
         primary_rejection_reason?: string
       } | null
 
@@ -100,7 +101,7 @@ export async function GET() {
         timestamp: submission?.ts || cons.ts,
         epochId: payload?.epoch_id ?? null,
         decision: normalizeDecision(payload?.final_decision),
-        repScore: payload?.final_rep_score ?? null,
+        repScore: payload?.final_rep_score != null ? Math.max(0, payload.final_rep_score + (payload.is_icp_multiplier ?? 0)) : null,
         rejectionReason: payload?.primary_rejection_reason ? cleanRejectionReason(payload.primary_rejection_reason) : null,
       })
     }

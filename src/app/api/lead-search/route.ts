@@ -80,11 +80,11 @@ async function performSearch(
 
         for (const c of consensusData) {
           if (!c.email_hash || consensusMap.has(c.email_hash)) continue
-          const p = c.payload as { epoch_id?: number, final_decision?: string, final_rep_score?: number, primary_rejection_reason?: string }
+          const p = c.payload as { epoch_id?: number, final_decision?: string, final_rep_score?: number, is_icp_multiplier?: number, primary_rejection_reason?: string }
           consensusMap.set(c.email_hash, {
             epochId: p?.epoch_id ?? epochNum,
             decision: p?.final_decision ?? '',
-            repScore: p?.final_rep_score ?? null,
+            repScore: p?.final_rep_score != null ? Math.max(0, p.final_rep_score + (p.is_icp_multiplier ?? 0)) : null,
             rejectionReason: cleanRejectionReason(p?.primary_rejection_reason)
           })
         }
@@ -248,11 +248,11 @@ async function performSearch(
         if (consData) {
           for (const c of consData) {
             if (!c.email_hash || consensusMap.has(c.email_hash)) continue
-            const p = c.payload as { epoch_id?: number, final_decision?: string, final_rep_score?: number, primary_rejection_reason?: string }
+            const p = c.payload as { epoch_id?: number, final_decision?: string, final_rep_score?: number, is_icp_multiplier?: number, primary_rejection_reason?: string }
             consensusMap.set(c.email_hash, {
               epochId: p?.epoch_id ?? null,
               decision: p?.final_decision ?? '',
-              repScore: p?.final_rep_score ?? null,
+              repScore: p?.final_rep_score != null ? Math.max(0, p.final_rep_score + (p.is_icp_multiplier ?? 0)) : null,
               rejectionReason: cleanRejectionReason(p?.primary_rejection_reason)
             })
           }
@@ -364,11 +364,11 @@ async function performSearch(
         if (consData) {
           for (const c of consData) {
             if (!c.email_hash) continue
-            const p = c.payload as { epoch_id?: number, final_decision?: string, final_rep_score?: number, primary_rejection_reason?: string }
+            const p = c.payload as { epoch_id?: number, final_decision?: string, final_rep_score?: number, is_icp_multiplier?: number, primary_rejection_reason?: string }
             consensusMap.set(c.email_hash, {
               epochId: p?.epoch_id ?? null,
               decision: p?.final_decision ?? '',
-              repScore: p?.final_rep_score ?? null,
+              repScore: p?.final_rep_score != null ? Math.max(0, p.final_rep_score + (p.is_icp_multiplier ?? 0)) : null,
               rejectionReason: cleanRejectionReason(p?.primary_rejection_reason)
             })
           }
@@ -465,11 +465,11 @@ async function performSearch(
         if (consData) {
           for (const c of consData) {
             if (!c.email_hash) continue
-            const p = c.payload as { epoch_id?: number, final_decision?: string, final_rep_score?: number, primary_rejection_reason?: string }
+            const p = c.payload as { epoch_id?: number, final_decision?: string, final_rep_score?: number, is_icp_multiplier?: number, primary_rejection_reason?: string }
             consensusMap.set(c.email_hash, {
               epochId: p?.epoch_id ?? null,
               decision: p?.final_decision ?? '',
-              repScore: p?.final_rep_score ?? null,
+              repScore: p?.final_rep_score != null ? Math.max(0, p.final_rep_score + (p.is_icp_multiplier ?? 0)) : null,
               rejectionReason: cleanRejectionReason(p?.primary_rejection_reason)
             })
           }
