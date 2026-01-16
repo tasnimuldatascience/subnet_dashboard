@@ -43,6 +43,7 @@ import type { JourneyEvent, MinerStats, EpochStats, MetagraphData } from '@/lib/
 interface SearchResult {
   emailHash: string
   minerHotkey: string
+  coldkey: string | null
   leadId: string | null
   uid: number | null
   epochId: number | null
@@ -573,7 +574,7 @@ export function SubmissionTracker({ minerStats, epochStats, metagraph, onUidClic
       lead.leadId ?? '',
       lead.emailHash,
       lead.minerHotkey,
-      metagraph?.hotkeyToColdkey?.[lead.minerHotkey] ?? '',
+      lead.coldkey || metagraph?.hotkeyToColdkey?.[lead.minerHotkey] || '',
       lead.epochId ?? '',
       lead.decision,
       lead.repScore?.toFixed(4) ?? '',
@@ -969,8 +970,8 @@ export function SubmissionTracker({ minerStats, epochStats, metagraph, onUidClic
                         <CopyableText text={lead.minerHotkey} maxLength={10} />
                       </TableCell>
                       <TableCell className="font-mono text-xs text-slate-400">
-                        {metagraph?.hotkeyToColdkey?.[lead.minerHotkey] ? (
-                          <CopyableText text={metagraph.hotkeyToColdkey[lead.minerHotkey]} maxLength={10} />
+                        {(lead.coldkey || metagraph?.hotkeyToColdkey?.[lead.minerHotkey]) ? (
+                          <CopyableText text={lead.coldkey || metagraph!.hotkeyToColdkey[lead.minerHotkey]} maxLength={10} />
                         ) : (
                           <span className="text-muted-foreground">-</span>
                         )}

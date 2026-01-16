@@ -190,6 +190,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
     return {
       uid,
       minerHotkey: m.miner_hotkey,
+      coldkey: m.coldkey || metagraph?.hotkeyToColdkey?.[m.miner_hotkey] || null,
       minerShort: m.miner_hotkey,
       total: m.total_submissions,
       accepted: m.accepted,

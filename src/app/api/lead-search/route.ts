@@ -10,6 +10,7 @@ const inFlightSearches = new Map<string, Promise<SearchResult[]>>()
 interface SearchResult {
   emailHash: string
   minerHotkey: string
+  coldkey: string | null
   leadId: string | null
   uid: number | null
   epochId: number | null
@@ -46,6 +47,7 @@ async function performSearch(
 
   const hotkeyToUid = metagraph.hotkeyToUid
   const uidToHotkey = metagraph.uidToHotkey
+  const hotkeyToColdkey = metagraph.hotkeyToColdkey
   const results: SearchResult[] = []
 
   // Strategy: Query the most selective filter first
@@ -159,6 +161,7 @@ async function performSearch(
         results.push({
           emailHash,
           minerHotkey: sub.hotkey,
+          coldkey: hotkeyToColdkey[sub.hotkey] || null,
           leadId: sub.leadId,
           uid: uidVal,
           epochId: cons.epochId,
@@ -268,6 +271,7 @@ async function performSearch(
         results.push({
           emailHash: sub.email_hash,
           minerHotkey: sub.actor_hotkey,
+          coldkey: hotkeyToColdkey[sub.actor_hotkey] || null,
           leadId: payload?.lead_id ?? null,
           uid: uidVal,
           epochId: cons?.epochId ?? null,
@@ -386,6 +390,7 @@ async function performSearch(
         results.push({
           emailHash: sub.email_hash,
           minerHotkey: sub.actor_hotkey,
+          coldkey: hotkeyToColdkey[sub.actor_hotkey] || null,
           leadId: payload?.lead_id ?? null,
           uid: uidVal,
           epochId: cons?.epochId ?? null,
@@ -489,6 +494,7 @@ async function performSearch(
         results.push({
           emailHash: sub.email_hash,
           minerHotkey: sub.actor_hotkey,
+          coldkey: hotkeyToColdkey[sub.actor_hotkey] || null,
           leadId: payload?.lead_id ?? null,
           uid: uidVal,
           epochId: cons?.epochId ?? null,

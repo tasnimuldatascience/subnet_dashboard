@@ -169,6 +169,7 @@ export interface MinerRejectionReason {
 
 export interface MinerStats {
   miner_hotkey: string
+  coldkey: string | null
   total_submissions: number
   accepted: number
   rejected: number
@@ -281,8 +282,9 @@ export async function fetchAllDashboardData(_hours: number, metagraph: Metagraph
   const metagraphHotkeys = metagraph ? Object.keys(metagraph.hotkeyToUid) : []
   const activeMiners = metagraphHotkeys.length > 0 ? new Set(metagraphHotkeys) : null
 
-  // Transform miner_stats
-  const minerStats = transformMinerStats(precalc.miner_stats, precalc.totals.latest_epoch, activeMiners)
+  // Transform miner_stats (include coldkey from metagraph)
+  const hotkeyToColdkey = metagraph?.hotkeyToColdkey || {}
+  const minerStats = transformMinerStats(precalc.miner_stats, precalc.totals.latest_epoch, activeMiners, hotkeyToColdkey)
 
   // Transform epoch_stats (include per-miner breakdown from miner_stats)
   const epochStats = transformEpochStats(precalc.epoch_stats, precalc.miner_stats, activeMiners)
@@ -334,7 +336,8 @@ export async function fetchAllDashboardData(_hours: number, metagraph: Metagraph
 function transformMinerStats(
   minerStats: Record<string, PrecalcMinerStats>,
   latestEpoch: number,
-  activeMiners: Set<string> | null
+  activeMiners: Set<string> | null,
+  hotkeyToColdkey: Record<string, string>
 ): MinerStats[] {
   const result: MinerStats[] = []
 
@@ -391,6 +394,7 @@ function transformMinerStats(
 
     result.push({
       miner_hotkey: hotkey,
+      coldkey: hotkeyToColdkey[hotkey] || null,
       total_submissions: stats.total,
       accepted: stats.accepted,
       rejected: stats.rejected,

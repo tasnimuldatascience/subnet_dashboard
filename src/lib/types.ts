@@ -32,6 +32,7 @@ export interface MinerRejectionReason {
 export interface MinerStats {
   uid: number | null
   minerHotkey: string
+  coldkey: string | null
   minerShort: string
   total: number
   accepted: number
