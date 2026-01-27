@@ -18,6 +18,14 @@ interface InventoryChartProps {
   data: LeadInventoryData[]
 }
 
+// Auto-format numbers based on digit length (always compact for large numbers)
+const formatAxisNumber = (value: number): string => {
+  if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M`
+  if (value >= 10000) return `${(value / 1000).toFixed(0)}K`
+  if (value >= 1000) return `${(value / 1000).toFixed(1)}K`
+  return value.toLocaleString()
+}
+
 export function InventoryGrowthChart({ data }: InventoryChartProps) {
   const [isMobile, setIsMobile] = useState(false)
 
@@ -41,10 +49,7 @@ export function InventoryGrowthChart({ data }: InventoryChartProps) {
 
   return (
     <ResponsiveContainer width="100%" height={350}>
-      <AreaChart data={chartData} margin={isMobile
-        ? { top: 20, right: 20, left: 0, bottom: 5 }
-        : { top: 20, right: 30, left: 20, bottom: 5 }
-      }>
+      <AreaChart data={chartData} margin={{ top: 20, right: 20, left: 0, bottom: 5 }}>
         <defs>
           <linearGradient id="colorInventory" x1="0" y1="0" x2="0" y2="1">
             <stop offset="5%" stopColor="#22c55e" stopOpacity={0.3} />
@@ -66,8 +71,9 @@ export function InventoryGrowthChart({ data }: InventoryChartProps) {
         />
         <YAxis
           stroke="#94a3b8"
-          fontSize={12}
-          tickFormatter={(value) => value.toLocaleString()}
+          fontSize={isMobile ? 10 : 12}
+          tickFormatter={formatAxisNumber}
+          width={45}
         />
         <Tooltip
           contentStyle={{
@@ -140,10 +146,7 @@ export function WeeklyLeadsChart({ data }: WeeklyLeadsChartProps) {
     <ResponsiveContainer width="100%" height={350}>
       <BarChart
         data={chartData}
-        margin={isMobile
-          ? { top: 20, right: 20, left: 0, bottom: 5 }
-          : { top: 20, right: 30, left: 20, bottom: 5 }
-        }
+        margin={{ top: 20, right: 20, left: 0, bottom: 5 }}
       >
         <XAxis
           dataKey="week_start"
@@ -157,8 +160,9 @@ export function WeeklyLeadsChart({ data }: WeeklyLeadsChartProps) {
         />
         <YAxis
           stroke="#94a3b8"
-          fontSize={12}
-          tickFormatter={(value) => value.toLocaleString()}
+          fontSize={isMobile ? 10 : 12}
+          tickFormatter={formatAxisNumber}
+          width={45}
         />
         <Tooltip
           offset={isMobile ? -30 : 10}
