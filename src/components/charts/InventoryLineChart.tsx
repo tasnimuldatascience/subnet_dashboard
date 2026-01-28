@@ -20,7 +20,13 @@ interface InventoryChartProps {
 
 // Auto-format numbers based on digit length (always compact for large numbers)
 const formatAxisNumber = (value: number): string => {
-  if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M`
+  if (value >= 1000000) {
+    const millions = value / 1000000
+    // Show .25, .5, .75 properly (2 decimals if needed, otherwise 1)
+    return millions % 0.25 === 0 && millions % 1 !== 0
+      ? `${millions.toFixed(2)}M`
+      : `${millions.toFixed(1)}M`
+  }
   if (value >= 10000) return `${(value / 1000).toFixed(0)}K`
   if (value >= 1000) return `${(value / 1000).toFixed(1)}K`
   return value.toLocaleString()
@@ -46,6 +52,16 @@ export function InventoryGrowthChart({ data }: InventoryChartProps) {
 
   // Reverse data so oldest is on left, newest on right
   const chartData = [...data].reverse()
+
+  // Calculate max value and round up to nearest 250k
+  const maxValue = Math.max(...data.map(d => d.totalValidInventory))
+  const yAxisMax = Math.ceil(maxValue / 250000) * 250000
+
+  // Generate ticks from 0 to yAxisMax in 250k increments
+  const yAxisTicks = Array.from(
+    { length: yAxisMax / 250000 + 1 },
+    (_, i) => i * 250000
+  )
 
   return (
     <ResponsiveContainer width="100%" height={350}>
@@ -74,6 +90,8 @@ export function InventoryGrowthChart({ data }: InventoryChartProps) {
           fontSize={isMobile ? 10 : 12}
           tickFormatter={formatAxisNumber}
           width={45}
+          domain={[0, yAxisMax]}
+          ticks={yAxisTicks}
         />
         <Tooltip
           contentStyle={{
