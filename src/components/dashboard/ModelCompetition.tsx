@@ -626,7 +626,7 @@ export function ModelCompetition() {
                             {entry.isChampion && (
                               <Crown className="h-3 w-3 text-yellow-500" />
                             )}
-                              <Eye className="h-3 w-3 text-green-500" title="Code viewable (evaluated)" />
+                              <Eye className="h-3 w-3 text-green-500" />
                           </div>
                         </div>
                       </TableCell>
