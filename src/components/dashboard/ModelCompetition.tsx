@@ -727,7 +727,7 @@ export function ModelCompetition() {
                 Pay Submission Fee
               </div>
               <p className="text-xs text-muted-foreground pl-8">
-                Send $5 worth of TAO to the LeadPoet wallet
+                Send $5 worth of TAO to the Leadpoet wallet
               </p>
             </div>
             <div className="space-y-2">
@@ -751,7 +751,7 @@ export function ModelCompetition() {
           </div>
           <div className="mt-4 pt-4 border-t">
             <p className="text-xs text-muted-foreground">
-              📚 See the <a href="https://github.com/leadpoet/leadpoet" target="_blank" rel="noopener noreferrer" className="text-cyan-500 hover:underline">documentation</a> for full submission guide.
+              See the <a href="https://github.com/leadpoet/leadpoet" target="_blank" rel="noopener noreferrer" className="text-cyan-500 hover:underline">documentation</a> for full submission guide.
               Beat the champion score of <span className="font-bold text-yellow-500">{data.stats.championScore.toFixed(2)}</span> to become the new champion!
             </p>
           </div>

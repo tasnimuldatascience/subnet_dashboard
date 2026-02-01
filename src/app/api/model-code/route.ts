@@ -29,33 +29,34 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // Fetch model from database (fresh, no cache)
+    // Fetch model from qualification_leaderboard VIEW (public, last 24h models)
+    // The view contains both submitted and evaluated models
     const { data: model, error } = await supabase
-      .from('qualification_models')
-      .select('id, status, code_content, code_hash, miner_hotkey')
-      .eq('id', modelId)
+      .from('qualification_leaderboard')
+      .select('model_id, status, code_content, miner_hotkey')
+      .eq('model_id', modelId)
       .single()
 
     if (error || !model) {
       return NextResponse.json(
-        { success: false, error: 'Model not found' },
+        { success: false, error: 'Model not found or no longer available (only last 24h models are accessible)' },
         { status: 404 }
       )
     }
 
     // Only allow viewing code for evaluated models
-    if (model.status.toLowerCase() !== 'evaluated') {
-      return NextResponse.json(
-        { success: false, error: 'Code is only available for evaluated models' },
-        { status: 403 }
-      )
+    if (model.status !== 'evaluated') {
+      return NextResponse.json({
+        success: false,
+        error: 'Code is only available for evaluated models. This model is still pending evaluation.',
+      }, { status: 403 })
     }
 
     // Check if code content exists
     if (!model.code_content) {
       return NextResponse.json({
         success: false,
-        error: 'Code content not yet available. Code storage is being set up.',
+        error: 'Code content not available for this model.',
       })
     }
 
@@ -74,8 +75,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      modelId: model.id,
-      codeHash: model.code_hash,
+      modelId: model.model_id,
       code: codeFiles,
     })
   } catch (err) {

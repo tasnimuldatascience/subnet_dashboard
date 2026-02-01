@@ -7,8 +7,8 @@ import {
   MinerTracker,
   EpochAnalysis,
   SubmissionTracker,
-  FAQ,
   ModelCompetition,
+  FAQ,
 } from '@/components/dashboard'
 import type {
   MetagraphData,
@@ -263,7 +263,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
             <a href="https://leadpoet.com" target="_blank" rel="noopener noreferrer" className="hover:opacity-80 transition-opacity mt-0.5">
               <img
                 src="/icon-64.png"
-                alt="LeadPoet Logo"
+                alt="Leadpoet Logo"
                 width={32}
                 height={32}
                 className="rounded"
