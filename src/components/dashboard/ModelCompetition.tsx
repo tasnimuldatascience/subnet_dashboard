@@ -678,7 +678,7 @@ export function ModelCompetition() {
                           <Crown className="h-3 w-3 text-yellow-500" />
                         )}
                         {submission.status.toLowerCase() === 'evaluated' && (
-                          <Eye className="h-3 w-3 text-green-500" title="Code viewable" />
+                          <Eye className="h-3 w-3 text-green-500" />
                         )}
                       </div>
                       <div className="flex items-center gap-2 text-xs text-muted-foreground">
