@@ -69,8 +69,8 @@ class ScaleDecoder {
     }
     // Big integer mode
     const len = (first >> 2) + 4
-    let val = 0n
-    for (let i = 0; i < len; i++) val |= BigInt(this.readByte()) << BigInt(i * 8)
+    let val = BigInt(0)
+    for (let i = 0; i < len; i++) val = val | (BigInt(this.readByte()) << BigInt(i * 8))
     return Number(val)
   }
 
