@@ -175,8 +175,8 @@ async function fetchMetagraphFromRPC(): Promise<MetagraphData> {
 
     // Incentive is u16 (0-65535), normalize to 0-1
     incentives[n.hotkey] = n.incentive / 65535
-    // Emission is raw rao
-    emissions[n.hotkey] = n.emission
+    // Emission in rao (convert to TAO: divide by 1e9)
+    emissions[n.hotkey] = n.emission / 1e9
     // Stake in rao (convert to TAO: divide by 1e9)
     stakes[n.hotkey] = n.totalStake / 1e9
     isValidator[n.hotkey] = n.validator_permit

@@ -665,44 +665,52 @@ export function useLeadsQuery(options: UseLeadsQueryOptions = {}): UseLeadsQuery
         .eq('event_type', 'CONSENSUS_RESULT')
         .in('email_hash', emailHashes)
 
-      const consensusMap = new Map<string, {
+      type ConsensusInfo = {
         epoch_id?: number
         final_decision?: string
         final_rep_score?: number
         primary_rejection_reason?: string
         lead_id?: string
-      }>()
+      }
+
+      // Build consensus maps: by lead_id (preferred) and by email_hash (fallback)
+      const consensusByLeadId = new Map<string, ConsensusInfo>()
+      const consensusByHash = new Map<string, ConsensusInfo>()
 
       if (consensusData) {
         for (const row of consensusData) {
           if (!row.email_hash) continue
-          const p = row.payload as {
-            epoch_id?: number
-            final_decision?: string
-            final_rep_score?: number
-            primary_rejection_reason?: string
-            lead_id?: string
-          } | null
-          consensusMap.set(row.email_hash, {
+          const p = row.payload as (ConsensusInfo & { lead_id?: string }) | null
+          const entry: ConsensusInfo = {
             epoch_id: p?.epoch_id,
             final_decision: p?.final_decision,
             final_rep_score: p?.final_rep_score,
             primary_rejection_reason: p?.primary_rejection_reason,
             lead_id: p?.lead_id,
-          })
+          }
+          if (p?.lead_id && !consensusByLeadId.has(p.lead_id)) {
+            consensusByLeadId.set(p.lead_id, entry)
+          }
+          if (!consensusByHash.has(row.email_hash)) {
+            consensusByHash.set(row.email_hash, entry)
+          }
         }
       }
 
-      // Build leads
+      // Build leads — match consensus by lead_id first, then email_hash
       const leads: CachedLead[] = submissions.map(sub => {
-        const cons = consensusMap.get(sub.email_hash)
         const subPayload = sub.payload as { lead_id?: string } | null
+        const lid = subPayload?.lead_id
+        // If submission has a lead_id, only match consensus for that specific lead_id
+        const cons = lid
+          ? (consensusByLeadId.get(lid) ?? null)
+          : (consensusByHash.get(sub.email_hash) ?? null)
 
         return {
           emailHash: sub.email_hash,
           minerHotkey: sub.actor_hotkey,
           uid: hotkeyToUidMap[sub.actor_hotkey] ?? null,
-          leadId: cons?.lead_id || subPayload?.lead_id || null,
+          leadId: lid || cons?.lead_id || null,
           timestamp: sub.ts,
           epochId: cons?.epoch_id ?? null,
           decision: normalizeDecision(cons?.final_decision),

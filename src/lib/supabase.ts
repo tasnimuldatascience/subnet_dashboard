@@ -199,8 +199,8 @@ export async function fetchAllConsensusForEpochStats(): Promise<TransparencyLogE
   return allData
 }
 
-// Fetch lead journey by email hash
-export async function fetchLeadJourney(emailHash: string): Promise<TransparencyLogEvent[]> {
+// Fetch lead journey by email hash, optionally filtered to a specific lead_id
+export async function fetchLeadJourney(emailHash: string, leadId?: string | null): Promise<TransparencyLogEvent[]> {
   const { data, error } = await supabase
     .from('transparency_log')
     .select('*')
@@ -212,7 +212,19 @@ export async function fetchLeadJourney(emailHash: string): Promise<TransparencyL
     return []
   }
 
-  return data || []
+  if (!data) return []
+
+  // If a specific lead_id is provided, filter events to only show those
+  // matching that lead_id (or events without a lead_id like early pipeline events)
+  if (leadId) {
+    return data.filter(event => {
+      const payload = event.payload as { lead_id?: string } | null
+      // Keep events that match this lead_id OR have no lead_id (shared pipeline events)
+      return !payload?.lead_id || payload.lead_id === leadId
+    })
+  }
+
+  return data
 }
 
 // Lead search result type
@@ -292,19 +304,26 @@ export async function searchLeads(filters: {
     return { leads: [], total: 0, hasMore: false }
   }
 
-  // Build email hash to consensus map
+  // Build consensus maps: by lead_id (preferred) and by email_hash (fallback)
   const emailHashes = consensusData.map(c => c.email_hash).filter(Boolean) as string[]
-  const consensusMap = new Map<string, { epochId: number | null, decision: 'ACCEPTED' | 'REJECTED' | 'PENDING', repScore: number | null, ts: string }>()
+  const consensusByLeadId = new Map<string, { epochId: number | null, decision: 'ACCEPTED' | 'REJECTED' | 'PENDING', repScore: number | null, ts: string }>()
+  const consensusByHash = new Map<string, { epochId: number | null, decision: 'ACCEPTED' | 'REJECTED' | 'PENDING', repScore: number | null, ts: string }>()
 
   for (const c of consensusData) {
     if (!c.email_hash) continue
     const payload = c.payload as EventPayload
-    consensusMap.set(c.email_hash, {
+    const entry = {
       epochId: payload?.epoch_id ?? null,
       decision: normalizeDecision(payload?.final_decision),
       repScore: payload?.final_rep_score ?? null,
       ts: c.ts
-    })
+    }
+    if (payload?.lead_id && !consensusByLeadId.has(payload.lead_id)) {
+      consensusByLeadId.set(payload.lead_id, entry)
+    }
+    if (!consensusByHash.has(c.email_hash)) {
+      consensusByHash.set(c.email_hash, entry)
+    }
   }
 
   // Step 2: Get submissions for these email hashes
@@ -326,26 +345,43 @@ export async function searchLeads(filters: {
     return { leads: [], total: 0, hasMore: false }
   }
 
-  // Build submission map (email_hash -> submission)
-  const submissionMap = new Map<string, { minerHotkey: string, leadId: string | null, ts: string }>()
+  // Build submission maps: by lead_id (preferred) and by email_hash (fallback)
+  const submissionByLeadId = new Map<string, { minerHotkey: string, leadId: string | null, ts: string }>()
+  const submissionByHash = new Map<string, { minerHotkey: string, leadId: string | null, ts: string }>()
   for (const s of submissionsData || []) {
     if (!s.email_hash || !s.actor_hotkey) continue
     const payload = s.payload as EventPayload
-    // Only keep if not already present or if this is newer
-    if (!submissionMap.has(s.email_hash)) {
-      submissionMap.set(s.email_hash, {
-        minerHotkey: s.actor_hotkey,
-        leadId: payload?.lead_id ?? null,
-        ts: s.ts
-      })
+    const entry = {
+      minerHotkey: s.actor_hotkey,
+      leadId: payload?.lead_id ?? null,
+      ts: s.ts
+    }
+    if (payload?.lead_id && !submissionByLeadId.has(payload.lead_id)) {
+      submissionByLeadId.set(payload.lead_id, entry)
+    }
+    if (!submissionByHash.has(s.email_hash)) {
+      submissionByHash.set(s.email_hash, entry)
     }
   }
 
-  // Step 3: Merge results
+  // Step 3: Merge results — match by lead_id first, then email_hash
   const leads: LeadSearchResult[] = []
-  for (const emailHash of emailHashes) {
-    const consensus = consensusMap.get(emailHash)
-    const submission = submissionMap.get(emailHash)
+  const seenLeadIds = new Set<string>()
+  for (const c of consensusData) {
+    if (!c.email_hash) continue
+    const payload = c.payload as EventPayload
+    const leadId = payload?.lead_id
+    // Deduplicate by lead_id to avoid showing same lead twice
+    const dedupKey = leadId || `${c.email_hash}:${c.ts}`
+    if (seenLeadIds.has(dedupKey)) continue
+    seenLeadIds.add(dedupKey)
+
+    const consensus = leadId
+      ? (consensusByLeadId.get(leadId) ?? consensusByHash.get(c.email_hash))
+      : consensusByHash.get(c.email_hash)
+    const submission = leadId
+      ? (submissionByLeadId.get(leadId) ?? submissionByHash.get(c.email_hash))
+      : submissionByHash.get(c.email_hash)
 
     if (!consensus) continue
 
@@ -353,9 +389,9 @@ export async function searchLeads(filters: {
     if (filters.minerHotkey && !submission) continue
 
     leads.push({
-      emailHash,
+      emailHash: c.email_hash,
       minerHotkey: submission?.minerHotkey ?? '',
-      leadId: submission?.leadId ?? null,
+      leadId: leadId ?? submission?.leadId ?? null,
       epochId: consensus.epochId,
       decision: consensus.decision,
       repScore: consensus.repScore,

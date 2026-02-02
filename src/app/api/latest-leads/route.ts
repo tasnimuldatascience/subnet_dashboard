@@ -60,16 +60,24 @@ export async function GET() {
       .eq('event_type', 'SUBMISSION')
       .in('email_hash', emailHashes)
 
-    const submissionMap = new Map<string, { lead_id?: string; actor_hotkey?: string; ts?: string }>()
+    // Build two submission maps: by lead_id (preferred) and by email_hash (fallback)
+    const submissionByLeadId = new Map<string, { lead_id?: string; actor_hotkey?: string; ts?: string }>()
+    const submissionByHash = new Map<string, { lead_id?: string; actor_hotkey?: string; ts?: string }>()
     if (submissionData) {
       for (const row of submissionData) {
-        if (!row.email_hash || submissionMap.has(row.email_hash)) continue
+        if (!row.email_hash) continue
         const payload = row.payload as { lead_id?: string } | null
-        submissionMap.set(row.email_hash, {
+        const entry = {
           lead_id: payload?.lead_id,
           actor_hotkey: row.actor_hotkey,
           ts: row.ts,
-        })
+        }
+        if (payload?.lead_id && !submissionByLeadId.has(payload.lead_id)) {
+          submissionByLeadId.set(payload.lead_id, entry)
+        }
+        if (!submissionByHash.has(row.email_hash)) {
+          submissionByHash.set(row.email_hash, entry)
+        }
       }
     }
 
@@ -78,7 +86,9 @@ export async function GET() {
     for (const cons of consensusData) {
       if (leads.length >= 100) break
 
-      const submission = submissionMap.get(cons.email_hash)
+      const consPayload = cons.payload as { lead_id?: string } | null
+      const submission = (consPayload?.lead_id ? submissionByLeadId.get(consPayload.lead_id) : null)
+        ?? submissionByHash.get(cons.email_hash)
       const minerHotkey = submission?.actor_hotkey || ''
 
       // Filter by active miners if metagraph available

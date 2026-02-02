@@ -490,12 +490,12 @@ export function SubmissionTracker({ minerStats, epochStats, metagraph, onUidClic
   }
 
   // Load journey events
-  const handleSelectEmailHash = async (emailHash: string) => {
+  const handleSelectEmailHash = async (emailHash: string, leadId?: string | null) => {
     setSelectedEmailHash(emailHash)
     setLoadingJourney(true)
 
     try {
-      const events = await fetchLeadJourney(emailHash)
+      const events = await fetchLeadJourney(emailHash, leadId)
       const journeyEvents: JourneyEvent[] = events.map((e) => ({
         timestamp: e.ts,
         eventType: e.event_type,
@@ -1027,7 +1027,7 @@ export function SubmissionTracker({ minerStats, epochStats, metagraph, onUidClic
                       </TableCell>
                       <TableCell>
                         <button
-                          onClick={() => handleSelectEmailHash(lead.emailHash)}
+                          onClick={() => handleSelectEmailHash(lead.emailHash, lead.leadId)}
                           className="text-xs text-sky-400 hover:text-sky-300 hover:underline font-medium transition-colors"
                         >
                           Show
