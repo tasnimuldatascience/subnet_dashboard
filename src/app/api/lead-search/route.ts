@@ -237,7 +237,9 @@ async function performSearch(
       }
 
       // Get consensus for these email hashes (in batches of 50 for .in() clause)
-      const consensusMap = new Map<string, { epochId: number | null, decision: string, repScore: number | null, rejectionReason: string | null }>()
+      // Index by lead_id so each submission matches its own consensus
+      const consensusByLeadId = new Map<string, { epochId: number | null, decision: string, repScore: number | null, rejectionReason: string | null }>()
+      const consensusByHash = new Map<string, { epochId: number | null, decision: string, repScore: number | null, rejectionReason: string | null }>()
       const hashes = Array.from(seenHashes)
 
       for (let i = 0; i < hashes.length; i += 50) {
@@ -250,14 +252,18 @@ async function performSearch(
 
         if (consData) {
           for (const c of consData) {
-            if (!c.email_hash || consensusMap.has(c.email_hash)) continue
-            const p = c.payload as { epoch_id?: number, final_decision?: string, final_rep_score?: number, is_icp_multiplier?: number, primary_rejection_reason?: string }
-            consensusMap.set(c.email_hash, {
+            if (!c.email_hash) continue
+            const p = c.payload as { lead_id?: string, epoch_id?: number, final_decision?: string, final_rep_score?: number, is_icp_multiplier?: number, primary_rejection_reason?: string }
+            const entry = {
               epochId: p?.epoch_id ?? null,
               decision: p?.final_decision ?? '',
               repScore: p?.final_rep_score != null ? Math.max(0, p.final_rep_score + (p.is_icp_multiplier ?? 0)) : null,
               rejectionReason: cleanRejectionReason(p?.primary_rejection_reason)
-            })
+            }
+            if (p?.lead_id) {
+              consensusByLeadId.set(p.lead_id, entry)
+            }
+            consensusByHash.set(c.email_hash, entry)
           }
         }
       }
@@ -265,8 +271,9 @@ async function performSearch(
       // Build results
       const uidVal = parseInt(uid, 10)
       for (const sub of allSubs) {
-        const cons = consensusMap.get(sub.email_hash)
         const payload = sub.payload as { lead_id?: string }
+        const cons = (payload?.lead_id ? consensusByLeadId.get(payload.lead_id) : null)
+          ?? consensusByHash.get(sub.email_hash)
 
         results.push({
           emailHash: sub.email_hash,
@@ -311,40 +318,61 @@ async function performSearch(
 
       // If no email_hash results or fewer than limit, also search by lead_id
       if (allSubs.length < limit) {
-        let offset = 0
-        let hasMore = true
+        const isExactUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(searchTerm)
 
-        while (hasMore && allSubs.length < limit) {
+        if (isExactUuid) {
+          // Exact UUID: use JSONB containment (@>) — keep query minimal to avoid timeout
           const { data: subData, error: subError } = await supabase
             .from('transparency_log')
             .select('email_hash, actor_hotkey, payload, ts')
             .eq('event_type', 'SUBMISSION')
-            .not('email_hash', 'is', null)
-            .ilike('payload->>lead_id', `%${searchTerm}%`)
-            .order('ts', { ascending: false })
-            .range(offset, offset + BATCH_SIZE - 1)
+            .contains('payload', { lead_id: searchTerm })
+            .limit(limit)
 
           if (subError) {
-            console.error('[Lead Search API] Submission batch error:', subError)
-            break
+            console.error('[Lead Search API] Submission containment error:', subError)
+          } else if (subData) {
+            for (const sub of subData) {
+              if (!sub.email_hash) continue
+              allSubs.push(sub)
+            }
           }
+        } else {
+          // Partial match: paginate with ilike
+          let offset = 0
+          let hasMore = true
 
-          if (!subData || subData.length === 0) {
-            hasMore = false
-            break
-          }
+          while (hasMore && allSubs.length < limit) {
+            const { data: subData, error: subError } = await supabase
+              .from('transparency_log')
+              .select('email_hash, actor_hotkey, payload, ts')
+              .eq('event_type', 'SUBMISSION')
+              .not('email_hash', 'is', null)
+              .ilike('payload->>lead_id', `%${searchTerm}%`)
+              .order('ts', { ascending: false })
+              .range(offset, offset + BATCH_SIZE - 1)
 
-          // Deduplicate while collecting
-          for (const sub of subData) {
-            if (!sub.email_hash || seenHashes.has(sub.email_hash)) continue
-            seenHashes.add(sub.email_hash)
-            allSubs.push(sub)
-          }
+            if (subError) {
+              console.error('[Lead Search API] Submission batch error:', subError)
+              break
+            }
 
-          if (subData.length < BATCH_SIZE) {
-            hasMore = false
-          } else {
-            offset += BATCH_SIZE
+            if (!subData || subData.length === 0) {
+              hasMore = false
+              break
+            }
+
+            for (const sub of subData) {
+              if (!sub.email_hash || seenHashes.has(sub.email_hash)) continue
+              seenHashes.add(sub.email_hash)
+              allSubs.push(sub)
+            }
+
+            if (subData.length < BATCH_SIZE) {
+              hasMore = false
+            } else {
+              offset += BATCH_SIZE
+            }
           }
         }
       }
@@ -354,8 +382,10 @@ async function performSearch(
       }
 
       // Get consensus for email hashes (in batches of 50)
+      // Use a map keyed by lead_id to match consensus to the correct submission
       const hashes = Array.from(seenHashes)
-      const consensusMap = new Map<string, { epochId: number | null, decision: string, repScore: number | null, rejectionReason: string | null }>()
+      const consensusByLeadId = new Map<string, { epochId: number | null, decision: string, repScore: number | null, rejectionReason: string | null }>()
+      const consensusByHash = new Map<string, { epochId: number | null, decision: string, repScore: number | null, rejectionReason: string | null }>()
 
       for (let i = 0; i < hashes.length; i += 50) {
         const batch = hashes.slice(i, i + 50)
@@ -368,24 +398,31 @@ async function performSearch(
         if (consData) {
           for (const c of consData) {
             if (!c.email_hash) continue
-            const p = c.payload as { epoch_id?: number, final_decision?: string, final_rep_score?: number, is_icp_multiplier?: number, primary_rejection_reason?: string }
-            consensusMap.set(c.email_hash, {
+            const p = c.payload as { lead_id?: string, epoch_id?: number, final_decision?: string, final_rep_score?: number, is_icp_multiplier?: number, primary_rejection_reason?: string }
+            const entry = {
               epochId: p?.epoch_id ?? null,
               decision: p?.final_decision ?? '',
               repScore: p?.final_rep_score != null ? Math.max(0, p.final_rep_score + (p.is_icp_multiplier ?? 0)) : null,
               rejectionReason: cleanRejectionReason(p?.primary_rejection_reason)
-            })
+            }
+            // Index by lead_id for precise matching
+            if (p?.lead_id) {
+              consensusByLeadId.set(p.lead_id, entry)
+            }
+            // Fallback: index by email_hash (last one wins)
+            consensusByHash.set(c.email_hash, entry)
           }
         }
       }
 
-      // Build results
+      // Build results (don't skip inactive miners for lead_id searches — user is looking up a specific lead)
       for (const sub of allSubs) {
-        const uidVal = hotkeyToUid[sub.actor_hotkey]
-        if (uidVal === undefined) continue // Skip inactive miners
+        const uidVal = hotkeyToUid[sub.actor_hotkey] ?? null
 
-        const cons = consensusMap.get(sub.email_hash)
         const payload = sub.payload as { lead_id?: string }
+        // Match consensus by lead_id first, fall back to email_hash
+        const cons = (payload?.lead_id ? consensusByLeadId.get(payload.lead_id) : null)
+          ?? consensusByHash.get(sub.email_hash)
 
         results.push({
           emailHash: sub.email_hash,
@@ -456,8 +493,10 @@ async function performSearch(
       }
 
       // Get consensus for email hashes (in batches of 50)
+      // Index by lead_id so each submission matches its own consensus
       const hashes = Array.from(seenHashes)
-      const consensusMap = new Map<string, { epochId: number | null, decision: string, repScore: number | null, rejectionReason: string | null }>()
+      const consensusByLeadId = new Map<string, { epochId: number | null, decision: string, repScore: number | null, rejectionReason: string | null }>()
+      const consensusByHash = new Map<string, { epochId: number | null, decision: string, repScore: number | null, rejectionReason: string | null }>()
 
       for (let i = 0; i < hashes.length; i += 50) {
         const batch = hashes.slice(i, i + 50)
@@ -470,13 +509,17 @@ async function performSearch(
         if (consData) {
           for (const c of consData) {
             if (!c.email_hash) continue
-            const p = c.payload as { epoch_id?: number, final_decision?: string, final_rep_score?: number, is_icp_multiplier?: number, primary_rejection_reason?: string }
-            consensusMap.set(c.email_hash, {
+            const p = c.payload as { lead_id?: string, epoch_id?: number, final_decision?: string, final_rep_score?: number, is_icp_multiplier?: number, primary_rejection_reason?: string }
+            const entry = {
               epochId: p?.epoch_id ?? null,
               decision: p?.final_decision ?? '',
               repScore: p?.final_rep_score != null ? Math.max(0, p.final_rep_score + (p.is_icp_multiplier ?? 0)) : null,
               rejectionReason: cleanRejectionReason(p?.primary_rejection_reason)
-            })
+            }
+            if (p?.lead_id) {
+              consensusByLeadId.set(p.lead_id, entry)
+            }
+            consensusByHash.set(c.email_hash, entry)
           }
         }
       }
@@ -488,8 +531,9 @@ async function performSearch(
         const uidVal = hotkeyToUid[sub.actor_hotkey]
         if (uidVal === undefined) continue // Skip inactive miners
 
-        const cons = consensusMap.get(sub.email_hash)
         const payload = sub.payload as { lead_id?: string }
+        const cons = (payload?.lead_id ? consensusByLeadId.get(payload.lead_id) : null)
+          ?? consensusByHash.get(sub.email_hash)
 
         results.push({
           emailHash: sub.email_hash,
