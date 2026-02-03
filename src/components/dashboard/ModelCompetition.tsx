@@ -533,7 +533,7 @@ export function ModelCompetition() {
       <div className="grid gap-6 lg:grid-cols-2 items-start">
         {/* Current Champion Card */}
         {data.champion && (
-          <Card className="lg:col-span-2 bg-gradient-to-r from-yellow-500/5 via-amber-500/5 to-orange-500/5 border-yellow-500/30">
+          <Card className="lg:col-span-2 overflow-hidden bg-gradient-to-r from-yellow-500/5 via-amber-500/5 to-orange-500/5 border-yellow-500/30">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Trophy className="h-5 w-5 text-yellow-500" />
@@ -543,8 +543,8 @@ export function ModelCompetition() {
             <CardContent>
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-2xl font-bold font-mono">{truncateHotkey(data.champion.minerHotkey)}</span>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-2xl font-bold font-mono break-all">{truncateHotkey(data.champion.minerHotkey)}</span>
                     <Badge variant="outline" className="border-yellow-500/50 text-yellow-500">
                       Champion
                     </Badge>
@@ -572,7 +572,7 @@ export function ModelCompetition() {
         )}
 
         {/* Leaderboard */}
-        <Card>
+        <Card className="overflow-hidden">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Trophy className="h-5 w-5" />
@@ -582,7 +582,7 @@ export function ModelCompetition() {
               </Badge>
             </CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -643,7 +643,7 @@ export function ModelCompetition() {
         </Card>
 
         {/* Recent Submissions (Last 24 Hours) */}
-        <Card>
+        <Card className="overflow-hidden">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Clock className="h-5 w-5" />
@@ -669,9 +669,9 @@ export function ModelCompetition() {
                       setIsDetailOpen(true)
                     }}
                   >
-                    <div className="space-y-1">
+                    <div className="space-y-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="font-medium font-mono hover:text-cyan-400 transition-colors">
+                        <span className="font-medium font-mono hover:text-cyan-400 transition-colors truncate">
                           {truncateHotkey(submission.minerHotkey)}
                         </span>
                         {submission.isChampion && (
@@ -685,7 +685,7 @@ export function ModelCompetition() {
                         <span>{getRelativeTime(submission.createdAt)}</span>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 flex-shrink-0">
                       {submission.score !== null && (
                         <span className="font-mono font-bold">
                           {submission.score.toFixed(2)}
