@@ -53,15 +53,6 @@ export function InventoryGrowthChart({ data }: InventoryChartProps) {
   // Reverse data so oldest is on left, newest on right
   const chartData = [...data].reverse()
 
-  // Calculate max value and round up to nearest 250k
-  const maxValue = Math.max(...data.map(d => d.totalValidInventory))
-  const yAxisMax = Math.ceil(maxValue / 250000) * 250000
-
-  // Generate ticks from 0 to yAxisMax in 250k increments
-  const yAxisTicks = Array.from(
-    { length: yAxisMax / 250000 + 1 },
-    (_, i) => i * 250000
-  )
 
   return (
     <ResponsiveContainer width="100%" height={350}>
@@ -89,9 +80,8 @@ export function InventoryGrowthChart({ data }: InventoryChartProps) {
           stroke="#94a3b8"
           fontSize={isMobile ? 10 : 12}
           tickFormatter={formatAxisNumber}
-          width={45}
-          domain={[0, yAxisMax]}
-          ticks={yAxisTicks}
+          width={55}
+          domain={[0, 'auto']}
         />
         <Tooltip
           contentStyle={{
