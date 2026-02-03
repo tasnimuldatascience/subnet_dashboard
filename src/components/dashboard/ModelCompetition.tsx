@@ -111,7 +111,7 @@ function getRelativeTime(dateStr: string): string {
 // Helper to truncate hotkey
 function truncateHotkey(hotkey: string): string {
   if (!hotkey || hotkey.length < 12) return hotkey
-  return `${hotkey.slice(0, 6)}...${hotkey.slice(-4)}`
+  return `${hotkey.slice(0, 6)}..${hotkey.slice(-4)}`
 }
 
 // Status badge component
@@ -533,7 +533,7 @@ export function ModelCompetition() {
       <div className="grid gap-6 lg:grid-cols-2 items-start">
         {/* Current Champion Card */}
         {data.champion && (
-          <Card className="lg:col-span-2 overflow-hidden bg-gradient-to-r from-yellow-500/5 via-amber-500/5 to-orange-500/5 border-yellow-500/30">
+          <Card className="lg:col-span-2 bg-gradient-to-r from-yellow-500/5 via-amber-500/5 to-orange-500/5 border-yellow-500/30">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Trophy className="h-5 w-5 text-yellow-500" />
@@ -541,26 +541,8 @@ export function ModelCompetition() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {/* Mobile: centered stacked layout */}
-              <div className="flex flex-col items-center text-center gap-3 md:hidden">
-                <div className="text-3xl font-bold text-yellow-500">
-                  {data.champion.score.toFixed(2)}
-                </div>
-                <div className="space-y-1">
-                  <p className="text-sm font-medium font-mono">{truncateHotkey(data.champion.minerHotkey)}</p>
-                  <p className="text-xs text-muted-foreground">
-                    Champion since {getRelativeTime(data.champion.championAt)}
-                  </p>
-                  {data.champion.evaluatedAt && (
-                    <p className="text-xs text-muted-foreground">
-                      Evaluated {getRelativeTime(data.champion.evaluatedAt)}
-                    </p>
-                  )}
-                </div>
-              </div>
-              {/* Desktop: side-by-side layout */}
-              <div className="hidden md:flex md:items-center justify-between gap-4">
-                <div className="space-y-2 min-w-0">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="space-y-2">
                   <div className="flex items-center gap-2">
                     <span className="text-2xl font-bold font-mono">{truncateHotkey(data.champion.minerHotkey)}</span>
                     <Badge variant="outline" className="border-yellow-500/50 text-yellow-500">
@@ -568,7 +550,7 @@ export function ModelCompetition() {
                     </Badge>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Hash: {data.champion.codeHash.slice(0, 16)}...
+                    Hash: {data.champion.codeHash.slice(0, 16)}..
                   </p>
                 </div>
                 <div className="text-right">
@@ -637,7 +619,7 @@ export function ModelCompetition() {
                       </TableCell>
                       <TableCell>
                         <div className="font-medium flex items-center gap-1.5 font-mono text-sm">
-                          <span className={`truncate ${fullSubmission ? 'hover:text-cyan-400' : ''}`}>
+                          <span className={fullSubmission ? 'hover:text-cyan-400' : ''}>
                             {truncateHotkey(entry.minerHotkey)}
                           </span>
                           {entry.isChampion && (
@@ -684,22 +666,22 @@ export function ModelCompetition() {
                       setIsDetailOpen(true)
                     }}
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-medium font-mono hover:text-cyan-400 transition-colors truncate min-w-0">
-                        {truncateHotkey(submission.minerHotkey)}
-                      </span>
-                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-sm font-medium font-mono hover:text-cyan-400 transition-colors">
+                          {truncateHotkey(submission.minerHotkey)}
+                        </span>
                         {submission.isChampion && (
-                          <Crown className="h-3 w-3 text-yellow-500" />
-                        )}
-                        {submission.score !== null && (
-                          <span className="text-sm font-mono font-bold">
-                            {submission.score.toFixed(2)}
-                          </span>
+                          <Crown className="h-3 w-3 text-yellow-500 flex-shrink-0" />
                         )}
                       </div>
+                      {submission.score !== null && (
+                        <span className="text-sm font-mono font-bold">
+                          {submission.score.toFixed(2)}
+                        </span>
+                      )}
                     </div>
-                    <div className="flex items-center justify-between mt-1">
+                    <div className="flex items-center justify-between mt-1.5">
                       <span className="text-xs text-muted-foreground">{getRelativeTime(submission.createdAt)}</span>
                       <StatusBadge status={submission.status} />
                     </div>
