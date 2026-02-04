@@ -34,6 +34,7 @@ interface LeaderboardEntry {
   model_name: string | null
   status: string              // 'submitted' or 'evaluated'
   score: number | null        // NULL for submitted models
+  code_hash: string | null
   is_champion: boolean | null
   champion_at: string | null
   created_at: string          // When model was submitted
@@ -125,6 +126,7 @@ export async function GET() {
           modelName: m.model_name || 'Unnamed',
           status: m.status,
           score: m.score,
+          codeHash: m.code_hash || '',
           codeContent: m.code_content,
           createdAt: m.created_at,
           evaluatedAt: m.evaluated_at,
