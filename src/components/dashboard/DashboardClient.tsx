@@ -283,35 +283,24 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4 md:space-y-6">
-          <TabsList className="grid w-full grid-cols-6 gap-0.5 sm:gap-1">
-            <TabsTrigger value="overview" className="flex-1 gap-0.5 sm:gap-1 md:gap-2 px-1 sm:px-2 md:px-4 text-[10px] sm:text-xs md:text-sm">
-              <LayoutDashboard className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4" />
-              <span className="hidden xs:inline sm:hidden">Home</span>
-              <span className="hidden sm:inline">Overview</span>
+          <TabsList className="grid w-full grid-cols-6">
+            <TabsTrigger value="overview" className="flex-1">
+              <LayoutDashboard className="h-4 w-4" />
             </TabsTrigger>
-            <TabsTrigger value="miner-tracker" className="flex-1 gap-0.5 sm:gap-1 md:gap-2 px-1 sm:px-2 md:px-4 text-[10px] sm:text-xs md:text-sm">
-              <Pickaxe className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4" />
-              <span className="hidden xs:inline sm:hidden">Miners</span>
-              <span className="hidden sm:inline">Miner Tracker</span>
+            <TabsTrigger value="miner-tracker" className="flex-1">
+              <Pickaxe className="h-4 w-4" />
             </TabsTrigger>
-            <TabsTrigger value="epoch-analysis" className="flex-1 gap-0.5 sm:gap-1 md:gap-2 px-1 sm:px-2 md:px-4 text-[10px] sm:text-xs md:text-sm">
-              <Layers className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4" />
-              <span className="hidden xs:inline sm:hidden">Epochs</span>
-              <span className="hidden sm:inline">Epoch Analysis</span>
+            <TabsTrigger value="epoch-analysis" className="flex-1">
+              <Layers className="h-4 w-4" />
             </TabsTrigger>
-            <TabsTrigger value="submission-tracker" className="flex-1 gap-0.5 sm:gap-1 md:gap-2 px-1 sm:px-2 md:px-4 text-[10px] sm:text-xs md:text-sm">
-              <Search className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4" />
-              <span className="hidden xs:inline sm:hidden">Search</span>
-              <span className="hidden sm:inline">Lead Search</span>
+            <TabsTrigger value="submission-tracker" className="flex-1">
+              <Search className="h-4 w-4" />
             </TabsTrigger>
-            <TabsTrigger value="model-competition" className="flex-1 gap-0.5 sm:gap-1 md:gap-2 px-1 sm:px-2 md:px-4 text-[10px] sm:text-xs md:text-sm">
-              <Trophy className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4" />
-              <span className="hidden xs:inline sm:hidden">Models</span>
-              <span className="hidden sm:inline">Model Competition</span>
+            <TabsTrigger value="model-competition" className="flex-1">
+              <Trophy className="h-4 w-4" />
             </TabsTrigger>
-            <TabsTrigger value="faq" className="flex-1 gap-0.5 sm:gap-1 md:gap-2 px-1 sm:px-2 md:px-4 text-[10px] sm:text-xs md:text-sm">
-              <HelpCircle className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4" />
-              <span className="hidden sm:inline">FAQ</span>
+            <TabsTrigger value="faq" className="flex-1">
+              <HelpCircle className="h-4 w-4" />
             </TabsTrigger>
           </TabsList>
 
