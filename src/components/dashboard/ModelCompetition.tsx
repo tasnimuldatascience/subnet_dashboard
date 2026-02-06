@@ -532,44 +532,67 @@ export function ModelCompetition() {
       {/* Main Content Grid */}
       <div className="grid gap-6 lg:grid-cols-2 items-start">
         {/* Current Champion Card */}
-        {data.champion && (
-          <Card className="lg:col-span-2 bg-gradient-to-r from-yellow-500/5 via-amber-500/5 to-orange-500/5 border-yellow-500/30">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Trophy className="h-5 w-5 text-yellow-500" />
-                Current Champion
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-2xl font-bold font-mono">{truncateHotkey(data.champion.minerHotkey)}</span>
-                    <Badge variant="outline" className="border-yellow-500/50 text-yellow-500">
-                      Champion
-                    </Badge>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Hash: {data.champion.codeHash.slice(0, 16)}..
-                  </p>
-                </div>
-                <div className="text-right">
-                  <div className="text-4xl font-bold text-yellow-500">
-                    {data.champion.score.toFixed(2)}
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    Champion since {getRelativeTime(data.champion.championAt)}
-                  </p>
-                  {data.champion.evaluatedAt && (
+        {data.champion && (() => {
+          // Find champion in recentSubmissions or construct a Submission object
+          const championSubmission: Submission = data.recentSubmissions.find(s => s.id === data.champion!.modelId) || {
+            id: data.champion.modelId,
+            minerHotkey: data.champion.minerHotkey,
+            modelName: data.champion.modelName,
+            status: 'evaluated',
+            score: data.champion.score,
+            codeHash: data.champion.codeHash,
+            s3Path: data.champion.s3Path,
+            createdAt: data.champion.championAt,
+            evaluatedAt: data.champion.evaluatedAt,
+            isChampion: true,
+            paymentTao: null,
+          }
+
+          return (
+            <Card
+              className="lg:col-span-2 bg-gradient-to-r from-yellow-500/5 via-amber-500/5 to-orange-500/5 border-yellow-500/30 cursor-pointer hover:border-yellow-500/50 transition-colors"
+              onClick={() => {
+                setSelectedModel(championSubmission)
+                setIsDetailOpen(true)
+              }}
+            >
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Trophy className="h-5 w-5 text-yellow-500" />
+                  Current Champion
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-2xl font-bold font-mono">{truncateHotkey(data.champion.minerHotkey)}</span>
+                      <Badge variant="outline" className="border-yellow-500/50 text-yellow-500">
+                        Champion
+                      </Badge>
+                    </div>
                     <p className="text-xs text-muted-foreground">
-                      Last evaluated {getRelativeTime(data.champion.evaluatedAt)}
+                      Hash: {data.champion.codeHash.slice(0, 16)}..
                     </p>
-                  )}
+                  </div>
+                  <div className="text-right">
+                    <div className="text-4xl font-bold text-yellow-500">
+                      {data.champion.score.toFixed(2)}
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      Champion since {getRelativeTime(data.champion.championAt)}
+                    </p>
+                    {data.champion.evaluatedAt && (
+                      <p className="text-xs text-muted-foreground">
+                        Last evaluated {getRelativeTime(data.champion.evaluatedAt)}
+                      </p>
+                    )}
+                  </div>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
+              </CardContent>
+            </Card>
+          )
+        })()}
 
         {/* Leaderboard */}
         <Card className="overflow-hidden">
