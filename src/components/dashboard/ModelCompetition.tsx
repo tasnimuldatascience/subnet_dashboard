@@ -571,9 +571,22 @@ export function ModelCompetition() {
                         Champion
                       </Badge>
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      Hash: {data.champion.codeHash.slice(0, 16)}..
-                    </p>
+                    <div className="flex items-center gap-1">
+                      <p className="text-xs text-muted-foreground">
+                        Hash: {data.champion.codeHash.slice(0, 16)}..
+                      </p>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-5 w-5 p-0"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          navigator.clipboard.writeText(data.champion!.codeHash)
+                        }}
+                      >
+                        <Copy className="h-3 w-3" />
+                      </Button>
+                    </div>
                   </div>
                   <div className="text-right">
                     <div className="text-4xl font-bold text-yellow-500">
