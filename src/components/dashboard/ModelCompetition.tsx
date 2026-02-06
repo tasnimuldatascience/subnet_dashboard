@@ -780,7 +780,7 @@ export function ModelCompetition() {
           <div className="mt-4 pt-4 border-t">
             <p className="text-xs text-muted-foreground">
               See the <a href="https://github.com/leadpoet/leadpoet" target="_blank" rel="noopener noreferrer" className="text-cyan-500 hover:underline">documentation</a> for full submission guide.
-              Beat the champion score of <span className="font-bold text-yellow-500">{data.stats.championScore.toFixed(2)}</span> to become the new champion!
+              Beat the champion score of <span className="font-bold text-yellow-500">{data.stats.championScore.toFixed(2)}</span> by the specified threshold to become the new champion!
             </p>
           </div>
         </CardContent>
