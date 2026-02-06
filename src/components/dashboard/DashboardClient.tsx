@@ -284,23 +284,29 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4 md:space-y-6">
           <TabsList className="grid w-full grid-cols-6">
-            <TabsTrigger value="overview" className="flex-1">
+            <TabsTrigger value="overview" className="flex-1 gap-1.5">
               <LayoutDashboard className="h-4 w-4" />
+              <span className="hidden md:inline text-xs">Overview</span>
             </TabsTrigger>
-            <TabsTrigger value="miner-tracker" className="flex-1">
+            <TabsTrigger value="miner-tracker" className="flex-1 gap-1.5">
               <Pickaxe className="h-4 w-4" />
+              <span className="hidden md:inline text-xs">Miner</span>
             </TabsTrigger>
-            <TabsTrigger value="epoch-analysis" className="flex-1">
+            <TabsTrigger value="epoch-analysis" className="flex-1 gap-1.5">
               <Layers className="h-4 w-4" />
+              <span className="hidden md:inline text-xs">Epoch</span>
             </TabsTrigger>
-            <TabsTrigger value="submission-tracker" className="flex-1">
+            <TabsTrigger value="submission-tracker" className="flex-1 gap-1.5">
               <Search className="h-4 w-4" />
+              <span className="hidden md:inline text-xs">Search</span>
             </TabsTrigger>
-            <TabsTrigger value="model-competition" className="flex-1">
+            <TabsTrigger value="model-competition" className="flex-1 gap-1.5">
               <Trophy className="h-4 w-4" />
+              <span className="hidden md:inline text-xs">Model</span>
             </TabsTrigger>
-            <TabsTrigger value="faq" className="flex-1">
+            <TabsTrigger value="faq" className="flex-1 gap-1.5">
               <HelpCircle className="h-4 w-4" />
+              <span className="hidden md:inline text-xs">FAQ</span>
             </TabsTrigger>
           </TabsList>
 
