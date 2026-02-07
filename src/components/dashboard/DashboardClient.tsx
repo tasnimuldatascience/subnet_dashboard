@@ -98,20 +98,25 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
   const [activeTab, setActiveTab] = useState('overview')
 
   // Dynamic tab display based on whether content fits
-  const [tabDisplayMode, setTabDisplayMode] = useState<TabDisplayMode>('short')
+  const [tabDisplayMode, setTabDisplayMode] = useState<TabDisplayMode>('icon')
   const tabsContainerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const checkFit = () => {
+      // Mobile always shows icons only (no calculation needed)
+      if (window.innerWidth < 640) {
+        setTabDisplayMode('icon')
+        return
+      }
+
       const container = tabsContainerRef.current
       if (!container) return
 
       const containerWidth = container.offsetWidth
 
-      // Thresholds for 6 tabs
+      // Thresholds for 6 tabs (desktop/tablet only)
       // Full text needs ~780px (Model Competition is longest)
       // Short words need ~480px
-      // Below that, icons only
       if (containerWidth >= 780) {
         setTabDisplayMode('full')
       } else if (containerWidth >= 480) {
