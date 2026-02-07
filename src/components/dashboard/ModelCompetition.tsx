@@ -12,14 +12,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import {
   Trophy,
   Clock,
   Zap,
@@ -48,16 +40,6 @@ interface Champion {
   championAt: string
   evaluatedAt: string | null
   evaluatedToday?: boolean
-}
-
-interface LeaderboardEntry {
-  modelId: string
-  minerHotkey: string
-  modelName: string
-  score: number
-  rank: number
-  isChampion: boolean | null
-  evaluatedAt: string | null
 }
 
 interface Submission {
@@ -91,7 +73,6 @@ interface Stats {
 
 interface ModelCompetitionData {
   champion: Champion | null
-  leaderboard: LeaderboardEntry[]
   recentSubmissions: Submission[]
   stats: Stats
   fetchedAt: string
@@ -151,11 +132,6 @@ function StatusBadge({ status }: { status: string }) {
     default:
       return <Badge variant="outline">{status}</Badge>
   }
-}
-
-// Rank display component - just shows the number
-function RankIcon({ rank }: { rank: number }) {
-      return <span className="text-muted-foreground font-mono">#{rank}</span>
 }
 
 // Copy button component
@@ -609,71 +585,6 @@ export function ModelCompetition() {
             </Card>
           )
         })()}
-
-        {/* Today's Evaluations */}
-        <Card className="overflow-hidden">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Trophy className="h-5 w-5" />
-              Today&apos;s Evaluations
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-12">Rank</TableHead>
-                  <TableHead>Miner</TableHead>
-                  <TableHead className="text-right">Score</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.leaderboard.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={3} className="text-center text-muted-foreground">
-                      No models evaluated today
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  data.leaderboard.map((entry) => {
-                    // Find full submission data if available
-                    const fullSubmission = data.recentSubmissions.find(s => s.id === entry.modelId)
-
-                    return (
-                      <TableRow
-                        key={entry.modelId}
-                        className={`${entry.isChampion ? 'bg-yellow-500/5' : ''} ${fullSubmission ? 'cursor-pointer hover:bg-muted/50' : ''} transition-colors`}
-                        onClick={() => {
-                          if (fullSubmission) {
-                            setSelectedModel(fullSubmission)
-                            setIsDetailOpen(true)
-                          }
-                        }}
-                      >
-                      <TableCell>
-                        <RankIcon rank={entry.rank} />
-                      </TableCell>
-                      <TableCell>
-                        <div className="font-medium flex items-center gap-1.5 font-mono text-sm">
-                          <span className={fullSubmission ? 'hover:text-cyan-400' : ''}>
-                            {truncateHotkey(entry.minerHotkey)}
-                          </span>
-                          {entry.isChampion && (
-                            <Crown className="h-3 w-3 text-yellow-500 flex-shrink-0" />
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right font-mono font-bold">
-                        {entry.score.toFixed(2)}
-                      </TableCell>
-                    </TableRow>
-                    )
-                  })
-                )}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
 
         {/* Recent Submissions (Today) */}
         <Card className="overflow-hidden">
