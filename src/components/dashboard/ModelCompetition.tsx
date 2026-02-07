@@ -508,8 +508,8 @@ export function ModelCompetition() {
         </Card>
       </div>
 
-      {/* Main Content Grid */}
-      <div className="grid gap-6 lg:grid-cols-2 items-start">
+      {/* Main Content */}
+      <div className="space-y-6">
         {/* Current Champion Card */}
         {data.champion && (() => {
           // Find champion in recentSubmissions or construct a Submission object
@@ -529,7 +529,7 @@ export function ModelCompetition() {
 
           return (
             <Card
-              className="lg:col-span-2 bg-gradient-to-r from-yellow-500/5 via-amber-500/5 to-orange-500/5 border-yellow-500/30 cursor-pointer hover:border-yellow-500/50 transition-colors"
+              className="bg-gradient-to-r from-yellow-500/5 via-amber-500/5 to-orange-500/5 border-yellow-500/30 cursor-pointer hover:border-yellow-500/50 transition-colors"
               onClick={() => {
                 setSelectedModel(championSubmission)
                 setIsDetailOpen(true)
