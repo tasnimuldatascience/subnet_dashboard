@@ -372,19 +372,21 @@ function ModelDetailDialog({
                       ))}
                     </div>
                     {/* Code content */}
-                    <div className="relative">
+                    <div>
+                      <div className="flex justify-end p-2 bg-[#0d1117] border-b border-gray-700">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 text-xs text-gray-300 hover:text-white hover:bg-gray-700"
+                          onClick={() => navigator.clipboard.writeText(codeContent[activeFile])}
+                        >
+                          <Copy className="h-3 w-3 mr-1" />
+                          Copy
+                        </Button>
+                      </div>
                       <pre className="p-4 text-xs font-mono overflow-x-auto max-h-[300px] overflow-y-auto bg-[#0d1117] text-[#c9d1d9]">
                         <code>{codeContent[activeFile]}</code>
                       </pre>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="absolute top-2 right-2 h-7 text-xs"
-                        onClick={() => navigator.clipboard.writeText(codeContent[activeFile])}
-                      >
-                        <Copy className="h-3 w-3 mr-1" />
-                        Copy
-                      </Button>
                     </div>
                   </div>
                 ) : (
