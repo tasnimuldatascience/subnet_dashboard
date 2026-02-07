@@ -260,9 +260,11 @@ async function fetchModelCompetitionData(): Promise<unknown> {
   // Check if champion was evaluated today
   const championEvaluatedToday = champion && isToday(champion.evaluated_at)
 
-  // Get champion's created_at from qualification_leaderboard using is_champion = TRUE
-  const championFromLeaderboard = allModels.find((m: { is_champion: boolean | null }) => m.is_champion === true)
-  const championCreatedAt = championFromLeaderboard?.created_at || champion?.champion_at
+  // Get champion's created_at from qualification_leaderboard using is_champion = TRUE or matching model_id
+  const championFromLeaderboard = allModels.find((m: { is_champion: boolean | null; model_id: string }) =>
+    m.is_champion === true || (champion && m.model_id === champion.model_id)
+  )
+  const championCreatedAt = championFromLeaderboard?.created_at || champion?.created_at || champion?.champion_at || new Date().toISOString()
 
   return {
     champion: champion ? {
