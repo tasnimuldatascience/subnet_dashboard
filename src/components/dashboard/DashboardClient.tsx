@@ -26,6 +26,9 @@ import {
 // Server handles background refresh every 5 minutes via instrumentation.ts
 // Client polls every 5 minutes to stay in sync with server cache
 
+// Tab display modes based on container width
+type TabDisplayMode = 'icon' | 'short' | 'full'
+
 // Helper function to calculate relative time on the client
 function getRelativeTime(date: Date): string {
   const now = new Date()
@@ -93,6 +96,46 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
   const [selectedEpochId, setSelectedEpochId] = useState<number | null>(null)
 
   const [activeTab, setActiveTab] = useState('overview')
+
+  // Dynamic tab display based on whether content fits
+  const [tabDisplayMode, setTabDisplayMode] = useState<TabDisplayMode>('short')
+  const tabsContainerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const checkFit = () => {
+      const container = tabsContainerRef.current
+      if (!container) return
+
+      const containerWidth = container.offsetWidth
+
+      // Thresholds for 6 tabs
+      // Full text needs ~780px (Model Competition is longest)
+      // Short words need ~480px
+      // Below that, icons only
+      if (containerWidth >= 780) {
+        setTabDisplayMode('full')
+      } else if (containerWidth >= 480) {
+        setTabDisplayMode('short')
+      } else {
+        setTabDisplayMode('icon')
+      }
+    }
+
+    // Initial check after mount
+    checkFit()
+
+    // Also check after a short delay (for layout to settle)
+    const timeoutId = setTimeout(checkFit, 100)
+
+    // Watch for resize
+    const handleResize = () => checkFit()
+    window.addEventListener('resize', handleResize)
+
+    return () => {
+      clearTimeout(timeoutId)
+      window.removeEventListener('resize', handleResize)
+    }
+  }, [])
 
   // Poll for fresh data every 5 minutes using recursive setTimeout
   useEffect(() => {
@@ -283,32 +326,56 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4 md:space-y-6">
+          <div ref={tabsContainerRef} className="w-full">
           <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="overview" className="flex-1 gap-1.5">
-              <LayoutDashboard className="h-4 w-4" />
-              <span className="hidden md:inline text-xs">Overview</span>
+              <LayoutDashboard className="h-4 w-4 shrink-0" />
+              {tabDisplayMode !== 'icon' && (
+                <span className="text-xs whitespace-nowrap">
+                  {tabDisplayMode === 'full' ? 'Overview' : 'Overview'}
+                </span>
+              )}
             </TabsTrigger>
             <TabsTrigger value="miner-tracker" className="flex-1 gap-1.5">
-              <Pickaxe className="h-4 w-4" />
-              <span className="hidden md:inline text-xs">Miner</span>
+              <Pickaxe className="h-4 w-4 shrink-0" />
+              {tabDisplayMode !== 'icon' && (
+                <span className="text-xs whitespace-nowrap">
+                  {tabDisplayMode === 'full' ? 'Miner Tracker' : 'Miner'}
+                </span>
+              )}
             </TabsTrigger>
             <TabsTrigger value="epoch-analysis" className="flex-1 gap-1.5">
-              <Layers className="h-4 w-4" />
-              <span className="hidden md:inline text-xs">Epoch</span>
+              <Layers className="h-4 w-4 shrink-0" />
+              {tabDisplayMode !== 'icon' && (
+                <span className="text-xs whitespace-nowrap">
+                  {tabDisplayMode === 'full' ? 'Epoch Analysis' : 'Epoch'}
+                </span>
+              )}
             </TabsTrigger>
             <TabsTrigger value="submission-tracker" className="flex-1 gap-1.5">
-              <Search className="h-4 w-4" />
-              <span className="hidden md:inline text-xs">Search</span>
+              <Search className="h-4 w-4 shrink-0" />
+              {tabDisplayMode !== 'icon' && (
+                <span className="text-xs whitespace-nowrap">
+                  {tabDisplayMode === 'full' ? 'Lead Search' : 'Search'}
+                </span>
+              )}
             </TabsTrigger>
             <TabsTrigger value="model-competition" className="flex-1 gap-1.5">
-              <Trophy className="h-4 w-4" />
-              <span className="hidden md:inline text-xs">Model</span>
+              <Trophy className="h-4 w-4 shrink-0" />
+              {tabDisplayMode !== 'icon' && (
+                <span className="text-xs whitespace-nowrap">
+                  {tabDisplayMode === 'full' ? 'Model Competition' : 'Model'}
+                </span>
+              )}
             </TabsTrigger>
             <TabsTrigger value="faq" className="flex-1 gap-1.5">
-              <HelpCircle className="h-4 w-4" />
-              <span className="hidden md:inline text-xs">FAQ</span>
+              <HelpCircle className="h-4 w-4 shrink-0" />
+              {tabDisplayMode !== 'icon' && (
+                <span className="text-xs whitespace-nowrap">FAQ</span>
+              )}
             </TabsTrigger>
           </TabsList>
+          </div>
 
           <TabsContent value="overview" keepMounted>
             <Overview

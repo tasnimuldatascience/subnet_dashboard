@@ -440,10 +440,10 @@ export function ModelCompetition() {
     }
   }, [])
 
-  // Initial fetch + polling every 30 seconds
+  // Initial fetch + polling every 60 seconds
   useEffect(() => {
     fetchData()
-    const interval = setInterval(fetchData, 30000)
+    const interval = setInterval(fetchData, 60000)
     return () => clearInterval(interval)
   }, [fetchData])
 

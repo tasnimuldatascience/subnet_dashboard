@@ -1,5 +1,6 @@
 // Simple in-memory cache for precalc data
-// Data refreshes every 5 minutes (matches pg_cron schedule)
+// Dashboard data refreshes every 5 minutes (matches pg_cron schedule)
+// Model competition data refreshes every 1 minute
 
 interface CacheEntry<T> {
   data: T
@@ -10,7 +11,9 @@ interface CacheEntry<T> {
 const globalForCache = globalThis as unknown as {
   precalcCache: Map<string, CacheEntry<unknown>>
   refreshInterval: NodeJS.Timeout | null
+  modelCompetitionRefreshInterval: NodeJS.Timeout | null
   lastBackgroundRefresh: Date | null  // Separate timestamp for background refresh only
+  lastModelCompetitionRefresh: Date | null
 }
 
 if (!globalForCache.precalcCache) {
@@ -18,6 +21,9 @@ if (!globalForCache.precalcCache) {
 }
 if (!globalForCache.lastBackgroundRefresh) {
   globalForCache.lastBackgroundRefresh = null
+}
+if (!globalForCache.lastModelCompetitionRefresh) {
+  globalForCache.lastModelCompetitionRefresh = null
 }
 
 const cache = globalForCache.precalcCache
@@ -188,6 +194,135 @@ export function startBackgroundRefresh(): void {
     globalForCache.refreshInterval = setInterval(doRefresh, REFRESH_INTERVAL)
     console.log('[Cache] Background refresh interval started (every 5 minutes)')
   }, msUntilFirst)
+}
+
+// Model Competition refresh interval (1 minute)
+const MODEL_COMPETITION_REFRESH_INTERVAL = 60 * 1000
+
+// Fetch model competition data from Supabase
+async function fetchModelCompetitionData(): Promise<unknown> {
+  const { createClient } = await import('@supabase/supabase-js')
+
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  const supabase = createClient(url, key, {
+    auth: { persistSession: false },
+  })
+
+  const [championResult, leaderboardResult] = await Promise.all([
+    supabase
+      .from('qualification_current_champion')
+      .select('*')
+      .limit(1)
+      .single(),
+    supabase
+      .from('qualification_leaderboard')
+      .select('*')
+      .limit(100),
+  ])
+
+  const champion = championResult.data
+  const allModels = leaderboardResult.data || []
+
+  const evaluatedModels = allModels.filter((m: { status: string; score: number | null }) => m.status === 'evaluated' && m.score !== null)
+  const submittedModels = allModels.filter((m: { status: string }) => m.status === 'submitted')
+
+  const totalLast24h = allModels.length
+  const uniqueMiners = new Set(allModels.map((l: { miner_hotkey: string }) => l.miner_hotkey)).size
+
+  const statusCounts = {
+    submitted: submittedModels.length,
+    evaluating: 0,
+    evaluated: evaluatedModels.length,
+    failed: 0,
+  }
+
+  return {
+    champion: champion ? {
+      modelId: champion.model_id,
+      minerHotkey: champion.miner_hotkey,
+      modelName: champion.model_name || 'Unnamed',
+      codeHash: champion.code_hash,
+      score: champion.score,
+      championAt: champion.champion_at,
+      evaluatedAt: champion.evaluated_at,
+    } : null,
+    leaderboard: evaluatedModels
+      .sort((a: { score: number | null }, b: { score: number | null }) => (b.score || 0) - (a.score || 0))
+      .slice(0, 20)
+      .map((l: { model_id: string; miner_hotkey: string; model_name: string | null; score: number | null; rank: number | null; is_champion: boolean | null; evaluated_at: string | null }, index: number) => ({
+        modelId: l.model_id,
+        minerHotkey: l.miner_hotkey,
+        modelName: l.model_name || 'Unnamed',
+        score: l.score,
+        rank: l.rank || index + 1,
+        isChampion: l.is_champion,
+        evaluatedAt: l.evaluated_at,
+      })),
+    recentSubmissions: allModels
+      .sort((a: { created_at: string }, b: { created_at: string }) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .map((m: { model_id: string; miner_hotkey: string; model_name: string | null; status: string; score: number | null; code_hash: string | null; code_content: string | null; created_at: string; evaluated_at: string | null; is_champion: boolean | null; rank: number | null }) => ({
+        id: m.model_id,
+        minerHotkey: m.miner_hotkey,
+        modelName: m.model_name || 'Unnamed',
+        status: m.status,
+        score: m.score,
+        codeHash: m.code_hash || '',
+        codeContent: m.code_content,
+        createdAt: m.created_at,
+        evaluatedAt: m.evaluated_at,
+        isChampion: m.is_champion,
+        rank: m.rank,
+      })),
+    stats: {
+      totalSubmissions: totalLast24h,
+      uniqueMiners,
+      statusCounts,
+      championScore: champion?.score || 0,
+    },
+    fetchedAt: new Date().toISOString(),
+  }
+}
+
+// Perform model competition refresh
+async function doModelCompetitionRefresh(): Promise<void> {
+  console.log('[Cache] Model competition refresh starting...')
+  const startTime = Date.now()
+
+  try {
+    const data = await fetchModelCompetitionData()
+    setCache('model_competition', data)
+    globalForCache.lastModelCompetitionRefresh = new Date()
+    console.log(`[Cache] Model competition refresh completed in ${Date.now() - startTime}ms`)
+  } catch (error) {
+    console.error('[Cache] Model competition refresh error:', error)
+  }
+}
+
+// Start model competition background refresh (every 1 minute)
+export function startModelCompetitionRefresh(): void {
+  if (globalForCache.modelCompetitionRefreshInterval) {
+    console.log('[Cache] Model competition refresh already running')
+    return
+  }
+
+  console.log('[Cache] Starting model competition refresh (every 1 minute)')
+
+  // First refresh immediately
+  doModelCompetitionRefresh()
+
+  // Then refresh every 1 minute
+  globalForCache.modelCompetitionRefreshInterval = setInterval(doModelCompetitionRefresh, MODEL_COMPETITION_REFRESH_INTERVAL)
+}
+
+// Get cached model competition data
+export function getModelCompetitionCache(): { data: unknown; timestamp: Date | null } | null {
+  const cached = getCached<unknown>('model_competition')
+  if (!cached) return null
+  return {
+    data: cached.data,
+    timestamp: globalForCache.lastModelCompetitionRefresh,
+  }
 }
 
 // Fetch with deduplication - prevents multiple concurrent fetches for same key
