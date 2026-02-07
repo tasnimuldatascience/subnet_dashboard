@@ -273,10 +273,12 @@ async function fetchModelCompetitionData(): Promise<unknown> {
   const championEvaluatedToday = champion && isToday(champion.evaluated_at)
 
   // Get champion's created_at from qualification_leaderboard using is_champion = TRUE or matching model_id
-  const championFromLeaderboard = allModels.find((m: { is_champion: boolean | null; model_id: string }) =>
+  const championFromLeaderboard = allModels.find((m: { is_champion: boolean | null; model_id: string; created_at?: string }) =>
     m.is_champion === true || (champion && m.model_id === champion.model_id)
   )
-  const championCreatedAt = championFromLeaderboard?.created_at || champion?.created_at || champion?.champion_at || new Date().toISOString()
+  const championCreatedAt = championFromLeaderboard?.created_at || champion?.champion_at || new Date().toISOString()
+  console.log('[ModelCompetition] championFromLeaderboard?.created_at:', championFromLeaderboard?.created_at)
+  console.log('[ModelCompetition] championCreatedAt final:', championCreatedAt)
 
   return {
     champion: champion ? {
