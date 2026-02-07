@@ -586,54 +586,101 @@ export function ModelCompetition() {
           )
         })()}
 
-        {/* Recent Submissions (Today) */}
+        {/* Today's Evaluations */}
         <Card className="overflow-hidden">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Clock className="h-5 w-5" />
-              Recent Submissions
-              <Badge variant="outline" className="ml-2 text-xs font-normal">
-                Today
-              </Badge>
+              Today&apos;s Evaluations
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-3 max-h-[400px] overflow-y-auto">
-              {data.recentSubmissions.length === 0 ? (
+              {data.recentSubmissions.length === 0 && !(data.champion?.evaluatedToday) ? (
                 <p className="text-center text-muted-foreground py-8">
-                  No submissions today
+                  No evaluations today
                 </p>
               ) : (
-                data.recentSubmissions.map((submission) => (
-                  <div
-                    key={submission.id}
-                    className="p-2.5 sm:p-3 rounded-lg bg-muted/30 border border-border/50 hover:bg-muted/50 cursor-pointer transition-colors"
-                    onClick={() => {
-                      setSelectedModel(submission)
-                      setIsDetailOpen(true)
-                    }}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-sm font-medium font-mono hover:text-cyan-400 transition-colors">
-                          {truncateHotkey(submission.minerHotkey)}
-                        </span>
-                        {submission.isChampion && (
+                <>
+                  {/* Champion re-evaluation entry if evaluated today */}
+                  {data.champion?.evaluatedToday && (
+                    <div
+                      className="p-2.5 sm:p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 hover:bg-yellow-500/20 cursor-pointer transition-colors"
+                      onClick={() => {
+                        const championSubmission: Submission = {
+                          id: data.champion!.modelId,
+                          minerHotkey: data.champion!.minerHotkey,
+                          modelName: data.champion!.modelName,
+                          status: 'evaluated',
+                          score: data.champion!.score,
+                          codeHash: data.champion!.codeHash,
+                          s3Path: data.champion!.s3Path,
+                          createdAt: data.champion!.championAt,
+                          evaluatedAt: data.champion!.evaluatedAt,
+                          isChampion: true,
+                          paymentTao: null,
+                        }
+                        setSelectedModel(championSubmission)
+                        setIsDetailOpen(true)
+                      }}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-sm font-medium font-mono hover:text-cyan-400 transition-colors">
+                            {truncateHotkey(data.champion.minerHotkey)}
+                          </span>
                           <Crown className="h-3 w-3 text-yellow-500 flex-shrink-0" />
+                          <Badge variant="outline" className="text-[10px] border-yellow-500/50 text-yellow-500 px-1 py-0">
+                            Re-evaluated
+                          </Badge>
+                        </div>
+                        <span className="text-sm font-mono font-bold text-yellow-500">
+                          {data.champion.score.toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between mt-1.5">
+                        <span className="text-xs text-muted-foreground">
+                          {data.champion.evaluatedAt ? getRelativeTime(data.champion.evaluatedAt) : ''}
+                        </span>
+                        <Badge variant="default" className="gap-1 bg-green-600">
+                          <CheckCircle className="h-3 w-3" />
+                          Evaluated
+                        </Badge>
+                      </div>
+                    </div>
+                  )}
+                  {/* Regular submissions */}
+                  {data.recentSubmissions.map((submission) => (
+                    <div
+                      key={submission.id}
+                      className="p-2.5 sm:p-3 rounded-lg bg-muted/30 border border-border/50 hover:bg-muted/50 cursor-pointer transition-colors"
+                      onClick={() => {
+                        setSelectedModel(submission)
+                        setIsDetailOpen(true)
+                      }}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-sm font-medium font-mono hover:text-cyan-400 transition-colors">
+                            {truncateHotkey(submission.minerHotkey)}
+                          </span>
+                          {submission.isChampion && (
+                            <Crown className="h-3 w-3 text-yellow-500 flex-shrink-0" />
+                          )}
+                        </div>
+                        {submission.score !== null && (
+                          <span className="text-sm font-mono font-bold">
+                            {submission.score.toFixed(2)}
+                          </span>
                         )}
                       </div>
-                      {submission.score !== null && (
-                        <span className="text-sm font-mono font-bold">
-                          {submission.score.toFixed(2)}
-                        </span>
-                      )}
+                      <div className="flex items-center justify-between mt-1.5">
+                        <span className="text-xs text-muted-foreground">{getRelativeTime(submission.createdAt)}</span>
+                        <StatusBadge status={submission.status} />
+                      </div>
                     </div>
-                    <div className="flex items-center justify-between mt-1.5">
-                      <span className="text-xs text-muted-foreground">{getRelativeTime(submission.createdAt)}</span>
-                      <StatusBadge status={submission.status} />
-                    </div>
-                  </div>
-                ))
+                  ))}
+                </>
               )}
             </div>
           </CardContent>
