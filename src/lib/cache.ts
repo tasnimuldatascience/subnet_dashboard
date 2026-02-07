@@ -238,17 +238,6 @@ async function fetchModelCompetitionData(): Promise<unknown> {
   const champion = championResult.data
   const allModels = leaderboardResult.data || []
 
-  // Debug: Log champion and leaderboard data structure
-  console.log('[ModelCompetition] Champion columns:', champion ? Object.keys(champion) : 'null')
-  console.log('[ModelCompetition] Champion data:', JSON.stringify(champion, null, 2))
-  if (allModels.length > 0) {
-    console.log('[ModelCompetition] Leaderboard columns:', Object.keys(allModels[0]))
-    const champInLeaderboard = allModels.find((m: { is_champion: boolean | null }) => m.is_champion === true)
-    console.log('[ModelCompetition] Champion in leaderboard:', champInLeaderboard ? 'found' : 'not found')
-    if (champInLeaderboard) {
-      console.log('[ModelCompetition] Champion from leaderboard:', JSON.stringify(champInLeaderboard, null, 2))
-    }
-  }
 
   // Filter to only today's submissions (created after 12 AM UTC)
   const todaysModels = allModels.filter((m: { created_at: string }) => isToday(m.created_at))
@@ -277,8 +266,6 @@ async function fetchModelCompetitionData(): Promise<unknown> {
     m.is_champion === true || (champion && m.model_id === champion.model_id)
   )
   const championCreatedAt = championFromLeaderboard?.created_at || champion?.champion_at || new Date().toISOString()
-  console.log('[ModelCompetition] championFromLeaderboard?.created_at:', championFromLeaderboard?.created_at)
-  console.log('[ModelCompetition] championCreatedAt final:', championCreatedAt)
 
   return {
     champion: champion ? {
