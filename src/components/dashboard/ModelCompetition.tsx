@@ -47,6 +47,7 @@ interface Champion {
   score: number
   championAt: string
   evaluatedAt: string | null
+  evaluatedToday?: boolean
 }
 
 interface LeaderboardEntry {
@@ -497,7 +498,7 @@ export function ModelCompetition() {
           <CardContent>
             <div className="text-2xl font-bold">{data.stats.totalSubmissions}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              {data.stats.statusCounts.evaluating} evaluating (last 24h)
+              {data.stats.statusCounts.evaluating} evaluating (today)
             </p>
           </CardContent>
         </Card>
@@ -511,7 +512,7 @@ export function ModelCompetition() {
           <CardContent>
             <div className="text-2xl font-bold">{data.stats.statusCounts.evaluated}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              {data.stats.statusCounts.submitted} pending (last 24h)
+              {data.stats.statusCounts.submitted} pending (today)
             </p>
           </CardContent>
         </Card>
@@ -525,7 +526,7 @@ export function ModelCompetition() {
           <CardContent>
             <div className="text-2xl font-bold">{data.stats.uniqueMiners}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              competing (last 24h)
+              competing (today)
             </p>
           </CardContent>
         </Card>
@@ -609,15 +610,12 @@ export function ModelCompetition() {
           )
         })()}
 
-        {/* Leaderboard */}
+        {/* Today's Evaluations */}
         <Card className="overflow-hidden">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Trophy className="h-5 w-5" />
-              Leaderboard
-              <Badge variant="outline" className="ml-2 text-xs font-normal">
-                All Time
-              </Badge>
+              Today&apos;s Evaluations
             </CardTitle>
           </CardHeader>
           <CardContent className="overflow-x-auto">
@@ -633,7 +631,7 @@ export function ModelCompetition() {
                 {data.leaderboard.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={3} className="text-center text-muted-foreground">
-                      No models evaluated yet
+                      No models evaluated today
                     </TableCell>
                   </TableRow>
                 ) : (
@@ -677,14 +675,14 @@ export function ModelCompetition() {
           </CardContent>
         </Card>
 
-        {/* Recent Submissions (Last 24 Hours) */}
+        {/* Recent Submissions (Today) */}
         <Card className="overflow-hidden">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Clock className="h-5 w-5" />
               Recent Submissions
               <Badge variant="outline" className="ml-2 text-xs font-normal">
-                Last 24h
+                Today
               </Badge>
             </CardTitle>
           </CardHeader>
@@ -692,7 +690,7 @@ export function ModelCompetition() {
             <div className="space-y-3 max-h-[400px] overflow-y-auto">
               {data.recentSubmissions.length === 0 ? (
                 <p className="text-center text-muted-foreground py-8">
-                  No submissions in the last 24 hours
+                  No submissions today
                 </p>
               ) : (
                 data.recentSubmissions.map((submission) => (

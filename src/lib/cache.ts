@@ -199,6 +199,20 @@ export function startBackgroundRefresh(): void {
 // Model Competition refresh interval (1 minute)
 const MODEL_COMPETITION_REFRESH_INTERVAL = 60 * 1000
 
+// Get today's 12 AM UTC timestamp
+function getTodayMidnightUTC(): Date {
+  const now = new Date()
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0))
+}
+
+// Check if a date is after today's 12 AM UTC
+function isToday(dateStr: string | null): boolean {
+  if (!dateStr) return false
+  const date = new Date(dateStr)
+  const midnightUTC = getTodayMidnightUTC()
+  return date.getTime() >= midnightUTC.getTime()
+}
+
 // Fetch model competition data from Supabase
 async function fetchModelCompetitionData(): Promise<unknown> {
   const { createClient } = await import('@supabase/supabase-js')
@@ -224,18 +238,27 @@ async function fetchModelCompetitionData(): Promise<unknown> {
   const champion = championResult.data
   const allModels = leaderboardResult.data || []
 
-  const evaluatedModels = allModels.filter((m: { status: string; score: number | null }) => m.status === 'evaluated' && m.score !== null)
-  const submittedModels = allModels.filter((m: { status: string }) => m.status === 'submitted')
+  // Filter to only today's submissions (created after 12 AM UTC)
+  const todaysModels = allModels.filter((m: { created_at: string }) => isToday(m.created_at))
 
-  const totalLast24h = allModels.length
-  const uniqueMiners = new Set(allModels.map((l: { miner_hotkey: string }) => l.miner_hotkey)).size
+  // Filter evaluated models that were evaluated today
+  const evaluatedModelsToday = todaysModels.filter((m: { status: string; score: number | null; evaluated_at: string | null }) =>
+    m.status === 'evaluated' && m.score !== null && isToday(m.evaluated_at)
+  )
+  const submittedModels = todaysModels.filter((m: { status: string }) => m.status === 'submitted')
+
+  const totalToday = todaysModels.length
+  const uniqueMiners = new Set(todaysModels.map((l: { miner_hotkey: string }) => l.miner_hotkey)).size
 
   const statusCounts = {
     submitted: submittedModels.length,
     evaluating: 0,
-    evaluated: evaluatedModels.length,
+    evaluated: evaluatedModelsToday.length,
     failed: 0,
   }
+
+  // Check if champion was evaluated today
+  const championEvaluatedToday = champion && isToday(champion.evaluated_at)
 
   return {
     champion: champion ? {
@@ -246,8 +269,9 @@ async function fetchModelCompetitionData(): Promise<unknown> {
       score: champion.score,
       championAt: champion.champion_at,
       evaluatedAt: champion.evaluated_at,
+      evaluatedToday: championEvaluatedToday,
     } : null,
-    leaderboard: evaluatedModels
+    leaderboard: evaluatedModelsToday
       .sort((a: { score: number | null }, b: { score: number | null }) => (b.score || 0) - (a.score || 0))
       .slice(0, 20)
       .map((l: { model_id: string; miner_hotkey: string; model_name: string | null; score: number | null; rank: number | null; is_champion: boolean | null; evaluated_at: string | null }, index: number) => ({
@@ -255,11 +279,11 @@ async function fetchModelCompetitionData(): Promise<unknown> {
         minerHotkey: l.miner_hotkey,
         modelName: l.model_name || 'Unnamed',
         score: l.score,
-        rank: l.rank || index + 1,
+        rank: index + 1,  // Re-rank based on today's evaluations
         isChampion: l.is_champion,
         evaluatedAt: l.evaluated_at,
       })),
-    recentSubmissions: allModels
+    recentSubmissions: todaysModels
       .sort((a: { created_at: string }, b: { created_at: string }) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
       .map((m: { model_id: string; miner_hotkey: string; model_name: string | null; status: string; score: number | null; code_hash: string | null; code_content: string | null; created_at: string; evaluated_at: string | null; is_champion: boolean | null; rank: number | null }) => ({
         id: m.model_id,
@@ -271,11 +295,11 @@ async function fetchModelCompetitionData(): Promise<unknown> {
         codeContent: m.code_content,
         createdAt: m.created_at,
         evaluatedAt: m.evaluated_at,
-        isChampion: m.is_champion,
+        isChampion: m.is_champion && isToday(m.evaluated_at),  // Only show champion badge if evaluated today
         rank: m.rank,
       })),
     stats: {
-      totalSubmissions: totalLast24h,
+      totalSubmissions: totalToday,
       uniqueMiners,
       statusCounts,
       championScore: champion?.score || 0,
