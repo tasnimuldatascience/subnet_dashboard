@@ -260,6 +260,10 @@ async function fetchModelCompetitionData(): Promise<unknown> {
   // Check if champion was evaluated today
   const championEvaluatedToday = champion && isToday(champion.evaluated_at)
 
+  // Get champion's created_at from qualification_leaderboard using is_champion = TRUE
+  const championFromLeaderboard = allModels.find((m: { is_champion: boolean | null }) => m.is_champion === true)
+  const championCreatedAt = championFromLeaderboard?.created_at || champion?.champion_at
+
   return {
     champion: champion ? {
       modelId: champion.model_id,
@@ -268,7 +272,7 @@ async function fetchModelCompetitionData(): Promise<unknown> {
       codeHash: champion.code_hash,
       score: champion.score,
       championAt: champion.champion_at,
-      createdAt: champion.created_at,
+      createdAt: championCreatedAt,
       evaluatedAt: champion.evaluated_at,
       evaluatedToday: championEvaluatedToday,
     } : null,
