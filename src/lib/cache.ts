@@ -268,6 +268,7 @@ async function fetchModelCompetitionData(): Promise<unknown> {
       codeHash: champion.code_hash,
       score: champion.score,
       championAt: champion.champion_at,
+      createdAt: champion.created_at,
       evaluatedAt: champion.evaluated_at,
       evaluatedToday: championEvaluatedToday,
     } : null,

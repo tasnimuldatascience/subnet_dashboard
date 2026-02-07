@@ -38,6 +38,7 @@ interface Champion {
   s3Path?: string | null
   score: number
   championAt: string
+  createdAt: string
   evaluatedAt: string | null
   evaluatedToday?: boolean
 }
@@ -521,7 +522,7 @@ export function ModelCompetition() {
             score: data.champion.score,
             codeHash: data.champion.codeHash,
             s3Path: data.champion.s3Path,
-            createdAt: data.champion.championAt,
+            createdAt: data.champion.createdAt,
             evaluatedAt: data.champion.evaluatedAt,
             isChampion: true,
             paymentTao: null,
@@ -572,7 +573,7 @@ export function ModelCompetition() {
                       {data.champion.score.toFixed(2)}
                     </div>
                     <p className="text-sm text-muted-foreground">
-                      Champion since {getRelativeTime(data.champion.championAt)}
+                      Submitted {getRelativeTime(data.champion.createdAt)}
                     </p>
                     {data.champion.evaluatedAt && (
                       <p className="text-xs text-muted-foreground">
@@ -615,7 +616,7 @@ export function ModelCompetition() {
                           score: data.champion!.score,
                           codeHash: data.champion!.codeHash,
                           s3Path: data.champion!.s3Path,
-                          createdAt: data.champion!.championAt,
+                          createdAt: data.champion!.createdAt,
                           evaluatedAt: data.champion!.evaluatedAt,
                           isChampion: true,
                           paymentTao: null,
