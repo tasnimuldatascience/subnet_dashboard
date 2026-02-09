@@ -328,7 +328,7 @@ export async function fetchAllDashboardData(_hours: number, metagraph: Metagraph
     rejectionReasons,
     incentiveData,
     leadInventoryCount,
-    totalSubmissionCount: precalc.totals.all_submissions,
+    totalSubmissionCount: precalc.totals.all_accepted + precalc.totals.all_rejected + precalc.totals.all_pending,
     updatedAt: precalc.updated_at,
   }
 }
