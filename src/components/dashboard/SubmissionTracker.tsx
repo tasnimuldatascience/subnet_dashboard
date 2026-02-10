@@ -1212,7 +1212,6 @@ export function SubmissionTracker({ minerStats, epochStats, metagraph, onUidClic
                                 </span>
                               </p>
                             )}
-                            <p>TEE Sequence: {event.teeSequence || 'N/A'}</p>
                           </div>
                         </div>
                       </div>
