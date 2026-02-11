@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
     // The view contains both submitted and evaluated models
     const { data: model, error } = await supabase
       .from('qualification_leaderboard')
-      .select('model_id, status, code_content, miner_hotkey')
+      .select('model_id, status, code_content, miner_hotkey, evaluated_at')
       .eq('model_id', modelId)
       .single()
 
@@ -50,6 +50,30 @@ export async function GET(request: NextRequest) {
         success: false,
         error: 'Code is only available for evaluated models. This model is still pending evaluation.',
       }, { status: 403 })
+    }
+
+    // Check if this is the current champion - if so, apply 24-hour protection
+    const { data: champion } = await supabase
+      .from('qualification_current_champion')
+      .select('model_id')
+      .limit(1)
+      .single()
+
+    const isCurrentChampion = champion && champion.model_id === modelId
+
+    if (isCurrentChampion && model.evaluated_at) {
+      const evaluatedAt = new Date(model.evaluated_at)
+      const now = new Date()
+      const hoursSinceEval = (now.getTime() - evaluatedAt.getTime()) / (1000 * 60 * 60)
+
+      if (hoursSinceEval < 24) {
+        const hoursRemaining = Math.ceil(24 - hoursSinceEval)
+        return NextResponse.json({
+          success: false,
+          error: `Champion code will be available in ${hoursRemaining} hour${hoursRemaining === 1 ? '' : 's'}. The champion model is protected for 24 hours after evaluation.`,
+          hoursRemaining,
+        }, { status: 403 })
+      }
     }
 
     // Check if code content exists
