@@ -329,9 +329,6 @@ function ModelDetailDialog({
                   <div className="p-8 text-center">
                     <XCircle className="h-6 w-6 text-red-500 mx-auto mb-2" />
                     <p className="text-sm text-muted-foreground">{codeError}</p>
-                    <p className="text-xs text-muted-foreground mt-2">
-                      Code storage is being set up. Check back soon!
-                    </p>
                   </div>
                 ) : codeContent && activeFile ? (
                   <div>
