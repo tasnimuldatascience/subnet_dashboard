@@ -472,7 +472,7 @@ export function ModelCompetition() {
           <CardContent>
             <div className="text-2xl font-bold">{data.stats.totalSubmissions}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              {data.stats.statusCounts.evaluating} evaluating (today)
+              submitted today
             </p>
           </CardContent>
         </Card>
@@ -486,7 +486,7 @@ export function ModelCompetition() {
           <CardContent>
             <div className="text-2xl font-bold">{data.stats.statusCounts.evaluated}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              {data.stats.statusCounts.submitted} pending (today)
+              {data.stats.statusCounts.submitted} pending today
             </p>
           </CardContent>
         </Card>
@@ -500,7 +500,7 @@ export function ModelCompetition() {
           <CardContent>
             <div className="text-2xl font-bold">{data.stats.uniqueMiners}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              competing (today)
+              competing today
             </p>
           </CardContent>
         </Card>

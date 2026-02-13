@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
     // The view contains both submitted and evaluated models
     const { data: model, error } = await supabase
       .from('qualification_leaderboard')
-      .select('model_id, status, code_content, miner_hotkey, evaluated_at')
+      .select('model_id, status, code_content, miner_hotkey, created_at')
       .eq('model_id', modelId)
       .single()
 
@@ -61,16 +61,16 @@ export async function GET(request: NextRequest) {
 
     const isCurrentChampion = champion && champion.model_id === modelId
 
-    if (isCurrentChampion && model.evaluated_at) {
-      const evaluatedAt = new Date(model.evaluated_at)
+    if (isCurrentChampion && model.created_at) {
+      const createdAt = new Date(model.created_at)
       const now = new Date()
-      const hoursSinceEval = (now.getTime() - evaluatedAt.getTime()) / (1000 * 60 * 60)
+      const hoursSinceSubmission = (now.getTime() - createdAt.getTime()) / (1000 * 60 * 60)
 
-      if (hoursSinceEval < 24) {
-        const hoursRemaining = Math.ceil(24 - hoursSinceEval)
+      if (hoursSinceSubmission < 24) {
+        const hoursRemaining = Math.ceil(24 - hoursSinceSubmission)
         return NextResponse.json({
           success: false,
-          error: `Champion code will be available in ${hoursRemaining} hour${hoursRemaining === 1 ? '' : 's'}. The champion model is protected for 24 hours after evaluation.`,
+          error: `Champion code will be available in ${hoursRemaining} hour${hoursRemaining === 1 ? '' : 's'}. The champion model is protected for 24 hours after submission.`,
           hoursRemaining,
         }, { status: 403 })
       }
