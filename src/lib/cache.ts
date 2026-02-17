@@ -96,8 +96,8 @@ export async function warmCache(): Promise<void> {
     const metagraph = await fetchMetagraph()
     console.log('[Cache] Metagraph cached')
 
-    // Fetch dashboard data
-    await fetchAllDashboardData(0, metagraph)
+    // Fetch dashboard data (forceRefresh=true to transform and cache)
+    await fetchAllDashboardData(0, metagraph, true)
     console.log('[Cache] Dashboard data cached')
 
     // Warm latest leads cache
@@ -159,8 +159,8 @@ async function doRefresh(): Promise<void> {
     // Refresh metagraph
     const metagraph = await fetchMetagraph()
 
-    // Refresh dashboard data
-    await fetchAllDashboardData(0, metagraph)
+    // Refresh dashboard data (forceRefresh=true to re-transform)
+    await fetchAllDashboardData(0, metagraph, true)
 
     // Refresh latest leads
     await warmLatestLeadsCache(metagraph)

@@ -128,6 +128,7 @@ class ScaleDecoder {
 }
 
 // Fetch metagraph via subtensor RPC (pure TypeScript, no Python dependency)
+// Note: RPC fallback doesn't include alphaPrice - that requires Python/bittensor
 async function fetchMetagraphFromRPC(): Promise<MetagraphData> {
   console.log('[Metagraph] Fetching from subtensor RPC...')
   const startTime = Date.now()
@@ -194,7 +195,7 @@ async function fetchMetagraphFromRPC(): Promise<MetagraphData> {
     stakes,
     isValidator,
     totalNeurons: numNeurons,
-    alphaPrice: null,
+    alphaPrice: null, // Not available via RPC, requires Python/bittensor
     error: null
   }
 }

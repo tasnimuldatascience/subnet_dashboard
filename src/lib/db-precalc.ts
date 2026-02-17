@@ -1,10 +1,21 @@
 // Pre-calculated dashboard data - fetches from dashboard_precalc table
 // This is much faster than calculating on the fly from transparency_log
 // Includes in-memory caching for high traffic (1000s of clients)
+// OPTIMIZATION: Cache transformed data, not just raw data (saves ~1.7s per request)
 
 import { supabase } from './supabase'
 import { fetchWithCache } from './cache'
 import type { MetagraphData } from './types'
+
+// Global cache for TRANSFORMED dashboard data (the final result)
+// This is the key optimization - transform once, serve instantly to all users
+const globalForDashboard = globalThis as unknown as {
+  transformedDashboardCache: { data: AllDashboardData; timestamp: number } | null
+}
+
+if (!globalForDashboard.transformedDashboardCache) {
+  globalForDashboard.transformedDashboardCache = null
+}
 
 // Clean up rejection reason - exported for use in UI components
 export function cleanRejectionReason(reason: string | null | undefined): string {
@@ -269,8 +280,15 @@ async function fetchPrecalcFromDB(): Promise<PrecalcData> {
 }
 
 // Fetch pre-calculated dashboard data (with caching for high traffic)
-export async function fetchAllDashboardData(_hours: number, metagraph: MetagraphData | null): Promise<AllDashboardData> {
+export async function fetchAllDashboardData(_hours: number, metagraph: MetagraphData | null, forceRefresh: boolean = false): Promise<AllDashboardData> {
   const startTime = Date.now()
+
+  // OPTIMIZATION: Return cached transformed data instantly (saves ~1.7s per request)
+  // Only transform during background refresh or when cache is empty
+  if (!forceRefresh && globalForDashboard.transformedDashboardCache) {
+    console.log(`[Precalc] Transformed cache HIT - returning instantly`)
+    return globalForDashboard.transformedDashboardCache.data
+  }
 
   // Use cache to handle 1000s of concurrent requests
   // Only 1 request hits DB, others get cached data
@@ -319,7 +337,7 @@ export async function fetchAllDashboardData(_hours: number, metagraph: Metagraph
   const fetchTime = Date.now() - startTime
   console.log(`[Precalc] All data transformed in ${fetchTime}ms`)
 
-  return {
+  const result: AllDashboardData = {
     summary,
     minerStats,
     epochStats,
@@ -331,6 +349,12 @@ export async function fetchAllDashboardData(_hours: number, metagraph: Metagraph
     totalSubmissionCount: precalc.totals.all_accepted + precalc.totals.all_rejected + precalc.totals.all_pending,
     updatedAt: precalc.updated_at,
   }
+
+  // Cache the transformed result for instant access
+  globalForDashboard.transformedDashboardCache = { data: result, timestamp: Date.now() }
+  console.log(`[Precalc] Transformed data cached`)
+
+  return result
 }
 
 function transformMinerStats(
