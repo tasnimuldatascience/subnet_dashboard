@@ -293,12 +293,13 @@ async function fetchModelCompetitionData(): Promise<unknown> {
       })),
     recentSubmissions: todaysModels
       .sort((a: { created_at: string }, b: { created_at: string }) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-      .map((m: { model_id: string; miner_hotkey: string; model_name: string | null; status: string; score: number | null; code_hash: string | null; code_content: string | null; created_at: string; evaluated_at: string | null; is_champion: boolean | null; rank: number | null }) => ({
+      .map((m: { model_id: string; miner_hotkey: string; model_name: string | null; status: string; score: number | null; score_breakdown: unknown | null; code_hash: string | null; code_content: string | null; created_at: string; evaluated_at: string | null; is_champion: boolean | null; rank: number | null }) => ({
         id: m.model_id,
         minerHotkey: m.miner_hotkey,
         modelName: m.model_name || 'Unnamed',
         status: m.status,
         score: m.score,
+        scoreBreakdown: m.score_breakdown,
         codeHash: m.code_hash || '',
         codeContent: m.code_content,
         createdAt: m.created_at,
