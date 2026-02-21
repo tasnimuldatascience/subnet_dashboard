@@ -337,7 +337,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
             <TabsTrigger value="overview" className="flex-1 gap-1.5">
               <LayoutDashboard className="h-4 w-4 shrink-0" />
               {tabDisplayMode !== 'icon' && (
-                <span className="text-xs whitespace-nowrap">
+                <span className="hidden sm:inline text-xs whitespace-nowrap">
                   {tabDisplayMode === 'full' ? 'Overview' : 'Overview'}
                 </span>
               )}
@@ -345,7 +345,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
             <TabsTrigger value="miner-tracker" className="flex-1 gap-1.5">
               <Pickaxe className="h-4 w-4 shrink-0" />
               {tabDisplayMode !== 'icon' && (
-                <span className="text-xs whitespace-nowrap">
+                <span className="hidden sm:inline text-xs whitespace-nowrap">
                   {tabDisplayMode === 'full' ? 'Miner Tracker' : 'Miner'}
                 </span>
               )}
@@ -353,7 +353,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
             <TabsTrigger value="epoch-analysis" className="flex-1 gap-1.5">
               <Layers className="h-4 w-4 shrink-0" />
               {tabDisplayMode !== 'icon' && (
-                <span className="text-xs whitespace-nowrap">
+                <span className="hidden sm:inline text-xs whitespace-nowrap">
                   {tabDisplayMode === 'full' ? 'Epoch Analysis' : 'Epoch'}
                 </span>
               )}
@@ -361,7 +361,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
             <TabsTrigger value="submission-tracker" className="flex-1 gap-1.5">
               <Search className="h-4 w-4 shrink-0" />
               {tabDisplayMode !== 'icon' && (
-                <span className="text-xs whitespace-nowrap">
+                <span className="hidden sm:inline text-xs whitespace-nowrap">
                   {tabDisplayMode === 'full' ? 'Lead Search' : 'Search'}
                 </span>
               )}
@@ -369,7 +369,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
             <TabsTrigger value="model-competition" className="flex-1 gap-1.5">
               <Trophy className="h-4 w-4 shrink-0" />
               {tabDisplayMode !== 'icon' && (
-                <span className="text-xs whitespace-nowrap">
+                <span className="hidden sm:inline text-xs whitespace-nowrap">
                   {tabDisplayMode === 'full' ? 'Model Competition' : 'Model'}
                 </span>
               )}
@@ -377,7 +377,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
             <TabsTrigger value="faq" className="flex-1 gap-1.5">
               <HelpCircle className="h-4 w-4 shrink-0" />
               {tabDisplayMode !== 'icon' && (
-                <span className="text-xs whitespace-nowrap">FAQ</span>
+                <span className="hidden sm:inline text-xs whitespace-nowrap">FAQ</span>
               )}
             </TabsTrigger>
           </TabsList>
