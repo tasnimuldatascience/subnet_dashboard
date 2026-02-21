@@ -98,7 +98,8 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
   const [activeTab, setActiveTab] = useState('overview')
 
   // Dynamic tab display based on whether content fits
-  const [tabDisplayMode, setTabDisplayMode] = useState<TabDisplayMode>('icon')
+  // Default to 'full' to prevent flash of icons-only on initial render
+  const [tabDisplayMode, setTabDisplayMode] = useState<TabDisplayMode>('full')
   const tabsContainerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
