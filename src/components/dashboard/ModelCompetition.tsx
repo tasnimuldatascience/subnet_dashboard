@@ -233,6 +233,15 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
 
 // Score Breakdown Tab Component
 function ScoreBreakdownTab({ breakdown }: { breakdown: ScoreBreakdown | null | undefined }) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopyBreakdown = async () => {
+    if (!breakdown) return
+    await navigator.clipboard.writeText(JSON.stringify(breakdown, null, 2))
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
   if (!breakdown || !breakdown.evaluation_summary) {
     return (
       <div className="p-8 text-center">
@@ -245,6 +254,28 @@ function ScoreBreakdownTab({ breakdown }: { breakdown: ScoreBreakdown | null | u
 
   return (
     <div className="space-y-4">
+      {/* Copy Button */}
+      <div className="flex justify-end">
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-2"
+          onClick={handleCopyBreakdown}
+        >
+          {copied ? (
+            <>
+              <Check className="h-4 w-4" />
+              Copied!
+            </>
+          ) : (
+            <>
+              <Copy className="h-4 w-4" />
+              Copy Full Breakdown
+            </>
+          )}
+        </Button>
+      </div>
+
       {/* Evaluation Summary */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         <div className="bg-muted/30 rounded-lg p-3">
@@ -282,21 +313,29 @@ function ScoreBreakdownTab({ breakdown }: { breakdown: ScoreBreakdown | null | u
             <CheckCircle className="h-4 w-4" />
             Top 5 Leads
           </h4>
-          <div className="space-y-2 max-h-[200px] overflow-y-auto pr-1">
+          <div className="space-y-2">
             {breakdown.top_5_leads.map((lead, idx) => (
-              <div key={idx} className="bg-muted/20 rounded-lg p-3 text-sm">
+              <div key={idx} className="bg-muted/20 rounded-lg p-3 text-sm border border-green-500/20">
                 <div className="flex justify-between items-start mb-2">
-                  <div className="flex-1 min-w-0">
+                  <div className="flex-1">
                     <span className="text-xs text-muted-foreground">#{lead.rank}</span>
                     {lead.lead && (
-                      <p className="font-medium truncate">
+                      <p className="font-medium">
                         {lead.lead.role} at {lead.lead.business}
                       </p>
                     )}
-                    <p className="text-xs text-muted-foreground truncate">{lead.icp_prompt}</p>
                   </div>
                   <span className="text-lg font-bold text-green-500 ml-2 flex-shrink-0">{(lead.final_score ?? 0).toFixed(1)}</span>
                 </div>
+                <p className="text-xs text-muted-foreground mb-2">
+                  <span className="font-medium text-foreground">ICP:</span> {lead.icp_prompt}
+                </p>
+                {lead.lead && (
+                  <div className="text-xs text-muted-foreground mb-2">
+                    <span className="font-medium text-foreground">Location:</span> {lead.lead.city}, {lead.lead.state}, {lead.lead.country} |
+                    <span className="font-medium text-foreground ml-1">Industry:</span> {lead.lead.industry} ({lead.lead.sub_industry})
+                  </div>
+                )}
                 {lead.score_components && (
                   <div className="flex flex-wrap gap-2 text-xs">
                     <span className="bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded">
@@ -307,6 +346,9 @@ function ScoreBreakdownTab({ breakdown }: { breakdown: ScoreBreakdown | null | u
                     </span>
                     <span className="bg-cyan-500/20 text-cyan-400 px-2 py-0.5 rounded">
                       Intent: {(lead.score_components.intent_signal_final ?? 0).toFixed(1)}
+                    </span>
+                    <span className="bg-red-500/20 text-red-400 px-2 py-0.5 rounded">
+                      Time Penalty: {(lead.score_components.time_penalty ?? 0).toFixed(1)}
                     </span>
                   </div>
                 )}
@@ -323,25 +365,51 @@ function ScoreBreakdownTab({ breakdown }: { breakdown: ScoreBreakdown | null | u
             <XCircle className="h-4 w-4" />
             Bottom 5 Leads
           </h4>
-          <div className="space-y-2 max-h-[200px] overflow-y-auto pr-1">
+          <div className="space-y-2">
             {breakdown.bottom_5_leads.map((lead, idx) => (
-              <div key={idx} className="bg-muted/20 rounded-lg p-3 text-sm">
+              <div key={idx} className="bg-muted/20 rounded-lg p-3 text-sm border border-red-500/20">
                 <div className="flex justify-between items-start mb-2">
-                  <div className="flex-1 min-w-0">
+                  <div className="flex-1">
                     <span className="text-xs text-muted-foreground">#{lead.rank}</span>
                     {lead.lead ? (
-                      <p className="font-medium truncate">
+                      <p className="font-medium">
                         {lead.lead.role} at {lead.lead.business}
                       </p>
                     ) : (
                       <p className="font-medium text-red-400">No lead returned</p>
                     )}
-                    <p className="text-xs text-muted-foreground truncate">{lead.icp_prompt}</p>
                   </div>
                   <span className="text-lg font-bold text-red-500 ml-2 flex-shrink-0">{(lead.final_score ?? 0).toFixed(1)}</span>
                 </div>
+                <p className="text-xs text-muted-foreground mb-2">
+                  <span className="font-medium text-foreground">ICP:</span> {lead.icp_prompt}
+                </p>
+                {lead.lead && (
+                  <div className="text-xs text-muted-foreground mb-2">
+                    <span className="font-medium text-foreground">Location:</span> {lead.lead.city}, {lead.lead.state}, {lead.lead.country} |
+                    <span className="font-medium text-foreground ml-1">Industry:</span> {lead.lead.industry} ({lead.lead.sub_industry})
+                  </div>
+                )}
                 {lead.failure_reason && (
-                  <p className="text-xs text-red-400 mt-1 truncate">Reason: {lead.failure_reason}</p>
+                  <p className="text-xs text-red-400 mb-2">
+                    <span className="font-medium">Failure Reason:</span> {lead.failure_reason}
+                  </p>
+                )}
+                {lead.score_components && (
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    <span className="bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded">
+                      ICP Fit: {(lead.score_components.icp_fit ?? 0).toFixed(1)}
+                    </span>
+                    <span className="bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded">
+                      Decision Maker: {(lead.score_components.decision_maker ?? 0).toFixed(1)}
+                    </span>
+                    <span className="bg-cyan-500/20 text-cyan-400 px-2 py-0.5 rounded">
+                      Intent: {(lead.score_components.intent_signal_final ?? 0).toFixed(1)}
+                    </span>
+                    <span className="bg-red-500/20 text-red-400 px-2 py-0.5 rounded">
+                      Time Penalty: {(lead.score_components.time_penalty ?? 0).toFixed(1)}
+                    </span>
+                  </div>
                 )}
               </div>
             ))}
@@ -810,7 +878,9 @@ export function ModelCompetition() {
                     <div
                       className="p-2.5 sm:p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 hover:bg-yellow-500/20 cursor-pointer transition-colors"
                       onClick={() => {
-                        const championSubmission: Submission = {
+                        // Try to find champion in recentSubmissions to get scoreBreakdown
+                        const fromRecent = data.recentSubmissions.find(s => s.id === data.champion!.modelId)
+                        const championSubmission: Submission = fromRecent || {
                           id: data.champion!.modelId,
                           minerHotkey: data.champion!.minerHotkey,
                           modelName: data.champion!.modelName,

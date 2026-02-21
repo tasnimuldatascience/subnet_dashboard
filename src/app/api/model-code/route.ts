@@ -52,16 +52,8 @@ export async function GET(request: NextRequest) {
       }, { status: 403 })
     }
 
-    // Check if this is the current champion - if so, apply 24-hour protection
-    const { data: champion } = await supabase
-      .from('qualification_current_champion')
-      .select('model_id')
-      .limit(1)
-      .single()
-
-    const isCurrentChampion = champion && champion.model_id === modelId
-
-    if (isCurrentChampion && model.created_at) {
+    // Apply 24-hour protection to ALL models from submission time
+    if (model.created_at) {
       const createdAt = new Date(model.created_at)
       const now = new Date()
       const hoursSinceSubmission = (now.getTime() - createdAt.getTime()) / (1000 * 60 * 60)
@@ -70,7 +62,7 @@ export async function GET(request: NextRequest) {
         const hoursRemaining = Math.ceil(24 - hoursSinceSubmission)
         return NextResponse.json({
           success: false,
-          error: `Champion code will be available in ${hoursRemaining} hour${hoursRemaining === 1 ? '' : 's'}. The champion model is protected for 24 hours after submission.`,
+          error: `Code will be available in ${hoursRemaining} hour${hoursRemaining === 1 ? '' : 's'}. Model code is protected for 24 hours after submission.`,
           hoursRemaining,
         }, { status: 403 })
       }
