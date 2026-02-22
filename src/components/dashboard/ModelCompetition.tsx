@@ -93,6 +93,7 @@ interface EvaluationSummary {
   icps_no_lead?: number
   icps_scored: number
   icps_with_lead?: number
+  zero_score_count?: number
   total_cost_usd: number
   total_time_seconds: number
   stopped_early?: boolean
@@ -302,8 +303,8 @@ function ScoreBreakdownTab({ breakdown }: { breakdown: ScoreBreakdown | null | u
           <p className="text-lg font-mono">{Math.round(summary.total_time_seconds ?? 0)}s</p>
         </div>
         <div className="bg-muted/30 rounded-lg p-3">
-          <p className="text-xs text-muted-foreground">No Lead Found</p>
-          <p className="text-xl font-bold text-red-500">{summary.icps_no_lead ?? summary.icps_failed ?? 0}</p>
+          <p className="text-xs text-muted-foreground">Leads Scored 0</p>
+          <p className="text-xl font-bold text-red-500">{summary.zero_score_count ?? 0}</p>
         </div>
       </div>
 
