@@ -93,7 +93,6 @@ interface EvaluationSummary {
   icps_no_lead?: number
   icps_scored: number
   icps_with_lead?: number
-  zero_score_count?: number
   total_cost_usd: number
   total_time_seconds: number
   stopped_early?: boolean
@@ -107,6 +106,7 @@ interface ScoreBreakdown {
   top_5_leads: LeadResult[]
   bottom_5_leads: LeadResult[]
   rejection?: string | null
+  zero_score_count?: number
 }
 
 interface Submission {
@@ -304,7 +304,7 @@ function ScoreBreakdownTab({ breakdown }: { breakdown: ScoreBreakdown | null | u
         </div>
         <div className="bg-muted/30 rounded-lg p-3">
           <p className="text-xs text-muted-foreground">Leads Scored 0</p>
-          <p className="text-xl font-bold text-red-500">{summary.zero_score_count ?? 0}</p>
+          <p className="text-xl font-bold text-red-500">{breakdown.zero_score_count ?? 0}</p>
         </div>
       </div>
 
