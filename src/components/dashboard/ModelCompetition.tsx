@@ -908,7 +908,7 @@ export function ModelCompetition() {
                           </span>
                           <Crown className="h-3 w-3 text-yellow-500 flex-shrink-0" />
                           <Badge variant="outline" className="text-[10px] border-yellow-500/50 text-yellow-500 px-1 py-0">
-                            Re-evaluated
+                            Champion
                           </Badge>
                         </div>
                         <span className="text-sm font-mono font-bold text-yellow-500">
