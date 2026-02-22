@@ -41,6 +41,7 @@ interface Champion {
   createdAt: string
   evaluatedAt: string | null
   evaluatedToday?: boolean
+  scoreBreakdown?: ScoreBreakdown | null
 }
 
 // Score breakdown types
@@ -790,6 +791,7 @@ export function ModelCompetition() {
             modelName: data.champion.modelName,
             status: 'evaluated',
             score: data.champion.score,
+            scoreBreakdown: data.champion.scoreBreakdown,
             codeHash: data.champion.codeHash,
             s3Path: data.champion.s3Path,
             createdAt: data.champion.createdAt,
@@ -886,6 +888,7 @@ export function ModelCompetition() {
                           modelName: data.champion!.modelName,
                           status: 'evaluated',
                           score: data.champion!.score,
+                          scoreBreakdown: data.champion!.scoreBreakdown,
                           codeHash: data.champion!.codeHash,
                           s3Path: data.champion!.s3Path,
                           createdAt: data.champion!.createdAt,

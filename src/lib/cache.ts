@@ -223,7 +223,7 @@ async function fetchModelCompetitionData(): Promise<unknown> {
     auth: { persistSession: false },
   })
 
-  const [championResult, leaderboardResult] = await Promise.all([
+  const [championResult, leaderboardResult, championBreakdownResult] = await Promise.all([
     supabase
       .from('qualification_current_champion')
       .select('*')
@@ -233,11 +233,18 @@ async function fetchModelCompetitionData(): Promise<unknown> {
       .from('qualification_leaderboard')
       .select('*')
       .limit(100),
+    supabase
+      .from('qualification_leaderboard')
+      .select('score_breakdown, model_id, is_champion')
+      .eq('is_champion', true)
+      .limit(1)
+      .single(),
   ])
+
+  const championBreakdown = championBreakdownResult.data?.score_breakdown || null
 
   const champion = championResult.data
   const allModels = leaderboardResult.data || []
-
 
   // Filter to only today's submissions (created after 12 AM UTC)
   const todaysModels = allModels.filter((m: { created_at: string }) => isToday(m.created_at))
@@ -261,11 +268,15 @@ async function fetchModelCompetitionData(): Promise<unknown> {
   // Check if champion was evaluated today
   const championEvaluatedToday = champion && isToday(champion.evaluated_at)
 
-  // Get champion's created_at from qualification_leaderboard using is_champion = TRUE or matching model_id
-  const championFromLeaderboard = allModels.find((m: { is_champion: boolean | null; model_id: string; created_at?: string }) =>
+  // Get champion's created_at and score_breakdown
+  // First try from qualification_leaderboard (if champion is in today's models)
+  // Then fallback to qualification_current_champion view (which should have score_breakdown)
+  const championFromLeaderboard = allModels.find((m: { is_champion: boolean | null; model_id: string; created_at?: string; score_breakdown?: unknown }) =>
     m.is_champion === true || (champion && m.model_id === champion.model_id)
   )
   const championCreatedAt = championFromLeaderboard?.created_at || champion?.champion_at || new Date().toISOString()
+  // Use directly fetched champion breakdown, or fallback to leaderboard/champion view
+  const championScoreBreakdown = championBreakdown || championFromLeaderboard?.score_breakdown || champion?.score_breakdown || null
 
   return {
     champion: champion ? {
@@ -278,6 +289,7 @@ async function fetchModelCompetitionData(): Promise<unknown> {
       createdAt: championCreatedAt,
       evaluatedAt: champion.evaluated_at,
       evaluatedToday: championEvaluatedToday,
+      scoreBreakdown: championScoreBreakdown,
     } : null,
     leaderboard: evaluatedModelsToday
       .sort((a: { score: number | null }, b: { score: number | null }) => (b.score || 0) - (a.score || 0))
