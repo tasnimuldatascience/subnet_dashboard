@@ -240,7 +240,7 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
 }
 
 // Score Breakdown Tab Component
-function ScoreBreakdownTab({ breakdown }: { breakdown: ScoreBreakdown | null | undefined }) {
+function ScoreBreakdownTab({ breakdown, score }: { breakdown: ScoreBreakdown | null | undefined; score: number | null }) {
   const [copied, setCopied] = useState(false)
 
   const handleCopyBreakdown = async () => {
@@ -287,8 +287,8 @@ function ScoreBreakdownTab({ breakdown }: { breakdown: ScoreBreakdown | null | u
       {/* Evaluation Summary */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         <div className="bg-muted/30 rounded-lg p-3">
-          <p className="text-xs text-muted-foreground">Average Score</p>
-          <p className="text-xl font-bold text-yellow-500">{(summary.raw_avg_score ?? 0).toFixed(2)}</p>
+          <p className="text-xs text-muted-foreground">Final Score</p>
+          <p className="text-xl font-bold text-yellow-500">{(score ?? 0).toFixed(2)}</p>
         </div>
         <div className="bg-muted/30 rounded-lg p-3">
           <p className="text-xs text-muted-foreground">ICPs Tested</p>
@@ -661,7 +661,7 @@ function ModelDetailDialog({
               setActiveFile={setActiveFile}
             />
           ) : (
-            <ScoreBreakdownTab breakdown={model.scoreBreakdown} />
+            <ScoreBreakdownTab breakdown={model.scoreBreakdown} score={model.score} />
           )}
         </div>
       </DialogContent>
