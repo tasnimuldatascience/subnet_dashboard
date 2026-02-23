@@ -41,6 +41,7 @@ interface Champion {
   createdAt: string
   evaluatedAt: string | null
   evaluatedToday?: boolean
+  isReEvaluated?: boolean
   scoreBreakdown?: ScoreBreakdown | null
 }
 
@@ -87,7 +88,8 @@ interface LeadResult {
 }
 
 interface EvaluationSummary {
-  avg_score: number
+  raw_avg_score?: number
+  final_score?: number
   total_icps: number
   icps_failed?: number
   icps_no_lead?: number
@@ -97,6 +99,9 @@ interface EvaluationSummary {
   total_time_seconds: number
   stopped_early?: boolean
   stopped_reason?: string | null
+  fabrication_rate?: number
+  fabrication_count?: number
+  integrity_multiplier?: number
 }
 
 interface ScoreBreakdown {
@@ -121,6 +126,7 @@ interface Submission {
   createdAt: string
   evaluatedAt: string | null
   isChampion: boolean | null
+  isReEvaluated?: boolean
   paymentTao: number | null
   evaluationTime?: number | null
   evaluationCost?: number | null
@@ -282,7 +288,7 @@ function ScoreBreakdownTab({ breakdown }: { breakdown: ScoreBreakdown | null | u
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         <div className="bg-muted/30 rounded-lg p-3">
           <p className="text-xs text-muted-foreground">Average Score</p>
-          <p className="text-xl font-bold text-yellow-500">{(summary.avg_score ?? 0).toFixed(2)}</p>
+          <p className="text-xl font-bold text-yellow-500">{(summary.raw_avg_score ?? 0).toFixed(2)}</p>
         </div>
         <div className="bg-muted/30 rounded-lg p-3">
           <p className="text-xs text-muted-foreground">ICPs Tested</p>
@@ -870,67 +876,20 @@ export function ModelCompetition() {
           </CardHeader>
           <CardContent>
             <div className="space-y-3 max-h-[400px] overflow-y-auto">
-              {data.recentSubmissions.length === 0 && !(data.champion?.evaluatedToday) ? (
+              {data.recentSubmissions.length === 0 ? (
                 <p className="text-center text-muted-foreground py-8">
                   No evaluations today
                 </p>
               ) : (
                 <>
-                  {/* Champion re-evaluation entry if evaluated today */}
-                  {data.champion?.evaluatedToday && (
-                    <div
-                      className="p-2.5 sm:p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 hover:bg-yellow-500/20 cursor-pointer transition-colors"
-                      onClick={() => {
-                        // Try to find champion in recentSubmissions to get scoreBreakdown
-                        const fromRecent = data.recentSubmissions.find(s => s.id === data.champion!.modelId)
-                        const championSubmission: Submission = fromRecent || {
-                          id: data.champion!.modelId,
-                          minerHotkey: data.champion!.minerHotkey,
-                          modelName: data.champion!.modelName,
-                          status: 'evaluated',
-                          score: data.champion!.score,
-                          scoreBreakdown: data.champion!.scoreBreakdown,
-                          codeHash: data.champion!.codeHash,
-                          s3Path: data.champion!.s3Path,
-                          createdAt: data.champion!.createdAt,
-                          evaluatedAt: data.champion!.evaluatedAt,
-                          isChampion: true,
-                          paymentTao: null,
-                        }
-                        setSelectedModel(championSubmission)
-                        setIsDetailOpen(true)
-                      }}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-sm font-medium font-mono hover:text-cyan-400 transition-colors">
-                            {truncateHotkey(data.champion.minerHotkey)}
-                          </span>
-                          <Crown className="h-3 w-3 text-yellow-500 flex-shrink-0" />
-                          <Badge variant="outline" className="text-[10px] border-yellow-500/50 text-yellow-500 px-1 py-0">
-                            Re-evaluated
-                          </Badge>
-                        </div>
-                        <span className="text-sm font-mono font-bold text-yellow-500">
-                          {data.champion.score.toFixed(2)}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between mt-1.5">
-                        <span className="text-xs text-muted-foreground">
-                          {data.champion.evaluatedAt ? getRelativeTime(data.champion.evaluatedAt) : ''}
-                        </span>
-                        <Badge variant="default" className="gap-1 bg-green-600">
-                          <CheckCircle className="h-3 w-3" />
-                          Evaluated
-                        </Badge>
-                      </div>
-                    </div>
-                  )}
-                  {/* Regular submissions */}
                   {data.recentSubmissions.map((submission) => (
                     <div
                       key={submission.id}
-                      className="p-2.5 sm:p-3 rounded-lg bg-muted/30 border border-border/50 hover:bg-muted/50 cursor-pointer transition-colors"
+                      className={`p-2.5 sm:p-3 rounded-lg cursor-pointer transition-colors ${
+                        submission.isChampion
+                          ? 'bg-yellow-500/10 border border-yellow-500/30 hover:bg-yellow-500/20'
+                          : 'bg-muted/30 border border-border/50 hover:bg-muted/50'
+                      }`}
                       onClick={() => {
                         setSelectedModel(submission)
                         setIsDetailOpen(true)
@@ -944,9 +903,14 @@ export function ModelCompetition() {
                           {submission.isChampion && (
                             <Crown className="h-3 w-3 text-yellow-500 flex-shrink-0" />
                           )}
+                          {submission.isReEvaluated && (
+                            <Badge variant="outline" className="text-[10px] border-orange-500/50 text-orange-500 px-1 py-0">
+                              Re-evaluated
+                            </Badge>
+                          )}
                         </div>
                         {submission.score !== null && (
-                          <span className="text-sm font-mono font-bold">
+                          <span className={`text-sm font-mono font-bold ${submission.isChampion ? 'text-yellow-500' : ''}`}>
                             {submission.score.toFixed(2)}
                           </span>
                         )}

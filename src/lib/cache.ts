@@ -223,31 +223,50 @@ async function fetchModelCompetitionData(): Promise<unknown> {
     auth: { persistSession: false },
   })
 
-  const [championResult, leaderboardResult, championBreakdownResult] = await Promise.all([
-    supabase
-      .from('qualification_current_champion')
-      .select('*')
-      .limit(1)
-      .single(),
-    supabase
-      .from('qualification_leaderboard')
-      .select('*')
-      .limit(100),
-    supabase
-      .from('qualification_leaderboard')
-      .select('score_breakdown, model_id, is_champion')
-      .eq('is_champion', true)
-      .limit(1)
-      .single(),
-  ])
+  // Single query to qualification_leaderboard - contains all data including champion
+  const { data: allModels, error } = await supabase
+    .from('qualification_leaderboard')
+    .select('*')
+    .limit(500)
 
-  const championBreakdown = championBreakdownResult.data?.score_breakdown || null
+  if (error) {
+    console.error('[Cache] Error fetching qualification_leaderboard:', error)
+    throw error
+  }
 
-  const champion = championResult.data
-  const allModels = leaderboardResult.data || []
+  const models = allModels || []
+
+  // Find champion (is_champion = true)
+  const champion = models.find((m: { is_champion: boolean | null }) => m.is_champion === true)
+
+  // Build evaluation count per model_id (count rows where status = 'evaluated')
+  const evaluationCountByModelId = new Map<string, number>()
+  const latestEvalByModelId = new Map<string, string>() // model_id -> latest evaluated_at
+
+  models.forEach((m: { model_id: string; status: string; evaluated_at: string | null }) => {
+    if (m.status === 'evaluated' && m.evaluated_at) {
+      const currentCount = evaluationCountByModelId.get(m.model_id) || 0
+      evaluationCountByModelId.set(m.model_id, currentCount + 1)
+
+      // Track latest evaluation time per model_id
+      const currentLatest = latestEvalByModelId.get(m.model_id)
+      if (!currentLatest || new Date(m.evaluated_at) > new Date(currentLatest)) {
+        latestEvalByModelId.set(m.model_id, m.evaluated_at)
+      }
+    }
+  })
+
+  // Helper to check if this is a re-evaluation (count > 1 and this is the latest)
+  const isReEvaluated = (modelId: string, evaluatedAt: string | null): boolean => {
+    if (!evaluatedAt) return false
+    const count = evaluationCountByModelId.get(modelId) || 0
+    if (count <= 1) return false
+    const latestEval = latestEvalByModelId.get(modelId)
+    return latestEval === evaluatedAt
+  }
 
   // Filter to only today's submissions (created after 12 AM UTC)
-  const todaysModels = allModels.filter((m: { created_at: string }) => isToday(m.created_at))
+  const todaysModels = models.filter((m: { created_at: string }) => isToday(m.created_at))
 
   // Filter evaluated models that were evaluated today
   const evaluatedModelsToday = todaysModels.filter((m: { status: string; score: number | null; evaluated_at: string | null }) =>
@@ -268,16 +287,6 @@ async function fetchModelCompetitionData(): Promise<unknown> {
   // Check if champion was evaluated today
   const championEvaluatedToday = champion && isToday(champion.evaluated_at)
 
-  // Get champion's created_at and score_breakdown
-  // First try from qualification_leaderboard (if champion is in today's models)
-  // Then fallback to qualification_current_champion view (which should have score_breakdown)
-  const championFromLeaderboard = allModels.find((m: { is_champion: boolean | null; model_id: string; created_at?: string; score_breakdown?: unknown }) =>
-    m.is_champion === true || (champion && m.model_id === champion.model_id)
-  )
-  const championCreatedAt = championFromLeaderboard?.created_at || champion?.champion_at || new Date().toISOString()
-  // Use directly fetched champion breakdown, or fallback to leaderboard/champion view
-  const championScoreBreakdown = championBreakdown || championFromLeaderboard?.score_breakdown || champion?.score_breakdown || null
-
   return {
     champion: champion ? {
       modelId: champion.model_id,
@@ -285,11 +294,12 @@ async function fetchModelCompetitionData(): Promise<unknown> {
       modelName: champion.model_name || 'Unnamed',
       codeHash: champion.code_hash,
       score: champion.score,
-      championAt: champion.champion_at,
-      createdAt: championCreatedAt,
+      championAt: champion.champion_at || champion.evaluated_at,
+      createdAt: champion.created_at,
       evaluatedAt: champion.evaluated_at,
       evaluatedToday: championEvaluatedToday,
-      scoreBreakdown: championScoreBreakdown,
+      isReEvaluated: isReEvaluated(champion.model_id, champion.evaluated_at),
+      scoreBreakdown: champion.score_breakdown,
     } : null,
     leaderboard: evaluatedModelsToday
       .sort((a: { score: number | null }, b: { score: number | null }) => (b.score || 0) - (a.score || 0))
@@ -299,7 +309,7 @@ async function fetchModelCompetitionData(): Promise<unknown> {
         minerHotkey: l.miner_hotkey,
         modelName: l.model_name || 'Unnamed',
         score: l.score,
-        rank: index + 1,  // Re-rank based on today's evaluations
+        rank: index + 1,
         isChampion: l.is_champion,
         evaluatedAt: l.evaluated_at,
       })),
@@ -316,7 +326,8 @@ async function fetchModelCompetitionData(): Promise<unknown> {
         codeContent: m.code_content,
         createdAt: m.created_at,
         evaluatedAt: m.evaluated_at,
-        isChampion: m.is_champion && isToday(m.evaluated_at),  // Only show champion badge if evaluated today
+        isChampion: m.is_champion,
+        isReEvaluated: isReEvaluated(m.model_id, m.evaluated_at),
         rank: m.rank,
       })),
     stats: {
