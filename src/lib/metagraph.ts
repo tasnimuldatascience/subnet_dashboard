@@ -32,13 +32,22 @@ function findPythonPath(): string {
 // Use global to persist metagraph cache across hot reloads
 const globalForMetagraph = globalThis as unknown as {
   metagraphCache: { data: MetagraphData; timestamp: number } | null
+  inFlightRequest: Promise<MetagraphData> | null
 }
 
 if (!globalForMetagraph.metagraphCache) {
   globalForMetagraph.metagraphCache = null
 }
+if (!globalForMetagraph.inFlightRequest) {
+  globalForMetagraph.inFlightRequest = null
+}
 
-const METAGRAPH_TTL = 12 * 60 * 1000 // 12 minutes
+const METAGRAPH_TTL = 2 * 60 * 1000 // 2 minutes
+
+// Clear metagraph cache (called by background refresh)
+export function clearMetagraphCache(): void {
+  globalForMetagraph.metagraphCache = null
+}
 
 // --- SCALE decoder for NeuronInfoLite ---
 class ScaleDecoder {
@@ -274,11 +283,26 @@ export async function fetchMetagraph(): Promise<MetagraphData> {
     return globalForMetagraph.metagraphCache.data
   }
 
-  // Fetch fresh data
-  const data = await fetchMetagraphFromBittensor()
-  // Only cache successful results
-  if (data.totalNeurons > 0) {
-    globalForMetagraph.metagraphCache = { data, timestamp: now }
+  // If a request is already in flight, wait for it (deduplication)
+  if (globalForMetagraph.inFlightRequest) {
+    console.log('[Metagraph] Waiting for in-flight request')
+    return globalForMetagraph.inFlightRequest
   }
-  return data
+
+  // Fetch fresh data with deduplication
+  const fetchPromise = (async () => {
+    try {
+      const data = await fetchMetagraphFromBittensor()
+      // Only cache successful results
+      if (data.totalNeurons > 0) {
+        globalForMetagraph.metagraphCache = { data, timestamp: Date.now() }
+      }
+      return data
+    } finally {
+      globalForMetagraph.inFlightRequest = null
+    }
+  })()
+
+  globalForMetagraph.inFlightRequest = fetchPromise
+  return fetchPromise
 }

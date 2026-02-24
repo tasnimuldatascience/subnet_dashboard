@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { fetchAllDashboardData } from '@/lib/db-precalc'
 import { fetchMetagraph } from '@/lib/metagraph'
+import { getQualificationMinerHotkeys } from '@/lib/cache'
 import { getRelativeTime, BUILD_VERSION } from '@/lib/server-data'
 
 // Force dynamic - always run on request
@@ -21,6 +22,9 @@ export async function GET() {
     const serverRefreshedAt = data.updatedAt
     const serverRelativeTime = getRelativeTime(new Date(serverRefreshedAt))
 
+    // Get qualification miner hotkeys from cache
+    const qualificationMinerHotkeys = getQualificationMinerHotkeys()
+
     const response = NextResponse.json({
       ...data,
       hours: 0,
@@ -28,6 +32,7 @@ export async function GET() {
       serverRefreshedAt,
       serverRelativeTime,
       buildVersion: BUILD_VERSION,
+      qualificationMinerHotkeys,
     })
 
     // No HTTP caching - always return fresh data from server cache

@@ -34,6 +34,7 @@ import type {
   RejectionReason,
   LeadInventoryData,
   LeadInventoryCount,
+  MetagraphData,
 } from '@/lib/types'
 import type { WeeklyLeadInventory } from '@/lib/db-precalc'
 
@@ -50,6 +51,8 @@ interface OverviewProps {
   leadInventoryCount?: LeadInventoryCount
   alphaPrice: number | null
   onMinerClick?: (minerHotkey: string) => void
+  metagraph?: MetagraphData | null
+  qualificationMinerHotkeys?: string[]
 }
 
 export function Overview({
@@ -62,6 +65,8 @@ export function Overview({
   leadInventoryCount,
   alphaPrice,
   onMinerClick,
+  metagraph,
+  qualificationMinerHotkeys = [],
 }: OverviewProps) {
   const [sortKey, setSortKey] = useState<SortKey>('accepted')
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
@@ -141,6 +146,50 @@ export function Overview({
     })
     return sorted
   }, [leaderboardData, sortKey, sortDirection])
+
+  // Combined miner stats for incentive chart (includes qualification miners)
+  const minerStatsForIncentiveChart = useMemo(() => {
+    if (!metagraph || qualificationMinerHotkeys.length === 0) {
+      return minerStats
+    }
+
+    // Get existing miner hotkeys
+    const existingHotkeys = new Set(minerStats.map(m => m.minerHotkey))
+
+    // Find qualification miners not in minerStats with incentive > 0
+    const additionalMiners: MinerStats[] = []
+    for (const hotkey of qualificationMinerHotkeys) {
+      if (!existingHotkeys.has(hotkey)) {
+        const incentive = metagraph.incentives[hotkey] ?? 0
+        if (incentive > 0) {
+          const uid = metagraph.hotkeyToUid[hotkey] ?? null
+          additionalMiners.push({
+            uid,
+            minerHotkey: hotkey,
+            coldkey: metagraph.hotkeyToColdkey?.[hotkey] || null,
+            minerShort: hotkey,
+            total: 0,
+            accepted: 0,
+            rejected: 0,
+            pending: 0,
+            acceptanceRate: 0,
+            avgRepScore: 0,
+            btIncentive: incentive * 100,
+            btEmission: metagraph.emissions[hotkey] ?? 0,
+            stake: Math.round((metagraph.stakes[hotkey] ?? 0) * 100) / 100,
+            last20Accepted: 0,
+            last20Rejected: 0,
+            currentAccepted: 0,
+            currentRejected: 0,
+            epochPerformance: [],
+            rejectionReasons: [],
+          })
+        }
+      }
+    }
+
+    return [...minerStats, ...additionalMiners]
+  }, [minerStats, metagraph, qualificationMinerHotkeys])
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -287,7 +336,7 @@ export function Overview({
   // Download CSV function for miner incentive distribution
   const downloadMinerIncentiveCSV = () => {
     const headers = ['Rank', 'UID', 'Hotkey', 'Incentive%']
-    const sorted = [...minerStats].sort((a, b) => b.btIncentive - a.btIncentive)
+    const sorted = [...minerStatsForIncentiveChart].sort((a, b) => b.btIncentive - a.btIncentive)
     const rows = sorted.map((m, idx) => [
       idx + 1,
       m.uid ?? '',
@@ -456,7 +505,7 @@ export function Overview({
           </div>
         </CardHeader>
         <CardContent className="p-4 md:p-6 pt-0 md:pt-0">
-          <MinerIncentiveChart minerStats={minerStats} />
+          <MinerIncentiveChart minerStats={minerStatsForIncentiveChart} />
         </CardContent>
       </Card>
 

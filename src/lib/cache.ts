@@ -151,10 +151,12 @@ async function doRefresh(): Promise<void> {
   try {
     // Clear existing cache to force fresh fetch from database
     clearCache('dashboard_precalc')
-    clearCache('metagraph')
 
-    const { fetchMetagraph } = await import('./metagraph')
+    const { fetchMetagraph, clearMetagraphCache } = await import('./metagraph')
     const { fetchAllDashboardData, warmLatestLeadsCache } = await import('./db-precalc')
+
+    // Clear metagraph cache to force fresh RPC fetch
+    clearMetagraphCache()
 
     // Refresh metagraph
     const metagraph = await fetchMetagraph()
@@ -287,6 +289,9 @@ async function fetchModelCompetitionData(): Promise<unknown> {
   // Check if champion was evaluated today
   const championEvaluatedToday = champion && isToday(champion.evaluated_at)
 
+  // Get all unique miner hotkeys from qualification_leaderboard (for incentive chart)
+  const allQualificationMiners = Array.from(new Set(models.map((m: { miner_hotkey: string }) => m.miner_hotkey)))
+
   return {
     champion: champion ? {
       modelId: champion.model_id,
@@ -301,6 +306,7 @@ async function fetchModelCompetitionData(): Promise<unknown> {
       isReEvaluated: isReEvaluated(champion.model_id, champion.evaluated_at),
       scoreBreakdown: champion.score_breakdown,
     } : null,
+    allQualificationMiners,
     leaderboard: evaluatedModelsToday
       .sort((a: { score: number | null }, b: { score: number | null }) => (b.score || 0) - (a.score || 0))
       .slice(0, 20)
@@ -379,6 +385,14 @@ export function getModelCompetitionCache(): { data: unknown; timestamp: Date | n
     data: cached.data,
     timestamp: globalForCache.lastModelCompetitionRefresh,
   }
+}
+
+// Get all qualification miner hotkeys from cache
+export function getQualificationMinerHotkeys(): string[] {
+  const cached = getModelCompetitionCache()
+  if (!cached?.data) return []
+  const data = cached.data as { allQualificationMiners?: string[] }
+  return data.allQualificationMiners || []
 }
 
 // Fetch with deduplication - prevents multiple concurrent fetches for same key

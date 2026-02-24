@@ -43,6 +43,7 @@ interface DashboardData extends AllDashboardData {
   serverRefreshedAt?: string
   serverRelativeTime?: string
   buildVersion?: string
+  qualificationMinerHotkeys?: string[]
 }
 
 // Props received from Server Component
@@ -326,6 +327,8 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
               leadInventoryCount={dashboardData.leadInventoryCount}
               alphaPrice={metagraph?.alphaPrice ?? null}
               onMinerClick={handleMinerClick}
+              metagraph={metagraph}
+              qualificationMinerHotkeys={dashboardData.qualificationMinerHotkeys || []}
             />
           </TabsContent>
 
