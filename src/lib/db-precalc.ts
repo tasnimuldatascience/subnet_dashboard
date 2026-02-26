@@ -272,7 +272,7 @@ async function fetchColumnWithRetry<T>(column: string, maxRetries = 3): Promise<
       .single()
 
     if (!error && data) {
-      return (data as Record<string, T>)[column]
+      return (data as unknown as Record<string, T>)[column]
     }
 
     if (error?.code === '57014' && attempt < maxRetries - 1) {
