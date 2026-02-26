@@ -259,24 +259,41 @@ export interface AllDashboardData {
   updatedAt: string
 }
 
-// Fetch raw precalc data from database
+// Helper to add delay between retries
+const delay = (ms: number) => new Promise(r => setTimeout(r, ms))
+
+// Fetch raw precalc data from database with retry logic for timeouts
 async function fetchPrecalcFromDB(): Promise<PrecalcData> {
-  console.log('[Precalc] Fetching from database...')
-  const startTime = Date.now()
+  const maxRetries = 3
+  const retryDelay = 2000
 
-  const { data, error } = await supabase
-    .from('dashboard_precalc')
-    .select('*')
-    .eq('id', 1)
-    .single()
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    console.log(`[Precalc] Fetching from database... (attempt ${attempt + 1}/${maxRetries})`)
+    const startTime = Date.now()
 
-  if (error) {
+    const { data, error } = await supabase
+      .from('dashboard_precalc')
+      .select('*')
+      .eq('id', 1)
+      .single()
+
+    if (!error && data) {
+      console.log(`[Precalc] DB fetch completed in ${Date.now() - startTime}ms`)
+      return data as PrecalcData
+    }
+
+    // On timeout (code 57014), wait and retry
+    if (error?.code === '57014' && attempt < maxRetries - 1) {
+      console.log(`[Precalc] Timeout, retrying in ${retryDelay * (attempt + 1)}ms...`)
+      await delay(retryDelay * (attempt + 1)) // Exponential backoff
+      continue
+    }
+
     console.error('[Precalc] Error fetching data:', error)
     throw new Error('Failed to fetch dashboard data')
   }
 
-  console.log(`[Precalc] DB fetch completed in ${Date.now() - startTime}ms`)
-  return data as PrecalcData
+  throw new Error('Failed to fetch dashboard data after retries')
 }
 
 // Fetch pre-calculated dashboard data (with caching for high traffic)
