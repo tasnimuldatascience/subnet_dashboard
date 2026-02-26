@@ -262,38 +262,82 @@ export interface AllDashboardData {
 // Helper to add delay between retries
 const delay = (ms: number) => new Promise(r => setTimeout(r, ms))
 
-// Fetch raw precalc data from database with retry logic for timeouts
-async function fetchPrecalcFromDB(): Promise<PrecalcData> {
-  const maxRetries = 5
-  const retryDelay = 3000
-
+// Fetch a single column with retry logic
+async function fetchColumnWithRetry<T>(column: string, maxRetries = 3): Promise<T | null> {
   for (let attempt = 0; attempt < maxRetries; attempt++) {
-    console.log(`[Precalc] Fetching from database... (attempt ${attempt + 1}/${maxRetries})`)
-    const startTime = Date.now()
-
     const { data, error } = await supabase
       .from('dashboard_precalc')
-      .select('*')
+      .select(column)
       .eq('id', 1)
       .single()
 
     if (!error && data) {
-      console.log(`[Precalc] DB fetch completed in ${Date.now() - startTime}ms`)
-      return data as PrecalcData
+      return (data as Record<string, T>)[column]
     }
 
-    // On timeout (code 57014), wait and retry
     if (error?.code === '57014' && attempt < maxRetries - 1) {
-      console.log(`[Precalc] Timeout, retrying in ${retryDelay * (attempt + 1)}ms...`)
-      await delay(retryDelay * (attempt + 1)) // Exponential backoff
+      console.log(`[Precalc] ${column} timeout, retry ${attempt + 2}/${maxRetries}...`)
+      await delay(2000 * (attempt + 1))
       continue
     }
 
-    console.error('[Precalc] Error fetching data:', error)
+    console.error(`[Precalc] Error fetching ${column}:`, error)
+    return null
+  }
+  return null
+}
+
+// Fetch raw precalc data from database - fetch columns in parallel to avoid timeout
+async function fetchPrecalcFromDB(): Promise<PrecalcData> {
+  console.log('[Precalc] Fetching from database (parallel column fetch)...')
+  const startTime = Date.now()
+
+  // Fetch all columns in parallel - each column has its own retry logic
+  const [
+    baseData,
+    minerStats,
+    epochStats,
+    leadInventory,
+    weeklyLeadInventory
+  ] = await Promise.all([
+    // Small columns together
+    supabase
+      .from('dashboard_precalc')
+      .select('id,totals,updated_at')
+      .eq('id', 1)
+      .single()
+      .then(r => r.data),
+    // Large columns individually
+    fetchColumnWithRetry<Record<string, PrecalcMinerStats>>('miner_stats'),
+    fetchColumnWithRetry<Record<string, PrecalcEpochStats>>('epoch_stats'),
+    fetchColumnWithRetry<PrecalcLeadInventory[]>('lead_inventory'),
+    fetchColumnWithRetry<PrecalcWeeklyLeadInventory[]>('weekly_lead_inventory'),
+  ])
+
+  if (!baseData) {
+    console.error('[Precalc] Failed to fetch base data')
     throw new Error('Failed to fetch dashboard data')
   }
 
-  throw new Error('Failed to fetch dashboard data after retries')
+  // Allow partial data - dashboard can work with empty miner/epoch stats
+  if (!minerStats) {
+    console.warn('[Precalc] miner_stats fetch failed, using empty data')
+  }
+  if (!epochStats) {
+    console.warn('[Precalc] epoch_stats fetch failed, using empty data')
+  }
+
+  console.log(`[Precalc] DB fetch completed in ${Date.now() - startTime}ms`)
+
+  return {
+    id: baseData.id,
+    totals: baseData.totals,
+    updated_at: baseData.updated_at,
+    miner_stats: minerStats || {},
+    epoch_stats: epochStats || {},
+    lead_inventory: leadInventory || [],
+    weekly_lead_inventory: weeklyLeadInventory || [],
+  } as PrecalcData
 }
 
 // Fetch pre-calculated dashboard data (with caching for high traffic)
@@ -575,6 +619,22 @@ function calculateIncentiveData(
 }
 
 function calculateSummary(totals: PrecalcTotals, minerStats: MinerStats[]): DashboardSummary {
+  // If minerStats is empty (fetch failed), use raw totals from precalc
+  if (minerStats.length === 0) {
+    const decided = totals.all_accepted + totals.all_rejected
+    return {
+      total_submissions: totals.all_submissions,
+      total_accepted: totals.all_accepted,
+      total_rejected: totals.all_rejected,
+      total_pending: totals.all_pending,
+      acceptance_rate: decided > 0 ? Math.round((totals.all_accepted / decided) * 1000) / 10 : 0,
+      avg_rep_score: 0, // Can't calculate without miner stats
+      unique_miners: totals.unique_miners,
+      unique_epochs: totals.unique_epochs,
+      latest_epoch: totals.latest_epoch,
+    }
+  }
+
   // For active miners view, recalculate from filtered miner stats
   const totalSubmissions = minerStats.reduce((a, m) => a + m.total_submissions, 0)
   const totalAccepted = minerStats.reduce((a, m) => a + m.accepted, 0)
