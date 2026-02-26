@@ -259,14 +259,15 @@ export interface AllDashboardData {
   updatedAt: string
 }
 
-// Fetch raw precalc data from database
+// Fetch raw precalc data from database (without miner_stats - fetched separately)
 async function fetchPrecalcFromDB(): Promise<PrecalcData> {
   console.log('[Precalc] Fetching from database...')
   const startTime = Date.now()
 
+  // Fetch everything EXCEPT miner_stats (which is now in separate table)
   const { data, error } = await supabase
     .from('dashboard_precalc')
-    .select('*')
+    .select('id, totals, epoch_stats, lead_inventory, weekly_lead_inventory, updated_at')
     .eq('id', 1)
     .single()
 
@@ -276,7 +277,51 @@ async function fetchPrecalcFromDB(): Promise<PrecalcData> {
   }
 
   console.log(`[Precalc] DB fetch completed in ${Date.now() - startTime}ms`)
-  return data as PrecalcData
+
+  // Return with empty miner_stats (will be fetched from new table)
+  return {
+    ...data,
+    miner_stats: {}
+  } as PrecalcData
+}
+
+// Fetch miner stats from row-based table (only active miners)
+async function fetchMinerStatsRows(activeHotkeys: string[]): Promise<Record<string, PrecalcMinerStats>> {
+  if (activeHotkeys.length === 0) {
+    console.log('[Precalc] No active hotkeys, skipping miner stats fetch')
+    return {}
+  }
+
+  console.log(`[Precalc] Fetching miner stats for ${activeHotkeys.length} active miners...`)
+  const startTime = Date.now()
+
+  const { data, error } = await supabase
+    .from('dashboard_miner_stats')
+    .select('*')
+    .in('hotkey', activeHotkeys)
+
+  if (error) {
+    console.error('[Precalc] Error fetching miner stats:', error)
+    return {}
+  }
+
+  // Convert array to Record<hotkey, stats>
+  const minerStats: Record<string, PrecalcMinerStats> = {}
+  for (const row of data || []) {
+    minerStats[row.hotkey] = {
+      total: row.total,
+      accepted: row.accepted,
+      rejected: row.rejected,
+      pending: row.pending,
+      acceptance_rate: row.acceptance_rate,
+      avg_rep_score: row.avg_rep_score,
+      epochs: row.epochs || {},
+      rejection_reasons_raw: row.rejection_reasons_raw || {}
+    }
+  }
+
+  console.log(`[Precalc] Miner stats fetched in ${Date.now() - startTime}ms (${Object.keys(minerStats).length} miners)`)
+  return minerStats
 }
 
 // Fetch pre-calculated dashboard data (with caching for high traffic)
@@ -300,12 +345,15 @@ export async function fetchAllDashboardData(_hours: number, metagraph: Metagraph
   const metagraphHotkeys = metagraph ? Object.keys(metagraph.hotkeyToUid) : []
   const activeMiners = metagraphHotkeys.length > 0 ? new Set(metagraphHotkeys) : null
 
+  // Fetch miner stats from row-based table (only active miners)
+  const minerStatsRaw = await fetchMinerStatsRows(metagraphHotkeys)
+
   // Transform miner_stats (include coldkey from metagraph)
   const hotkeyToColdkey = metagraph?.hotkeyToColdkey || {}
-  const minerStats = transformMinerStats(precalc.miner_stats, precalc.totals.latest_epoch, activeMiners, hotkeyToColdkey)
+  const minerStats = transformMinerStats(minerStatsRaw, precalc.totals.latest_epoch, activeMiners, hotkeyToColdkey)
 
   // Transform epoch_stats (include per-miner breakdown from miner_stats)
-  const epochStats = transformEpochStats(precalc.epoch_stats, precalc.miner_stats, activeMiners)
+  const epochStats = transformEpochStats(precalc.epoch_stats, minerStatsRaw, activeMiners)
 
   // Transform lead_inventory
   const leadInventory = transformLeadInventory(precalc.lead_inventory)
@@ -318,11 +366,11 @@ export async function fetchAllDashboardData(_hours: number, metagraph: Metagraph
     leads_added: w.leads_added,
   }))
 
-  // Calculate rejection reasons from miner stats (use all miners, not just active)
-  const rejectionReasons = calculateRejectionReasons(precalc.miner_stats, null)
+  // Calculate rejection reasons from miner stats (use active miners only now)
+  const rejectionReasons = calculateRejectionReasons(minerStatsRaw, null)
 
   // Calculate incentive data from miner stats
-  const incentiveData = calculateIncentiveData(precalc.miner_stats, activeMiners)
+  const incentiveData = calculateIncentiveData(minerStatsRaw, activeMiners)
 
   // Calculate summary (filtered by active miners)
   const summary = calculateSummary(precalc.totals, minerStats)
