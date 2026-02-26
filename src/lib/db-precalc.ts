@@ -264,8 +264,8 @@ const delay = (ms: number) => new Promise(r => setTimeout(r, ms))
 
 // Fetch raw precalc data from database with retry logic for timeouts
 async function fetchPrecalcFromDB(): Promise<PrecalcData> {
-  const maxRetries = 3
-  const retryDelay = 2000
+  const maxRetries = 5
+  const retryDelay = 3000
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     console.log(`[Precalc] Fetching from database... (attempt ${attempt + 1}/${maxRetries})`)
