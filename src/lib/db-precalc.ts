@@ -149,6 +149,7 @@ interface PrecalcData {
   lead_inventory: PrecalcLeadInventory[]
   weekly_lead_inventory: PrecalcWeeklyLeadInventory[]
   totals: PrecalcTotals
+  epoch_rejection_reasons: Record<string, Record<string, number>>
   updated_at: string
 }
 
@@ -267,7 +268,7 @@ async function fetchPrecalcFromDB(): Promise<PrecalcData> {
   // Fetch everything EXCEPT miner_stats (which is now in separate table)
   const { data, error } = await supabase
     .from('dashboard_precalc')
-    .select('id, totals, epoch_stats, lead_inventory, weekly_lead_inventory, updated_at')
+    .select('id, totals, epoch_stats, lead_inventory, weekly_lead_inventory, epoch_rejection_reasons, updated_at')
     .eq('id', 1)
     .single()
 
@@ -281,7 +282,8 @@ async function fetchPrecalcFromDB(): Promise<PrecalcData> {
   // Return with empty miner_stats (will be fetched from new table)
   return {
     ...data,
-    miner_stats: {}
+    miner_stats: {},
+    epoch_rejection_reasons: data.epoch_rejection_reasons || {}
   } as PrecalcData
 }
 
@@ -366,8 +368,8 @@ export async function fetchAllDashboardData(_hours: number, metagraph: Metagraph
     leads_added: w.leads_added,
   }))
 
-  // Calculate rejection reasons from miner stats (use active miners only now)
-  const rejectionReasons = calculateRejectionReasons(minerStatsRaw, null)
+  // Calculate rejection reasons from last 140 epochs
+  const rejectionReasons = calculateRejectionReasonsFromEpochs(precalc.epoch_rejection_reasons, 140)
 
   // Calculate incentive data from miner stats
   const incentiveData = calculateIncentiveData(minerStatsRaw, activeMiners)
@@ -552,6 +554,43 @@ function transformLeadInventory(inventory: PrecalcLeadInventory[]): DailyLeadInv
   }))
 }
 
+// Calculate rejection reasons from last N epochs (from epoch_rejection_reasons field)
+function calculateRejectionReasonsFromEpochs(
+  epochReasons: Record<string, Record<string, number>>,
+  epochCount: number = 140
+): RejectionReasonAggregated[] {
+  const reasonCounts = new Map<string, number>()
+
+  // Get last N epochs sorted by epoch number descending
+  const epochs = Object.keys(epochReasons)
+    .filter(k => /^\d+$/.test(k))
+    .sort((a, b) => parseInt(b) - parseInt(a))
+    .slice(0, epochCount)
+
+  for (const epochId of epochs) {
+    const reasons = epochReasons[epochId] || {}
+    for (const [reason, count] of Object.entries(reasons)) {
+      const cleanedReason = cleanRejectionReason(reason)
+      // Skip excluded reasons
+      const lowerReason = cleanedReason.toLowerCase()
+      if (lowerReason.includes('llm error') || lowerReason.includes('validation error') || lowerReason === 'unknown') {
+        continue
+      }
+      reasonCounts.set(cleanedReason, (reasonCounts.get(cleanedReason) || 0) + count)
+    }
+  }
+
+  const total = Array.from(reasonCounts.values()).reduce((a, b) => a + b, 0)
+  return Array.from(reasonCounts.entries())
+    .map(([reason, count]) => ({
+      reason,
+      count,
+      percentage: total > 0 ? Math.round((count / total) * 1000) / 10 : 0,
+    }))
+    .sort((a, b) => b.count - a.count)
+}
+
+// OLD: Calculate rejection reasons from miner stats (all-time)
 function calculateRejectionReasons(
   minerStats: Record<string, PrecalcMinerStats>,
   activeMiners: Set<string> | null

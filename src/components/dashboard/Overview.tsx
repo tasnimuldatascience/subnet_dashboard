@@ -474,7 +474,7 @@ export function Overview({
         <Card>
           <CardHeader className="p-4 md:p-6">
             <div className="flex items-center justify-between">
-              <CardTitle className="text-base md:text-lg">Top Rejection Reasons</CardTitle>
+              <CardTitle className="text-base md:text-lg">Top Rejections Over Last Week</CardTitle>
               <button
                 onClick={downloadRejectionReasonsCSV}
                 className="flex items-center gap-1 px-2 py-1 md:px-3 md:py-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md"
