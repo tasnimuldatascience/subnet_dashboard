@@ -1096,10 +1096,7 @@ export function ModelCompetition() {
                         </span>
                       </div>
                       <div className="flex items-center justify-between mt-2 text-xs text-muted-foreground">
-                        <span>
-                          {formatDate(champion.championAt)}
-                          {champion.dethronedAt && ` → ${formatDate(champion.dethronedAt)}`}
-                        </span>
+                        <span>{formatDate(champion.championAt)}</span>
                         <span>
                           {champion.reignDuration ? `Reign: ${formatDuration(champion.reignDuration)}` : 'Current'}
                         </span>
