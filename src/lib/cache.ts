@@ -216,6 +216,7 @@ function isToday(dateStr: string | null): boolean {
 }
 
 // Fetch model competition data from Supabase
+// Fetches from both qualification_leaderboard (today's evaluations) and qualification_champion_history
 async function fetchModelCompetitionData(): Promise<unknown> {
   const { createClient } = await import('@supabase/supabase-js')
 
@@ -225,122 +226,148 @@ async function fetchModelCompetitionData(): Promise<unknown> {
     auth: { persistSession: false },
   })
 
-  // Single query to qualification_leaderboard - contains all data including champion
-  const { data: allModels, error } = await supabase
+  // Query qualification_leaderboard for today's evaluations
+  const { data: allModels, error: leaderboardError } = await supabase
     .from('qualification_leaderboard')
     .select('*')
     .limit(500)
 
-  if (error) {
-    console.error('[Cache] Error fetching qualification_leaderboard:', error)
-    throw error
+  if (leaderboardError) {
+    console.error('[Cache] Error fetching qualification_leaderboard:', leaderboardError)
   }
 
   const models = allModels || []
 
-  // Find champion (is_champion = true)
-  const champion = models.find((m: { is_champion: boolean | null }) => m.is_champion === true)
-
-  // Build evaluation count per model_id (count rows where status = 'evaluated')
-  const evaluationCountByModelId = new Map<string, number>()
-  const latestEvalByModelId = new Map<string, string>() // model_id -> latest evaluated_at
-
-  models.forEach((m: { model_id: string; status: string; evaluated_at: string | null }) => {
-    if (m.status === 'evaluated' && m.evaluated_at) {
-      const currentCount = evaluationCountByModelId.get(m.model_id) || 0
-      evaluationCountByModelId.set(m.model_id, currentCount + 1)
-
-      // Track latest evaluation time per model_id
-      const currentLatest = latestEvalByModelId.get(m.model_id)
-      if (!currentLatest || new Date(m.evaluated_at) > new Date(currentLatest)) {
-        latestEvalByModelId.set(m.model_id, m.evaluated_at)
-      }
-    }
-  })
-
-  // Helper to check if this is a re-evaluation (count > 1 and this is the latest)
-  const isReEvaluated = (modelId: string, evaluatedAt: string | null): boolean => {
-    if (!evaluatedAt) return false
-    const count = evaluationCountByModelId.get(modelId) || 0
-    if (count <= 1) return false
-    const latestEval = latestEvalByModelId.get(modelId)
-    return latestEval === evaluatedAt
-  }
-
   // Filter to only today's submissions (created after 12 AM UTC)
   const todaysModels = models.filter((m: { created_at: string }) => isToday(m.created_at))
-
-  // Filter evaluated models that were evaluated today
   const evaluatedModelsToday = todaysModels.filter((m: { status: string; score: number | null; evaluated_at: string | null }) =>
     m.status === 'evaluated' && m.score !== null && isToday(m.evaluated_at)
   )
   const submittedModels = todaysModels.filter((m: { status: string }) => m.status === 'submitted')
 
   const totalToday = todaysModels.length
-  const uniqueMiners = new Set(todaysModels.map((l: { miner_hotkey: string }) => l.miner_hotkey)).size
+  const uniqueMinersToday = new Set(todaysModels.map((l: { miner_hotkey: string }) => l.miner_hotkey)).size
 
-  const statusCounts = {
-    submitted: submittedModels.length,
-    evaluating: 0,
-    evaluated: evaluatedModelsToday.length,
-    failed: 0,
-  }
+  // Check if submission is more than 24 hours ago (code can be shown)
+  const now = new Date()
+  const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000)
 
-  // Check if champion was evaluated today
-  const championEvaluatedToday = champion && isToday(champion.evaluated_at)
+  // Map today's submissions
+  const recentSubmissions = todaysModels
+    .sort((a: { created_at: string }, b: { created_at: string }) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .map((m: { model_id: string; miner_hotkey: string; model_name: string | null; status: string; score: number | null; score_breakdown: unknown | null; code_content: unknown | null; created_at: string; evaluated_at: string | null; is_champion: boolean | null }) => {
+      const createdAt = new Date(m.created_at)
+      const canShowCode = createdAt < twentyFourHoursAgo
 
-  // Get all unique miner hotkeys from qualification_leaderboard (for incentive chart)
-  const allQualificationMiners = Array.from(new Set(models.map((m: { miner_hotkey: string }) => m.miner_hotkey)))
+      // Only parse and include code_content if 24 hours have passed
+      let parsedCodeContent: Record<string, string> | null = null
+      if (canShowCode && m.code_content) {
+        try {
+          if (typeof m.code_content === 'string') {
+            parsedCodeContent = JSON.parse(m.code_content)
+          } else {
+            parsedCodeContent = m.code_content as Record<string, string>
+          }
+        } catch {
+          console.error('[Cache] Failed to parse code_content for submission:', m.model_id)
+        }
+      }
 
-  return {
-    champion: champion ? {
-      modelId: champion.model_id,
-      minerHotkey: champion.miner_hotkey,
-      modelName: champion.model_name || 'Unnamed',
-      codeHash: champion.code_hash,
-      score: champion.score,
-      championAt: champion.champion_at || champion.evaluated_at,
-      createdAt: champion.created_at,
-      evaluatedAt: champion.evaluated_at,
-      evaluatedToday: championEvaluatedToday,
-      isReEvaluated: isReEvaluated(champion.model_id, champion.evaluated_at),
-      scoreBreakdown: champion.score_breakdown,
-    } : null,
-    allQualificationMiners,
-    leaderboard: evaluatedModelsToday
-      .sort((a: { score: number | null }, b: { score: number | null }) => (b.score || 0) - (a.score || 0))
-      .slice(0, 20)
-      .map((l: { model_id: string; miner_hotkey: string; model_name: string | null; score: number | null; rank: number | null; is_champion: boolean | null; evaluated_at: string | null }, index: number) => ({
-        modelId: l.model_id,
-        minerHotkey: l.miner_hotkey,
-        modelName: l.model_name || 'Unnamed',
-        score: l.score,
-        rank: index + 1,
-        isChampion: l.is_champion,
-        evaluatedAt: l.evaluated_at,
-      })),
-    recentSubmissions: todaysModels
-      .sort((a: { created_at: string }, b: { created_at: string }) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-      .map((m: { model_id: string; miner_hotkey: string; model_name: string | null; status: string; score: number | null; score_breakdown: unknown | null; code_hash: string | null; code_content: string | null; created_at: string; evaluated_at: string | null; is_champion: boolean | null; rank: number | null }) => ({
+      return {
         id: m.model_id,
         minerHotkey: m.miner_hotkey,
         modelName: m.model_name || 'Unnamed',
         status: m.status,
         score: m.score,
         scoreBreakdown: m.score_breakdown,
-        codeHash: m.code_hash || '',
-        codeContent: m.code_content,
+        codeContent: parsedCodeContent,
         createdAt: m.created_at,
         evaluatedAt: m.evaluated_at,
         isChampion: m.is_champion,
-        isReEvaluated: isReEvaluated(m.model_id, m.evaluated_at),
-        rank: m.rank,
-      })),
+        canShowCode,
+      }
+    })
+
+  // Query qualification_champion_history for all champions with score > 0
+  const { data: championHistory, error: historyError } = await supabase
+    .from('qualification_champion_history')
+    .select('*')
+    .gt('score', 0)
+    .order('champion_at', { ascending: false })
+
+  if (historyError) {
+    console.error('[Cache] Error fetching qualification_champion_history:', historyError)
+    throw historyError
+  }
+
+  const champions = championHistory || []
+
+  // Map champions to the expected format
+  // (twentyFourHoursAgo already declared above for submissions)
+  // code_content is now directly in qualification_champion_history
+  const championsList = champions.map((c: {
+    model_id: string
+    miner_hotkey: string
+    model_name: string | null
+    score: number
+    code_content: unknown | null
+    champion_at: string
+    dethroned_at: string | null
+    reign_duration: string | null
+  }) => {
+    const championAt = new Date(c.champion_at)
+    const canShowCode = championAt < twentyFourHoursAgo
+    const hasCode = c.code_content !== null
+
+    // Parse code_content if it's a JSON string
+    let parsedCodeContent: Record<string, string> | null = null
+    if (canShowCode && c.code_content) {
+      try {
+        if (typeof c.code_content === 'string') {
+          parsedCodeContent = JSON.parse(c.code_content)
+        } else {
+          parsedCodeContent = c.code_content as Record<string, string>
+        }
+      } catch {
+        console.error('[Cache] Failed to parse code_content for model:', c.model_id)
+      }
+    }
+
+    return {
+      modelId: c.model_id,
+      minerHotkey: c.miner_hotkey,
+      modelName: c.model_name || 'Unnamed',
+      score: c.score,
+      championAt: c.champion_at,
+      dethronedAt: c.dethroned_at,
+      reignDuration: c.reign_duration,
+      codeContent: parsedCodeContent,
+      hasCode,
+      canShowCode,
+    }
+  })
+
+  // Current champion is the first one (most recent champion_at) without dethroned_at
+  const currentChampion = championsList.find((c: { dethronedAt: string | null }) => !c.dethronedAt) || championsList[0] || null
+
+  // Stats
+  const uniqueChampionMiners = new Set(champions.map((c: { miner_hotkey: string }) => c.miner_hotkey)).size
+
+  return {
+    championHistory: championsList,
+    recentSubmissions,
     stats: {
       totalSubmissions: totalToday,
-      uniqueMiners,
-      statusCounts,
-      championScore: champion?.score || 0,
+      uniqueMiners: uniqueMinersToday,
+      statusCounts: {
+        submitted: submittedModels.length,
+        evaluating: 0,
+        evaluated: evaluatedModelsToday.length,
+        failed: 0,
+      },
+      totalChampions: championsList.length,
+      uniqueChampionMiners,
+      currentChampionScore: currentChampion?.score || 0,
     },
     fetchedAt: new Date().toISOString(),
   }

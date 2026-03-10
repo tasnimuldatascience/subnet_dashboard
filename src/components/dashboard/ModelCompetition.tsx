@@ -29,20 +29,18 @@ import {
   Check,
 } from 'lucide-react'
 
-// Types for model competition data
-interface Champion {
+// Types for champion history data
+interface ChampionHistoryEntry {
   modelId: string
   minerHotkey: string
   modelName: string
-  codeHash: string
-  s3Path?: string | null
   score: number
   championAt: string
-  createdAt: string
-  evaluatedAt: string | null
-  evaluatedToday?: boolean
-  isReEvaluated?: boolean
-  scoreBreakdown?: ScoreBreakdown | null
+  dethronedAt: string | null
+  reignDuration: string | null
+  codeContent: unknown | null
+  hasCode: boolean
+  canShowCode: boolean
 }
 
 // Score breakdown types
@@ -114,22 +112,19 @@ interface ScoreBreakdown {
   zero_score_count?: number
 }
 
+// Types for today's submissions
 interface Submission {
   id: string
   minerHotkey: string
   modelName: string
   status: string
   score: number | null
-  scoreBreakdown?: ScoreBreakdown | null
-  codeHash: string
-  s3Path?: string | null
+  scoreBreakdown: ScoreBreakdown | null
+  codeContent: unknown | null
   createdAt: string
   evaluatedAt: string | null
   isChampion: boolean | null
-  isReEvaluated?: boolean
-  paymentTao: number | null
-  evaluationTime?: number | null
-  evaluationCost?: number | null
+  canShowCode: boolean
 }
 
 interface Stats {
@@ -141,11 +136,13 @@ interface Stats {
     evaluated: number
     failed: number
   }
-  championScore: number
+  totalChampions: number
+  uniqueChampionMiners: number
+  currentChampionScore: number
 }
 
 interface ModelCompetitionData {
-  champion: Champion | null
+  championHistory: ChampionHistoryEntry[]
   recentSubmissions: Submission[]
   stats: Stats
   fetchedAt: string
@@ -161,6 +158,39 @@ function getRelativeTime(dateStr: string): string {
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
   return `${Math.floor(diff / 86400)}d ago`
+}
+
+// Helper to format date as readable string
+function formatDate(dateStr: string): string {
+  const date = new Date(dateStr)
+  return date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+// Helper to format PostgreSQL interval to readable string
+function formatDuration(interval: string | null): string {
+  if (!interval) return 'Current'
+
+  // Parse PostgreSQL interval format like "2 days 03:45:12" or "03:45:12"
+  const parts = interval.match(/(?:(\d+)\s*days?)?\s*(\d{2}):(\d{2}):(\d{2})/)
+  if (!parts) return interval
+
+  const days = parseInt(parts[1] || '0')
+  const hours = parseInt(parts[2] || '0')
+  const minutes = parseInt(parts[3] || '0')
+
+  if (days > 0) {
+    return `${days}d ${hours}h`
+  } else if (hours > 0) {
+    return `${hours}h ${minutes}m`
+  } else {
+    return `${minutes}m`
+  }
 }
 
 // Helper to truncate hotkey
@@ -428,35 +458,22 @@ function ScoreBreakdownTab({ breakdown, score }: { breakdown: ScoreBreakdown | n
   )
 }
 
-// Model Code Tab Component
-function ModelCodeTab({
-  model,
+// Champion Code Tab Component
+function ChampionCodeTab({
+  champion,
   codeContent,
   loadingCode,
   codeError,
   activeFile,
   setActiveFile
 }: {
-  model: Submission
+  champion: ChampionHistoryEntry
   codeContent: Record<string, string> | null
   loadingCode: boolean
   codeError: string | null
   activeFile: string | null
   setActiveFile: (file: string) => void
 }) {
-  const isEvaluated = model.status.toLowerCase() === 'evaluated'
-
-  if (!isEvaluated) {
-    return (
-      <div className="p-6 text-center">
-        <Lock className="h-8 w-8 text-muted-foreground mx-auto mb-3" />
-        <p className="text-sm text-muted-foreground">
-          Code will be revealed once evaluation is complete.
-        </p>
-      </div>
-    )
-  }
-
   if (loadingCode) {
     return (
       <div className="p-8 text-center">
@@ -520,64 +537,46 @@ function ModelCodeTab({
   )
 }
 
-// Model Detail Dialog with Tabs
-function ModelDetailDialog({
-  model,
+// Champion Detail Dialog
+function ChampionDetailDialog({
+  champion,
   isOpen,
   onClose
 }: {
-  model: Submission | null
+  champion: ChampionHistoryEntry | null
   isOpen: boolean
   onClose: () => void
 }) {
-  const [activeTab, setActiveTab] = useState<'score' | 'code'>('code')
   const [codeContent, setCodeContent] = useState<Record<string, string> | null>(null)
   const [loadingCode, setLoadingCode] = useState(false)
   const [codeError, setCodeError] = useState<string | null>(null)
   const [activeFile, setActiveFile] = useState<string | null>(null)
 
-  // Reset state when model changes
+  // Load code directly from champion data when dialog opens
   useEffect(() => {
-    setActiveTab('code')
-    setCodeContent(null)
+    if (!champion || !isOpen) return
+
+    // Reset state
     setCodeError(null)
-    setActiveFile(null)
-  }, [model?.id])
+    setLoadingCode(false)
 
-  // Fetch code when code tab is selected
-  useEffect(() => {
-    if (!model || !isOpen || activeTab !== 'code') return
+    // Use code directly from champion data (already parsed in cache.ts)
+    if (champion.canShowCode && champion.codeContent) {
+      const code = champion.codeContent as Record<string, string>
+      setCodeContent(code)
+      const files = Object.keys(code)
+      if (files.length > 0) {
+        setActiveFile(files[0])
+      }
+    } else {
+      setCodeContent(null)
+      setActiveFile(null)
+    }
+  }, [champion, isOpen])
 
-    const isEvaluated = model.status.toLowerCase() === 'evaluated'
-    if (!isEvaluated) return
+  if (!champion) return null
 
-    if (codeContent) return // Already loaded
-
-    setLoadingCode(true)
-    setCodeError(null)
-
-    fetch(`/api/model-code?modelId=${model.id}`)
-      .then(res => res.json())
-      .then(data => {
-        if (data.success && data.code) {
-          setCodeContent(data.code)
-          const files = Object.keys(data.code)
-          if (files.length > 0) {
-            setActiveFile(files[0])
-          }
-        } else {
-          setCodeError(data.error || 'Code not available')
-        }
-      })
-      .catch(() => {
-        setCodeError('Failed to load code')
-      })
-      .finally(() => {
-        setLoadingCode(false)
-      })
-  }, [model, isOpen, activeTab, codeContent])
-
-  if (!model) return null
+  const isCurrentChampion = !champion.dethronedAt
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -585,8 +584,157 @@ function ModelDetailDialog({
         <DialogHeader className="flex-shrink-0">
           <DialogTitle className="flex items-center gap-2">
             <Trophy className="h-5 w-5 text-yellow-500" />
-            <span className="font-mono">{truncateHotkey(model.minerHotkey)}</span>
-            {model.isChampion && (
+            <span className="font-mono">{truncateHotkey(champion.minerHotkey)}</span>
+            {isCurrentChampion && (
+              <Badge variant="outline" className="border-yellow-500/50 text-yellow-500 ml-2">
+                <Crown className="h-3 w-3 mr-1" />
+                Current Champion
+              </Badge>
+            )}
+          </DialogTitle>
+        </DialogHeader>
+
+        {/* Score Row */}
+        <div className="flex items-center justify-between flex-wrap gap-4 pb-2">
+          <Badge variant={isCurrentChampion ? "default" : "secondary"} className={isCurrentChampion ? "bg-green-600" : ""}>
+            {isCurrentChampion ? 'Active' : 'Former Champion'}
+          </Badge>
+          <div className="text-right">
+            <span className="text-3xl font-bold text-yellow-500">{champion.score.toFixed(2)}</span>
+            <span className="text-muted-foreground ml-1">/ 100</span>
+          </div>
+        </div>
+
+        {/* Champion Info */}
+        <div className="text-sm space-y-2 pb-3 border-b">
+          <div className="flex items-center gap-2 flex-wrap">
+            <code className="text-xs bg-muted px-2 py-1 rounded font-mono">
+              {champion.minerHotkey.slice(0, 8)}...{champion.minerHotkey.slice(-6)}
+            </code>
+            <CopyButton text={champion.minerHotkey} label="Copy Hotkey" />
+          </div>
+          <div className="flex gap-4 text-xs text-muted-foreground flex-wrap">
+            <span>Champion since: {formatDate(champion.championAt)}</span>
+            {champion.dethronedAt && (
+              <span>Dethroned: {formatDate(champion.dethronedAt)}</span>
+            )}
+            {champion.reignDuration && (
+              <span>Reign: {formatDuration(champion.reignDuration)}</span>
+            )}
+          </div>
+        </div>
+
+        {/* Model Code Section */}
+        <div className="flex items-center gap-2 border-b pb-2">
+          <Code className="h-4 w-4 text-cyan-500" />
+          <span className="text-sm font-medium">Model Code</span>
+          {!champion.canShowCode && <Lock className="h-3 w-3 text-muted-foreground" />}
+        </div>
+
+        {/* Code Content */}
+        <div className="flex-1 overflow-y-auto pr-2 pt-4">
+          {!champion.canShowCode ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <Lock className="h-12 w-12 text-muted-foreground mb-4" />
+              <p className="text-lg font-medium">Code Hidden</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                Code is available 24 hours after becoming champion
+              </p>
+              <p className="text-xs text-muted-foreground mt-2">
+                Available: {formatDate(new Date(new Date(champion.championAt).getTime() + 24 * 60 * 60 * 1000).toISOString())}
+              </p>
+            </div>
+          ) : (
+            <ChampionCodeTab
+              champion={champion}
+              codeContent={codeContent}
+              loadingCode={loadingCode}
+              codeError={codeError}
+              activeFile={activeFile}
+              setActiveFile={setActiveFile}
+            />
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// Submission Detail Dialog
+function SubmissionDetailDialog({
+  submission,
+  isOpen,
+  onClose
+}: {
+  submission: Submission | null
+  isOpen: boolean
+  onClose: () => void
+}) {
+  const [activeTab, setActiveTab] = useState<'score' | 'code'>('score')
+  const [codeContent, setCodeContent] = useState<Record<string, string> | null>(null)
+  const [activeFile, setActiveFile] = useState<string | null>(null)
+
+  // Parse code content when dialog opens
+  useEffect(() => {
+    if (!submission || !isOpen) return
+
+    // Reset state
+    setActiveTab('score')
+
+    // Parse code content if available
+    if (submission.codeContent) {
+      let parsedCode: Record<string, string> | null = null
+      try {
+        if (typeof submission.codeContent === 'string') {
+          parsedCode = JSON.parse(submission.codeContent)
+        } else {
+          parsedCode = submission.codeContent as Record<string, string>
+        }
+      } catch {
+        console.error('Failed to parse code content')
+      }
+
+      if (parsedCode && Object.keys(parsedCode).length > 0) {
+        setCodeContent(parsedCode)
+        setActiveFile(Object.keys(parsedCode)[0])
+      } else {
+        setCodeContent(null)
+        setActiveFile(null)
+      }
+    } else {
+      setCodeContent(null)
+      setActiveFile(null)
+    }
+  }, [submission, isOpen])
+
+  if (!submission) return null
+
+  // Use canShowCode from backend (24-hour protection)
+  const canShowCode = submission.canShowCode
+
+  // Parse score breakdown if available
+  let scoreBreakdown: ScoreBreakdown | null = null
+  if (submission.scoreBreakdown) {
+    if (typeof submission.scoreBreakdown === 'string') {
+      try {
+        scoreBreakdown = JSON.parse(submission.scoreBreakdown)
+      } catch {
+        scoreBreakdown = null
+      }
+    } else {
+      scoreBreakdown = submission.scoreBreakdown
+    }
+  }
+
+  const hasCode = canShowCode && codeContent && Object.keys(codeContent).length > 0
+
+  return (
+    <Dialog open={isOpen} onOpenChange={onClose}>
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+        <DialogHeader className="flex-shrink-0">
+          <DialogTitle className="flex items-center gap-2">
+            <span className="font-mono">{truncateHotkey(submission.minerHotkey)}</span>
+            {submission.isChampion && (
               <Badge variant="outline" className="border-yellow-500/50 text-yellow-500 ml-2">
                 <Crown className="h-3 w-3 mr-1" />
                 Champion
@@ -595,47 +743,37 @@ function ModelDetailDialog({
           </DialogTitle>
         </DialogHeader>
 
-        {/* Status & Score Row */}
+        {/* Score and Status Row */}
         <div className="flex items-center justify-between flex-wrap gap-4 pb-2">
-          <StatusBadge status={model.status} />
-          {model.score !== null && (
-            <div className="text-right">
-              <span className="text-3xl font-bold text-yellow-500">{model.score.toFixed(2)}</span>
-              <span className="text-muted-foreground ml-1">/ 100</span>
-            </div>
-          )}
+          <StatusBadge status={submission.status} />
+          <div className="text-right">
+            {submission.score !== null && (
+              <>
+                <span className="text-3xl font-bold text-yellow-500">{submission.score.toFixed(2)}</span>
+                <span className="text-muted-foreground ml-1">/ 100</span>
+              </>
+            )}
+          </div>
         </div>
 
-        {/* Model Info */}
+        {/* Submission Info */}
         <div className="text-sm space-y-2 pb-3 border-b">
           <div className="flex items-center gap-2 flex-wrap">
             <code className="text-xs bg-muted px-2 py-1 rounded font-mono">
-              {model.minerHotkey.slice(0, 8)}...{model.minerHotkey.slice(-6)}
+              {submission.minerHotkey.slice(0, 8)}...{submission.minerHotkey.slice(-6)}
             </code>
-            <CopyButton text={model.minerHotkey} label="Copy Hotkey" />
+            <CopyButton text={submission.minerHotkey} label="Copy Hotkey" />
           </div>
-          <div className="flex gap-4 text-xs text-muted-foreground">
-            <span>Submitted: {new Date(model.createdAt).toLocaleString()}</span>
-            {model.evaluatedAt && (
-              <span>Evaluated: {new Date(model.evaluatedAt).toLocaleString()}</span>
+          <div className="flex gap-4 text-xs text-muted-foreground flex-wrap">
+            <span>Submitted: {formatDate(submission.createdAt)}</span>
+            {submission.evaluatedAt && (
+              <span>Evaluated: {formatDate(submission.evaluatedAt)}</span>
             )}
           </div>
         </div>
 
         {/* Tabs */}
         <div className="flex gap-2 border-b">
-          <button
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === 'code'
-                ? 'border-cyan-500 text-cyan-500'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-            onClick={() => setActiveTab('code')}
-          >
-            <Code className="h-4 w-4 inline mr-1.5" />
-            Model Code
-            <span className="text-xs text-muted-foreground ml-1">(24h delay)</span>
-          </button>
           <button
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
               activeTab === 'score'
@@ -647,21 +785,77 @@ function ModelDetailDialog({
             <CheckCircle className="h-4 w-4 inline mr-1.5" />
             Score Breakdown
           </button>
+          <button
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'code'
+                ? 'border-cyan-500 text-cyan-500'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+            onClick={() => setActiveTab('code')}
+          >
+            <Code className="h-4 w-4 inline mr-1.5" />
+            Model Code
+            {!canShowCode && <Lock className="h-3 w-3 inline ml-1.5 text-muted-foreground" />}
+          </button>
         </div>
 
         {/* Tab Content */}
         <div className="flex-1 overflow-y-auto pr-2 pt-4">
-          {activeTab === 'code' ? (
-            <ModelCodeTab
-              model={model}
-              codeContent={codeContent}
-              loadingCode={loadingCode}
-              codeError={codeError}
-              activeFile={activeFile}
-              setActiveFile={setActiveFile}
-            />
+          {activeTab === 'score' ? (
+            <ScoreBreakdownTab breakdown={scoreBreakdown} score={submission.score} />
+          ) : hasCode && codeContent && activeFile ? (
+            <div>
+              {/* File tabs */}
+              <div className="flex flex-wrap gap-1 p-2 bg-muted/30 border-b overflow-x-auto">
+                {Object.keys(codeContent).map(filename => (
+                  <Button
+                    key={filename}
+                    variant={activeFile === filename ? 'default' : 'ghost'}
+                    size="sm"
+                    className="h-7 text-xs font-mono"
+                    onClick={() => setActiveFile(filename)}
+                  >
+                    {filename}
+                  </Button>
+                ))}
+              </div>
+              {/* Code content */}
+              <div>
+                <div className="flex justify-end p-2 bg-[#0d1117] border-b border-gray-700">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-xs text-gray-300 hover:text-white hover:bg-gray-700"
+                    onClick={() => navigator.clipboard.writeText(codeContent[activeFile])}
+                  >
+                    <Copy className="h-3 w-3 mr-1" />
+                    Copy
+                  </Button>
+                </div>
+                <pre className="p-4 text-xs font-mono overflow-x-auto max-h-[300px] overflow-y-auto bg-[#0d1117] text-[#c9d1d9]">
+                  <code>{codeContent[activeFile]}</code>
+                </pre>
+              </div>
+            </div>
+          ) : !canShowCode ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <Lock className="h-12 w-12 text-muted-foreground mb-4" />
+              <p className="text-lg font-medium">Code Hidden</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                Code is available 24 hours after submission
+              </p>
+              <p className="text-xs text-muted-foreground mt-2">
+                Available: {formatDate(new Date(new Date(submission.createdAt).getTime() + 24 * 60 * 60 * 1000).toISOString())}
+              </p>
+            </div>
           ) : (
-            <ScoreBreakdownTab breakdown={model.scoreBreakdown} score={model.score} />
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <Code className="h-12 w-12 text-muted-foreground mb-4" />
+              <p className="text-lg font-medium">No Code Available</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                Code is not available for this submission
+              </p>
+            </div>
           )}
         </div>
       </DialogContent>
@@ -673,8 +867,10 @@ export function ModelCompetition() {
   const [data, setData] = useState<ModelCompetitionData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [selectedModel, setSelectedModel] = useState<Submission | null>(null)
+  const [selectedChampion, setSelectedChampion] = useState<ChampionHistoryEntry | null>(null)
   const [isDetailOpen, setIsDetailOpen] = useState(false)
+  const [selectedSubmission, setSelectedSubmission] = useState<Submission | null>(null)
+  const [isSubmissionDetailOpen, setIsSubmissionDetailOpen] = useState(false)
 
   // Fetch data function
   const fetchData = useCallback(async () => {
@@ -742,9 +938,9 @@ export function ModelCompetition() {
 
   return (
     <div className="space-y-6">
-      {/* Stats Cards - 3 columns: Total Submissions, Evaluated, Unique Miners */}
+      {/* Stats Cards */}
       <div className="grid gap-4 md:grid-cols-3">
-        {/* Total Submissions */}
+        {/* Total Submissions Today */}
         <Card className="bg-gradient-to-br from-cyan-500/10 to-blue-500/5 border-cyan-500/20">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Submissions</CardTitle>
@@ -787,154 +983,153 @@ export function ModelCompetition() {
         </Card>
       </div>
 
-      {/* Main Content */}
-      <div className="space-y-6">
-        {/* Current Champion Card */}
-        {data.champion && (() => {
-          // Find champion in recentSubmissions or construct a Submission object
-          const championSubmission: Submission = data.recentSubmissions.find(s => s.id === data.champion!.modelId) || {
-            id: data.champion.modelId,
-            minerHotkey: data.champion.minerHotkey,
-            modelName: data.champion.modelName,
-            status: 'evaluated',
-            score: data.champion.score,
-            scoreBreakdown: data.champion.scoreBreakdown,
-            codeHash: data.champion.codeHash,
-            s3Path: data.champion.s3Path,
-            createdAt: data.champion.createdAt,
-            evaluatedAt: data.champion.evaluatedAt,
-            isChampion: true,
-            paymentTao: null,
-          }
-
-          return (
-            <Card
-              className="bg-gradient-to-r from-yellow-500/5 via-amber-500/5 to-orange-500/5 border-yellow-500/30 cursor-pointer hover:border-yellow-500/50 transition-colors"
-              onClick={() => {
-                setSelectedModel(championSubmission)
-                setIsDetailOpen(true)
-              }}
-            >
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Trophy className="h-5 w-5 text-yellow-500" />
-                  Current Champion
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-2xl font-bold font-mono">{truncateHotkey(data.champion.minerHotkey)}</span>
-                      <Badge variant="outline" className="border-yellow-500/50 text-yellow-500">
-                        Champion
-                      </Badge>
+      {/* Today's Evaluations */}
+      <Card className="overflow-hidden">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Clock className="h-5 w-5" />
+            Today&apos;s Evaluations
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-3 max-h-[400px] overflow-y-auto">
+            {data.recentSubmissions.length === 0 ? (
+              <p className="text-center text-muted-foreground py-8">
+                No submissions today
+              </p>
+            ) : (
+              <>
+                {data.recentSubmissions.map((submission) => (
+                  <div
+                    key={submission.id}
+                    className={`p-2.5 sm:p-3 rounded-lg cursor-pointer transition-colors ${
+                      submission.isChampion
+                        ? 'bg-yellow-500/10 border border-yellow-500/30 hover:bg-yellow-500/20'
+                        : 'bg-muted/30 border border-border/50 hover:bg-muted/50'
+                    }`}
+                    onClick={() => {
+                      setSelectedSubmission(submission)
+                      setIsSubmissionDetailOpen(true)
+                    }}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-sm font-medium font-mono">
+                          {truncateHotkey(submission.minerHotkey)}
+                        </span>
+                        {submission.isChampion && (
+                          <Crown className="h-3 w-3 text-yellow-500 flex-shrink-0" />
+                        )}
+                        {submission.status === 'evaluated' && (
+                          submission.canShowCode ? (
+                            <Eye className="h-3 w-3 text-green-500 flex-shrink-0" />
+                          ) : (
+                            <Lock className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                          )
+                        )}
+                      </div>
+                      {submission.score !== null && (
+                        <span className={`text-sm font-mono font-bold ${submission.isChampion ? 'text-yellow-500' : ''}`}>
+                          {submission.score.toFixed(2)}
+                        </span>
+                      )}
                     </div>
-                    <div className="flex items-center gap-1">
-                      <p className="text-xs text-muted-foreground">
-                        Hash: {data.champion.codeHash.slice(0, 16)}..
-                      </p>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-5 w-5 p-0"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          navigator.clipboard.writeText(data.champion!.codeHash)
-                        }}
-                      >
-                        <Copy className="h-3 w-3" />
-                      </Button>
+                    <div className="flex items-center justify-between mt-1.5">
+                      <span className="text-xs text-muted-foreground">{getRelativeTime(submission.createdAt)}</span>
+                      <StatusBadge status={submission.status} />
                     </div>
                   </div>
-                  <div className="text-right">
-                    <div className="text-4xl font-bold text-yellow-500">
-                      {data.champion.score.toFixed(2)}
-                    </div>
-                    <p className="text-sm text-muted-foreground">
-                      Submitted {getRelativeTime(data.champion.createdAt)}
-                    </p>
-                    {data.champion.evaluatedAt && (
-                      <p className="text-xs text-muted-foreground">
-                        Last evaluated {getRelativeTime(data.champion.evaluatedAt)}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          )
-        })()}
+                ))}
+              </>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
-        {/* Today's Evaluations */}
-        <Card className="overflow-hidden">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Clock className="h-5 w-5" />
-              Today&apos;s Evaluations
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3 max-h-[400px] overflow-y-auto">
-              {data.recentSubmissions.length === 0 ? (
-                <p className="text-center text-muted-foreground py-8">
-                  No evaluations today
-                </p>
-              ) : (
-                <>
-                  {data.recentSubmissions.map((submission) => (
+      {/* Champion History */}
+      <Card className="overflow-hidden">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Clock className="h-5 w-5" />
+            Champion History
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-3 max-h-[500px] overflow-y-auto">
+            {data.championHistory.length === 0 ? (
+              <p className="text-center text-muted-foreground py-8">
+                No champion history available
+              </p>
+            ) : (
+              <>
+                {data.championHistory.map((champion) => {
+                  const isCurrentChampion = !champion.dethronedAt
+                  return (
                     <div
-                      key={submission.id}
-                      className={`p-2.5 sm:p-3 rounded-lg cursor-pointer transition-colors ${
-                        submission.isChampion
+                      key={champion.modelId}
+                      className={`p-3 rounded-lg cursor-pointer transition-colors ${
+                        isCurrentChampion
                           ? 'bg-yellow-500/10 border border-yellow-500/30 hover:bg-yellow-500/20'
                           : 'bg-muted/30 border border-border/50 hover:bg-muted/50'
                       }`}
                       onClick={() => {
-                        setSelectedModel(submission)
+                        setSelectedChampion(champion)
                         setIsDetailOpen(true)
                       }}
                     >
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-sm font-medium font-mono hover:text-cyan-400 transition-colors">
-                            {truncateHotkey(submission.minerHotkey)}
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium font-mono">
+                            {truncateHotkey(champion.minerHotkey)}
                           </span>
-                          {submission.isChampion && (
-                            <Crown className="h-3 w-3 text-yellow-500 flex-shrink-0" />
+                          {isCurrentChampion && (
+                            <Crown className="h-4 w-4 text-yellow-500" />
                           )}
-                          {submission.isReEvaluated && (
-                            <Badge variant="outline" className="text-[10px] border-orange-500/50 text-orange-500 px-1 py-0">
-                              Re-evaluated
-                            </Badge>
+                          {champion.canShowCode ? (
+                            <Eye className="h-3 w-3 text-green-500" />
+                          ) : (
+                            <Lock className="h-3 w-3 text-muted-foreground" />
                           )}
                         </div>
-                        {submission.score !== null && (
-                          <span className={`text-sm font-mono font-bold ${submission.isChampion ? 'text-yellow-500' : ''}`}>
-                            {submission.score.toFixed(2)}
-                          </span>
-                        )}
+                        <span className={`text-sm font-mono font-bold ${isCurrentChampion ? 'text-yellow-500' : ''}`}>
+                          {champion.score.toFixed(2)}
+                        </span>
                       </div>
-                      <div className="flex items-center justify-between mt-1.5">
-                        <span className="text-xs text-muted-foreground">{getRelativeTime(submission.createdAt)}</span>
-                        <StatusBadge status={submission.status} />
+                      <div className="flex items-center justify-between mt-2 text-xs text-muted-foreground">
+                        <span>
+                          {formatDate(champion.championAt)}
+                          {champion.dethronedAt && ` → ${formatDate(champion.dethronedAt)}`}
+                        </span>
+                        <span>
+                          {champion.reignDuration ? `Reign: ${formatDuration(champion.reignDuration)}` : 'Current'}
+                        </span>
                       </div>
                     </div>
-                  ))}
-                </>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+                  )
+                })}
+              </>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
-      {/* Model Detail Dialog */}
-      <ModelDetailDialog
-        model={selectedModel}
+      {/* Champion Detail Dialog */}
+      <ChampionDetailDialog
+        champion={selectedChampion}
         isOpen={isDetailOpen}
         onClose={() => {
           setIsDetailOpen(false)
-          setSelectedModel(null)
+          setSelectedChampion(null)
+        }}
+      />
+
+      {/* Submission Detail Dialog */}
+      <SubmissionDetailDialog
+        submission={selectedSubmission}
+        isOpen={isSubmissionDetailOpen}
+        onClose={() => {
+          setIsSubmissionDetailOpen(false)
+          setSelectedSubmission(null)
         }}
       />
 
@@ -979,7 +1174,7 @@ export function ModelCompetition() {
           <div className="mt-4 pt-4 border-t">
             <p className="text-xs text-muted-foreground">
               See the <a href="https://github.com/leadpoet/leadpoet" target="_blank" rel="noopener noreferrer" className="text-cyan-500 hover:underline">documentation</a> for full submission guide.
-              Beat the champion score of <span className="font-bold text-yellow-500">{data.stats.championScore.toFixed(2)}</span> by the specified threshold to become the new champion!
+              Beat the champion score of <span className="font-bold text-yellow-500">{data.stats.currentChampionScore.toFixed(2)}</span> by the specified threshold to become the new champion!
             </p>
           </div>
         </CardContent>
