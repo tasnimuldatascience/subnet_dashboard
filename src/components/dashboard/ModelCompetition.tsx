@@ -983,6 +983,58 @@ export function ModelCompetition() {
         </Card>
       </div>
 
+      {/* Current Champion */}
+      {data.championHistory.filter(c => !c.dethronedAt)[0] && (() => {
+        const currentChampion = data.championHistory.filter(c => !c.dethronedAt)[0]
+        // Find matching submission in recentSubmissions for score breakdown
+        const championSubmission = data.recentSubmissions.find(s => s.isChampion)
+        return (
+          <Card
+            className="bg-gradient-to-br from-yellow-500/10 to-amber-500/5 border-yellow-500/30 cursor-pointer hover:bg-yellow-500/15 transition-colors"
+            onClick={() => {
+              if (championSubmission) {
+                // Use submission dialog if we have score breakdown
+                setSelectedSubmission(championSubmission)
+                setIsSubmissionDetailOpen(true)
+              } else {
+                // Fall back to champion dialog
+                setSelectedChampion(currentChampion)
+                setIsDetailOpen(true)
+              }
+            }}
+          >
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2">
+                <Crown className="h-5 w-5 text-yellow-500" />
+                Current Champion
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between">
+                <div>
+                  <code className="text-sm font-mono bg-muted/50 px-2 py-1 rounded">
+                    {truncateHotkey(currentChampion.minerHotkey)}
+                  </code>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Champion since {formatDate(currentChampion.championAt)}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <span className="text-3xl font-bold text-yellow-500">{currentChampion.score.toFixed(2)}</span>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {currentChampion.canShowCode ? (
+                      <span className="flex items-center gap-1 justify-end"><Eye className="h-3 w-3 text-green-500" /> Code available</span>
+                    ) : (
+                      <span className="flex items-center gap-1 justify-end"><Lock className="h-3 w-3" /> Code in 24h</span>
+                    )}
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )
+      })()}
+
       {/* Today's Evaluations */}
       <Card className="overflow-hidden">
         <CardHeader>
@@ -993,20 +1045,16 @@ export function ModelCompetition() {
         </CardHeader>
         <CardContent>
           <div className="space-y-3 max-h-[400px] overflow-y-auto">
-            {data.recentSubmissions.length === 0 ? (
+            {data.recentSubmissions.filter(s => !s.isChampion).length === 0 ? (
               <p className="text-center text-muted-foreground py-8">
                 No submissions today
               </p>
             ) : (
               <>
-                {data.recentSubmissions.map((submission) => (
+                {data.recentSubmissions.filter(s => !s.isChampion).map((submission) => (
                   <div
                     key={submission.id}
-                    className={`p-2.5 sm:p-3 rounded-lg cursor-pointer transition-colors ${
-                      submission.isChampion
-                        ? 'bg-yellow-500/10 border border-yellow-500/30 hover:bg-yellow-500/20'
-                        : 'bg-muted/30 border border-border/50 hover:bg-muted/50'
-                    }`}
+                    className="p-2.5 sm:p-3 rounded-lg cursor-pointer transition-colors bg-muted/30 border border-border/50 hover:bg-muted/50"
                     onClick={() => {
                       setSelectedSubmission(submission)
                       setIsSubmissionDetailOpen(true)
@@ -1017,9 +1065,6 @@ export function ModelCompetition() {
                         <span className="text-sm font-medium font-mono">
                           {truncateHotkey(submission.minerHotkey)}
                         </span>
-                        {submission.isChampion && (
-                          <Crown className="h-3 w-3 text-yellow-500 flex-shrink-0" />
-                        )}
                         {submission.status === 'evaluated' && (
                           submission.canShowCode ? (
                             <Eye className="h-3 w-3 text-green-500 flex-shrink-0" />
@@ -1029,7 +1074,7 @@ export function ModelCompetition() {
                         )}
                       </div>
                       {submission.score !== null && (
-                        <span className={`text-sm font-mono font-bold ${submission.isChampion ? 'text-yellow-500' : ''}`}>
+                        <span className="text-sm font-mono font-bold">
                           {submission.score.toFixed(2)}
                         </span>
                       )}
@@ -1046,32 +1091,26 @@ export function ModelCompetition() {
         </CardContent>
       </Card>
 
-      {/* Champion History */}
+      {/* Champion History (past champions only) */}
       <Card className="overflow-hidden">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Clock className="h-5 w-5" />
+            <Trophy className="h-5 w-5" />
             Champion History
           </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="space-y-3 max-h-[500px] overflow-y-auto">
-            {data.championHistory.length === 0 ? (
+            {data.championHistory.filter(c => c.dethronedAt).length === 0 ? (
               <p className="text-center text-muted-foreground py-8">
-                No champion history available
+                No past champions yet
               </p>
             ) : (
               <>
-                {data.championHistory.map((champion) => {
-                  const isCurrentChampion = !champion.dethronedAt
-                  return (
+                {data.championHistory.filter(c => c.dethronedAt).map((champion) => (
                     <div
                       key={champion.modelId}
-                      className={`p-3 rounded-lg cursor-pointer transition-colors ${
-                        isCurrentChampion
-                          ? 'bg-yellow-500/10 border border-yellow-500/30 hover:bg-yellow-500/20'
-                          : 'bg-muted/30 border border-border/50 hover:bg-muted/50'
-                      }`}
+                      className="p-3 rounded-lg cursor-pointer transition-colors bg-muted/30 border border-border/50 hover:bg-muted/50"
                       onClick={() => {
                         setSelectedChampion(champion)
                         setIsDetailOpen(true)
@@ -1082,28 +1121,22 @@ export function ModelCompetition() {
                           <span className="text-sm font-medium font-mono">
                             {truncateHotkey(champion.minerHotkey)}
                           </span>
-                          {isCurrentChampion && (
-                            <Crown className="h-4 w-4 text-yellow-500" />
-                          )}
                           {champion.canShowCode ? (
                             <Eye className="h-3 w-3 text-green-500" />
                           ) : (
                             <Lock className="h-3 w-3 text-muted-foreground" />
                           )}
                         </div>
-                        <span className={`text-sm font-mono font-bold ${isCurrentChampion ? 'text-yellow-500' : ''}`}>
+                        <span className="text-sm font-mono font-bold">
                           {champion.score.toFixed(2)}
                         </span>
                       </div>
                       <div className="flex items-center justify-between mt-2 text-xs text-muted-foreground">
                         <span>{formatDate(champion.championAt)}</span>
-                        <span>
-                          {champion.reignDuration ? `Reign: ${formatDuration(champion.reignDuration)}` : 'Current'}
-                        </span>
+                        <span>Reign: {formatDuration(champion.reignDuration)}</span>
                       </div>
                     </div>
-                  )
-                })}
+                ))}
               </>
             )}
           </div>
