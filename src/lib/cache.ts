@@ -347,8 +347,8 @@ async function fetchModelCompetitionData(): Promise<unknown> {
     }
   })
 
-  // Current champion is the first one (most recent champion_at) without dethroned_at
-  const currentChampion = championsList.find((c: { dethronedAt: string | null }) => !c.dethronedAt) || championsList[0] || null
+  // Current champion is the one without dethroned_at (null means no current champion)
+  const currentChampion = championsList.find((c: { dethronedAt: string | null }) => !c.dethronedAt) || null
 
   // Stats
   const uniqueChampionMiners = new Set(champions.map((c: { miner_hotkey: string }) => c.miner_hotkey)).size
