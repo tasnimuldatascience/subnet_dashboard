@@ -1207,7 +1207,7 @@ export function ModelCompetition() {
               {data.stats.currentChampionScore > 0 ? (
                 <> Beat the champion score of <span className="font-bold text-yellow-500">{data.stats.currentChampionScore.toFixed(2)}</span> by the specified threshold to become the new champion!</>
               ) : (
-                <> Beat the score of <span className="font-bold text-yellow-500">10.00</span> to become the first champion!</>
+                <> Beat the score of <span className="font-bold text-yellow-500">10.00</span> by the specified threshold to become the champion!</>
               )}
             </p>
           </div>
