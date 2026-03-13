@@ -1204,11 +1204,7 @@ export function ModelCompetition() {
           <div className="mt-4 pt-4 border-t">
             <p className="text-xs text-muted-foreground">
               See the <a href="https://github.com/leadpoet/leadpoet" target="_blank" rel="noopener noreferrer" className="text-cyan-500 hover:underline">documentation</a> for full submission guide.
-              {data.stats.currentChampionScore > 0 ? (
-                <> Beat the champion score of <span className="font-bold text-yellow-500">{data.stats.currentChampionScore.toFixed(2)}</span> by the specified threshold to become the new champion!</>
-              ) : (
-                <> Submit your model to become the first champion!</>
-              )}
+              {' '}Beat the champion score of <span className="font-bold text-yellow-500">{data.stats.currentChampionScore > 0 ? data.stats.currentChampionScore.toFixed(2) : '10.00'}</span> by the specified threshold to become the new champion!
             </p>
           </div>
         </CardContent>
