@@ -111,7 +111,6 @@ export interface DashboardMetrics {
   pending: number
   acceptanceRate: number
   avgRepScore: number
-  activeMiners: number
 }
 
 export interface IncentiveData {

@@ -139,13 +139,13 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
         console.error('Auto-refresh failed:', error)
       }
 
-      // Schedule next fetch in 1 minute (for testing)
+      // Schedule next fetch in 60 seconds
       if (mounted) {
         timeoutId = window.setTimeout(fetchData, 60 * 1000)
       }
     }
 
-    // Start first fetch after 1 minute (for testing)
+    // Start first fetch after 60 seconds
     timeoutId = window.setTimeout(fetchData, 60 * 1000)
     console.log('[Dashboard] First poll scheduled in 60 seconds')
 
@@ -154,6 +154,42 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
       window.clearTimeout(timeoutId)
     }
   }, [initialData.buildVersion])
+
+  // Refresh data immediately when tab becomes visible (user returns to tab)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        console.log('[Dashboard] Tab became visible, refreshing data...')
+        const fetchData = async () => {
+          try {
+            const cacheBuster = `?t=${Date.now()}`
+            const [dashboardRes, metagraphRes] = await Promise.all([
+              fetch(`/api/dashboard${cacheBuster}`),
+              fetch(`/api/metagraph${cacheBuster}`)
+            ])
+            if (dashboardRes.ok) {
+              const newData = await dashboardRes.json()
+              setDashboardData(newData)
+              if (newData.serverRefreshedAt) {
+                serverTimestampRef.current = newData.serverRefreshedAt
+                setRelativeTime(getRelativeTime(new Date(newData.serverRefreshedAt)))
+              }
+            }
+            if (metagraphRes.ok) {
+              const newMetagraph = await metagraphRes.json()
+              setMetagraph(newMetagraph)
+            }
+          } catch (error) {
+            console.error('[Dashboard] Visibility refresh failed:', error)
+          }
+        }
+        fetchData()
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [])
 
   // Handle navigation from SubmissionTracker to MinerTracker
   const handleUidClick = useCallback((uid: number) => {
@@ -180,7 +216,6 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
     pending: dashboardData.summary.total_pending,
     acceptanceRate: dashboardData.summary.acceptance_rate,
     avgRepScore: dashboardData.summary.avg_rep_score,
-    activeMiners: dashboardData.summary.unique_miners,
   }
 
   // Transform miner stats with metagraph data
