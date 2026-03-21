@@ -49,6 +49,11 @@ export function clearMetagraphCache(): void {
   globalForMetagraph.metagraphCache = null
 }
 
+// Set metagraph cache directly (for atomic swap during refresh)
+export function setMetagraphCache(data: MetagraphData): void {
+  globalForMetagraph.metagraphCache = { data, timestamp: Date.now() }
+}
+
 // --- SCALE decoder for NeuronInfoLite ---
 class ScaleDecoder {
   private data: Uint8Array
@@ -267,6 +272,12 @@ async function fetchMetagraphFromBittensor(): Promise<MetagraphData> {
       error: error instanceof Error ? error.message : 'Failed to fetch metagraph data'
     }
   }
+}
+
+// Fetch metagraph fresh, bypassing cache (used by background refresh)
+export async function fetchMetagraphFresh(): Promise<MetagraphData> {
+  console.log('[Metagraph] Fetching fresh (bypassing cache)...')
+  return fetchMetagraphFromBittensor()
 }
 
 // Cached metagraph fetch (handles 1000s of concurrent requests)

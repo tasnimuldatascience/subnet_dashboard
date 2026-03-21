@@ -149,23 +149,25 @@ async function doRefresh(): Promise<void> {
   const startTime = Date.now()
 
   try {
-    // Clear existing cache to force fresh fetch from database
-    clearCache('dashboard_precalc')
-
-    const { fetchMetagraph, clearMetagraphCache } = await import('./metagraph')
+    const { fetchMetagraphFresh, setMetagraphCache, clearMetagraphCache } = await import('./metagraph')
     const { fetchAllDashboardData, warmLatestLeadsCache } = await import('./db-precalc')
 
-    // Clear metagraph cache to force fresh RPC fetch
-    clearMetagraphCache()
+    // Pre-warm: Fetch fresh metagraph FIRST (before clearing cache)
+    // This eliminates the race condition where requests see null/stale data during fetch
+    const newMetagraph = await fetchMetagraphFresh()
 
-    // Refresh metagraph
-    const metagraph = await fetchMetagraph()
+    // Atomic swap: Clear old cache and set new data immediately
+    clearMetagraphCache()
+    setMetagraphCache(newMetagraph)
+
+    // Clear dashboard cache and refresh with new metagraph
+    clearCache('dashboard_precalc')
 
     // Refresh dashboard data (forceRefresh=true to re-transform)
-    await fetchAllDashboardData(0, metagraph, true)
+    await fetchAllDashboardData(0, newMetagraph, true)
 
     // Refresh latest leads
-    await warmLatestLeadsCache(metagraph)
+    await warmLatestLeadsCache(newMetagraph)
 
     // Set the background refresh timestamp
     setBackgroundRefreshTimestamp()
