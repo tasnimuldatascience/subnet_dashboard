@@ -147,22 +147,21 @@ export function Overview({
     return sorted
   }, [leaderboardData, sortKey, sortDirection])
 
-  // Combined miner stats for incentive chart (includes qualification miners)
+  // Combined miner stats for incentive chart (includes ALL metagraph miners with incentive > 0)
   const minerStatsForIncentiveChart = useMemo(() => {
-    if (!metagraph || qualificationMinerHotkeys.length === 0) {
+    if (!metagraph) {
       return minerStats
     }
 
     // Get existing miner hotkeys
     const existingHotkeys = new Set(minerStats.map(m => m.minerHotkey))
 
-    // Find qualification miners not in minerStats with incentive > 0
+    // Find ALL metagraph miners not in minerStats with incentive > 0
     const additionalMiners: MinerStats[] = []
-    for (const hotkey of qualificationMinerHotkeys) {
+    for (const [hotkey, uid] of Object.entries(metagraph.hotkeyToUid)) {
       if (!existingHotkeys.has(hotkey)) {
         const incentive = metagraph.incentives[hotkey] ?? 0
         if (incentive > 0) {
-          const uid = metagraph.hotkeyToUid[hotkey] ?? null
           additionalMiners.push({
             uid,
             minerHotkey: hotkey,
@@ -189,7 +188,7 @@ export function Overview({
     }
 
     return [...minerStats, ...additionalMiners]
-  }, [minerStats, metagraph, qualificationMinerHotkeys])
+  }, [minerStats, metagraph])
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {

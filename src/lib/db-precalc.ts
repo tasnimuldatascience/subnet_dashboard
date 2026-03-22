@@ -237,8 +237,10 @@ export interface RejectionReasonAggregated {
 
 export interface IncentiveDataAggregated {
   miner_hotkey: string
+  uid: number
   accepted_leads: number
   lead_share_pct: number
+  bt_incentive_pct: number
 }
 
 export interface LeadInventoryCount {
@@ -371,8 +373,8 @@ export async function fetchAllDashboardData(_hours: number, metagraph: Metagraph
   // Calculate rejection reasons from last 140 epochs
   const rejectionReasons = calculateRejectionReasonsFromEpochs(precalc.epoch_rejection_reasons, 140)
 
-  // Calculate incentive data from miner stats
-  const incentiveData = calculateIncentiveData(minerStatsRaw, activeMiners)
+  // Calculate incentive data from miner stats + metagraph (includes ALL metagraph miners)
+  const incentiveData = calculateIncentiveData(minerStatsRaw, metagraph)
 
   // Calculate summary (filtered by active miners)
   const summary = calculateSummary(precalc.totals, minerStats)
@@ -624,24 +626,35 @@ function calculateRejectionReasons(
 
 function calculateIncentiveData(
   minerStats: Record<string, PrecalcMinerStats>,
-  activeMiners: Set<string> | null
+  metagraph: MetagraphData | null
 ): IncentiveDataAggregated[] {
-  const minerAccepted: { hotkey: string; accepted: number }[] = []
-  let totalAccepted = 0
+  if (!metagraph) return []
 
-  for (const [hotkey, stats] of Object.entries(minerStats)) {
-    if (activeMiners && !activeMiners.has(hotkey)) continue
-    minerAccepted.push({ hotkey, accepted: stats.accepted })
+  // Calculate total accepted leads for lead share calculation
+  let totalAccepted = 0
+  for (const stats of Object.values(minerStats)) {
     totalAccepted += stats.accepted
   }
 
-  return minerAccepted
-    .map(m => ({
-      miner_hotkey: m.hotkey,
-      accepted_leads: m.accepted,
-      lead_share_pct: totalAccepted > 0 ? Math.round((m.accepted / totalAccepted) * 10000) / 100 : 0,
-    }))
-    .sort((a, b) => b.lead_share_pct - a.lead_share_pct)
+  // Include ALL miners from metagraph (not just those with lead submissions)
+  const result: IncentiveDataAggregated[] = []
+
+  for (const [hotkey, uid] of Object.entries(metagraph.hotkeyToUid)) {
+    const stats = minerStats[hotkey]
+    const accepted = stats?.accepted || 0
+    const btIncentive = metagraph.incentives[hotkey] || 0
+
+    result.push({
+      miner_hotkey: hotkey,
+      uid: uid,
+      accepted_leads: accepted,
+      lead_share_pct: totalAccepted > 0 ? Math.round((accepted / totalAccepted) * 10000) / 100 : 0,
+      bt_incentive_pct: Math.round(btIncentive * 10000) / 100, // Convert 0-1 to percentage
+    })
+  }
+
+  // Sort by BT incentive (primary), then by lead share (secondary)
+  return result.sort((a, b) => b.bt_incentive_pct - a.bt_incentive_pct || b.lead_share_pct - a.lead_share_pct)
 }
 
 function calculateSummary(totals: PrecalcTotals, minerStats: MinerStats[]): DashboardSummary {
