@@ -444,7 +444,7 @@ function transformMinerStats(
       }
     }
 
-    // Transform epoch performance
+    // Transform epoch performance (limit to last 20 epochs to reduce payload)
     const epochPerformance: MinerEpochPerformance[] = Object.entries(epochs)
       .map(([epochId, es]) => {
         const decided = es.accepted + es.rejected
@@ -456,8 +456,9 @@ function transformMinerStats(
         }
       })
       .sort((a, b) => b.epoch_id - a.epoch_id)
+      .slice(0, 20) // Limit to last 20 epochs
 
-    // Transform rejection reasons
+    // Transform rejection reasons (limit to top 10 to reduce payload)
     const rejectionReasonsRaw = stats.rejection_reasons_raw || {}
     const totalRejections = Object.values(rejectionReasonsRaw).reduce((a, b) => a + b, 0)
     const rejectionReasons: MinerRejectionReason[] = Object.entries(rejectionReasonsRaw)
@@ -467,6 +468,7 @@ function transformMinerStats(
         percentage: totalRejections > 0 ? Math.round((count / totalRejections) * 1000) / 10 : 0,
       }))
       .sort((a, b) => b.count - a.count)
+      .slice(0, 10) // Limit to top 10 reasons
 
     result.push({
       miner_hotkey: hotkey,
@@ -494,10 +496,11 @@ function transformEpochStats(
   minerStats: Record<string, PrecalcMinerStats>,
   activeMiners: Set<string> | null
 ): EpochStats[] {
-  // Get all epoch IDs and find the last 600
+  // Get all epoch IDs and find the last 600 for stats, last 20 for miner details
   const allEpochIds = Object.keys(epochStats).map(Number).sort((a, b) => b - a)
   const maxEpoch = allEpochIds[0] || 0
-  const minEpoch = maxEpoch - 599 // Last 600 epochs
+  const minEpoch = maxEpoch - 599 // Last 600 epochs for basic stats
+  const minEpochForMiners = maxEpoch - 19 // Last 20 epochs for miner breakdown (to reduce payload)
   const epochIdsToInclude = new Set(allEpochIds.filter(id => id >= minEpoch))
 
   const result: EpochStats[] = []
@@ -508,29 +511,35 @@ function transformEpochStats(
     // Only include last 600 epochs
     if (!epochIdsToInclude.has(eid)) continue
 
-    // Build per-miner breakdown for this epoch (derived from miner_stats.epochs)
-    const miners: EpochMinerStats[] = []
-    for (const [hotkey, mStats] of Object.entries(minerStats)) {
-      // Filter by active miners if metagraph available
-      if (activeMiners && !activeMiners.has(hotkey)) continue
+    // Only include miner breakdown for last 20 epochs (major payload optimization)
+    const includeMinerBreakdown = eid >= minEpochForMiners
 
-      const epochData = mStats.epochs?.[epochId]
-      if (!epochData) continue
+    let miners: EpochMinerStats[] = []
+    let uniqueMiners = stats.unique_miners || 0
 
-      const decided = epochData.accepted + epochData.rejected
-      miners.push({
-        miner_hotkey: hotkey,
-        total: epochData.accepted + epochData.rejected,
-        accepted: epochData.accepted,
-        rejected: epochData.rejected,
-        acceptance_rate: decided > 0 ? Math.round((epochData.accepted / decided) * 1000) / 10 : 0,
-        avg_rep_score: mStats.avg_rep_score, // Use overall miner avg
-      })
+    if (includeMinerBreakdown) {
+      // Build per-miner breakdown for this epoch (derived from miner_stats.epochs)
+      for (const [hotkey, mStats] of Object.entries(minerStats)) {
+        // Filter by active miners if metagraph available
+        if (activeMiners && !activeMiners.has(hotkey)) continue
+
+        const epochData = mStats.epochs?.[epochId]
+        if (!epochData) continue
+
+        const decided = epochData.accepted + epochData.rejected
+        miners.push({
+          miner_hotkey: hotkey,
+          total: epochData.accepted + epochData.rejected,
+          accepted: epochData.accepted,
+          rejected: epochData.rejected,
+          acceptance_rate: decided > 0 ? Math.round((epochData.accepted / decided) * 1000) / 10 : 0,
+          avg_rep_score: mStats.avg_rep_score, // Use overall miner avg
+        })
+      }
+      // Derive unique_miners from actual miner count
+      uniqueMiners = miners.length
+      miners = miners.sort((a, b) => b.acceptance_rate - a.acceptance_rate)
     }
-
-    // FIXED: Derive unique_miners from actual miner count instead of stored value
-    // The stored unique_miners was incorrectly summed in incremental mode
-    const uniqueMiners = miners.length
 
     result.push({
       epochId: eid,
@@ -539,8 +548,8 @@ function transformEpochStats(
       rejected: stats.rejected,
       acceptanceRate: stats.acceptance_rate,
       avgRepScore: stats.avg_rep_score || 0,
-      uniqueMiners, // Use derived count
-      miners: miners.sort((a, b) => b.acceptance_rate - a.acceptance_rate),
+      uniqueMiners,
+      miners,
     })
   }
 
