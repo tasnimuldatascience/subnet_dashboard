@@ -349,17 +349,19 @@ async function performSearch(
         const isExactUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(searchTerm)
 
         if (isExactUuid) {
-          // Exact UUID: use JSONB containment (@>) — keep query minimal to avoid timeout
+          // Exact UUID: use eq on JSONB path (faster than contains)
           const { data: subData, error: subError } = await supabase
             .from('transparency_log')
             .select('email_hash, actor_hotkey, payload, ts')
             .eq('event_type', 'SUBMISSION')
-            .contains('payload', { lead_id: searchTerm })
+            .eq('payload->>lead_id', searchTerm)
+            .order('ts', { ascending: false })
             .limit(limit)
 
           if (subError) {
-            console.error('[Lead Search API] Submission containment error:', subError)
+            console.error('[Lead Search API] Submission lead_id error:', subError)
           } else if (subData) {
+            console.log(`[Lead Search API] Found ${subData.length} results by lead_id`)
             for (const sub of subData) {
               if (!sub.email_hash) continue
               const lid = (sub.payload as { lead_id?: string })?.lead_id
