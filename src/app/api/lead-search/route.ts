@@ -202,7 +202,7 @@ async function performSearch(
       // Fetch submissions in batches of 1000, max 1500 total per miner
       const BATCH_SIZE = 1000
       const MAX_SUBMISSIONS_PER_MINER = 1500
-      const allSubs: { email_hash: string, actor_hotkey: string, payload: unknown, ts: string }[] = []
+      const allSubs: { email_hash: string, actor_hotkey: string, lead_id: string | null, ts: string }[] = []
       const seenLeadIds = new Set<string>()
       let offset = 0
       let hasMore = true
@@ -210,7 +210,7 @@ async function performSearch(
       while (hasMore && allSubs.length < MAX_SUBMISSIONS_PER_MINER) {
         let subQuery = supabase
           .from('transparency_log')
-          .select('email_hash, actor_hotkey, payload, ts')
+          .select('email_hash, actor_hotkey, payload->>lead_id, ts')
           .eq('event_type', 'SUBMISSION')
           .eq('actor_hotkey', targetHotkey)
           .not('email_hash', 'is', null)
@@ -237,11 +237,11 @@ async function performSearch(
         // Keep each unique lead_id (same email_hash can have multiple submissions)
         for (const sub of subData) {
           if (!sub.email_hash) continue
-          const lid = (sub.payload as { lead_id?: string })?.lead_id
+          const lid = (sub as Record<string, unknown>)['lead_id'] as string | null
           const dedupKey = lid || `${sub.email_hash}:${sub.ts}`
           if (seenLeadIds.has(dedupKey)) continue
           seenLeadIds.add(dedupKey)
-          allSubs.push(sub)
+          allSubs.push({ email_hash: sub.email_hash, actor_hotkey: sub.actor_hotkey, lead_id: lid ?? null, ts: sub.ts })
         }
 
         // If we got fewer than batch size, no more data
@@ -269,22 +269,26 @@ async function performSearch(
         const batch = hashes.slice(i, i + 50)
         const { data: consData } = await supabase
           .from('transparency_log')
-          .select('email_hash, payload')
+          .select('email_hash, payload->>lead_id, payload->>epoch_id, payload->>final_decision, payload->>final_rep_score, payload->>is_icp_multiplier, payload->>primary_rejection_reason')
           .eq('event_type', 'CONSENSUS_RESULT')
           .in('email_hash', batch)
 
         if (consData) {
           for (const c of consData) {
             if (!c.email_hash) continue
-            const p = c.payload as { lead_id?: string, epoch_id?: number, final_decision?: string, final_rep_score?: number, is_icp_multiplier?: number, primary_rejection_reason?: string }
+            const r = c as Record<string, unknown>
+            const epochId = r['epoch_id'] ? Number(r['epoch_id']) : null
+            const finalRepScore = r['final_rep_score'] != null ? Number(r['final_rep_score']) : null
+            const isIcpMultiplier = r['is_icp_multiplier'] != null ? Number(r['is_icp_multiplier']) : 0
             const entry = {
-              epochId: p?.epoch_id ?? null,
-              decision: p?.final_decision ?? '',
-              repScore: p?.final_rep_score != null ? Math.max(0, p.final_rep_score + (p.is_icp_multiplier ?? 0)) : null,
-              rejectionReason: cleanRejectionReason(p?.primary_rejection_reason)
+              epochId,
+              decision: (r['final_decision'] as string) ?? '',
+              repScore: finalRepScore != null ? Math.max(0, finalRepScore + isIcpMultiplier) : null,
+              rejectionReason: cleanRejectionReason(r['primary_rejection_reason'] as string | undefined)
             }
-            if (p?.lead_id) {
-              consensusByLeadId.set(p.lead_id, entry)
+            const leadId = r['lead_id'] as string | null
+            if (leadId) {
+              consensusByLeadId.set(leadId, entry)
             }
             consensusByHash.set(c.email_hash, entry)
           }
@@ -294,18 +298,17 @@ async function performSearch(
       // Build results
       const uidVal = parseInt(uid, 10)
       for (const sub of allSubs) {
-        const payload = sub.payload as { lead_id?: string }
         // If submission has a lead_id, only match consensus for that specific lead_id
         // (don't fall back to email_hash — that would pick up old rejections from prior submissions)
-        const cons = payload?.lead_id
-          ? consensusByLeadId.get(payload.lead_id) ?? null
+        const cons = sub.lead_id
+          ? consensusByLeadId.get(sub.lead_id) ?? null
           : consensusByHash.get(sub.email_hash) ?? null
 
         results.push({
           emailHash: sub.email_hash,
           minerHotkey: sub.actor_hotkey,
           coldkey: hotkeyToColdkey[sub.actor_hotkey] || null,
-          leadId: payload?.lead_id ?? null,
+          leadId: sub.lead_id,
           uid: uidVal,
           epochId: cons?.epochId ?? null,
           decision: cons ? normalizeDecision(cons.decision) : 'PENDING',
@@ -483,7 +486,7 @@ async function performSearch(
       // HOTKEYS FILTER (for coldkey search): Query by multiple hotkeys - limit to last 1500 per miner
       const BATCH_SIZE = 1000
       const MAX_SUBMISSIONS_PER_MINER = 1500
-      const allSubs: { email_hash: string, actor_hotkey: string, payload: unknown, ts: string }[] = []
+      const allSubs: { email_hash: string, actor_hotkey: string, lead_id: string | null, ts: string }[] = []
       const seenLeadIds = new Set<string>()
 
       // Fetch submissions for each hotkey (max 1500 per miner)
@@ -497,7 +500,7 @@ async function performSearch(
         while (hasMore && hotkeyCount < MAX_SUBMISSIONS_PER_MINER) {
           const { data: subData, error: subError } = await supabase
             .from('transparency_log')
-            .select('email_hash, actor_hotkey, payload, ts')
+            .select('email_hash, actor_hotkey, payload->>lead_id, ts')
             .eq('event_type', 'SUBMISSION')
             .eq('actor_hotkey', hotkey)
             .not('email_hash', 'is', null)
@@ -516,11 +519,11 @@ async function performSearch(
 
           for (const sub of subData) {
             if (!sub.email_hash) continue
-            const lid = (sub.payload as { lead_id?: string })?.lead_id
+            const lid = (sub as Record<string, unknown>)['lead_id'] as string | null
             const dedupKey = lid || `${sub.email_hash}:${sub.ts}`
             if (seenLeadIds.has(dedupKey)) continue
             seenLeadIds.add(dedupKey)
-            allSubs.push(sub)
+            allSubs.push({ email_hash: sub.email_hash, actor_hotkey: sub.actor_hotkey, lead_id: lid ?? null, ts: sub.ts })
           }
 
           if (subData.length < BATCH_SIZE) {
@@ -548,22 +551,26 @@ async function performSearch(
         const batch = hashes.slice(i, i + 50)
         const { data: consData } = await supabase
           .from('transparency_log')
-          .select('email_hash, payload')
+          .select('email_hash, payload->>lead_id, payload->>epoch_id, payload->>final_decision, payload->>final_rep_score, payload->>is_icp_multiplier, payload->>primary_rejection_reason')
           .eq('event_type', 'CONSENSUS_RESULT')
           .in('email_hash', batch)
 
         if (consData) {
           for (const c of consData) {
             if (!c.email_hash) continue
-            const p = c.payload as { lead_id?: string, epoch_id?: number, final_decision?: string, final_rep_score?: number, is_icp_multiplier?: number, primary_rejection_reason?: string }
+            const r = c as Record<string, unknown>
+            const epochId = r['epoch_id'] ? Number(r['epoch_id']) : null
+            const finalRepScore = r['final_rep_score'] != null ? Number(r['final_rep_score']) : null
+            const isIcpMultiplier = r['is_icp_multiplier'] != null ? Number(r['is_icp_multiplier']) : 0
             const entry = {
-              epochId: p?.epoch_id ?? null,
-              decision: p?.final_decision ?? '',
-              repScore: p?.final_rep_score != null ? Math.max(0, p.final_rep_score + (p.is_icp_multiplier ?? 0)) : null,
-              rejectionReason: cleanRejectionReason(p?.primary_rejection_reason)
+              epochId,
+              decision: (r['final_decision'] as string) ?? '',
+              repScore: finalRepScore != null ? Math.max(0, finalRepScore + isIcpMultiplier) : null,
+              rejectionReason: cleanRejectionReason(r['primary_rejection_reason'] as string | undefined)
             }
-            if (p?.lead_id) {
-              consensusByLeadId.set(p.lead_id, entry)
+            const leadId = r['lead_id'] as string | null
+            if (leadId) {
+              consensusByLeadId.set(leadId, entry)
             }
             consensusByHash.set(c.email_hash, entry)
           }
@@ -577,18 +584,17 @@ async function performSearch(
         const uidVal = hotkeyToUid[sub.actor_hotkey]
         if (uidVal === undefined) continue // Skip inactive miners
 
-        const payload = sub.payload as { lead_id?: string }
         // If submission has a lead_id, only match consensus for that specific lead_id
         // (don't fall back to email_hash — that would pick up old rejections from prior submissions)
-        const cons = payload?.lead_id
-          ? consensusByLeadId.get(payload.lead_id) ?? null
+        const cons = sub.lead_id
+          ? consensusByLeadId.get(sub.lead_id) ?? null
           : consensusByHash.get(sub.email_hash) ?? null
 
         results.push({
           emailHash: sub.email_hash,
           minerHotkey: sub.actor_hotkey,
           coldkey: hotkeyToColdkey[sub.actor_hotkey] || null,
-          leadId: payload?.lead_id ?? null,
+          leadId: sub.lead_id,
           uid: uidVal,
           epochId: cons?.epochId ?? null,
           decision: cons ? normalizeDecision(cons.decision) : 'PENDING',
