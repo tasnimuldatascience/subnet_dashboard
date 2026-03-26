@@ -199,57 +199,36 @@ async function performSearch(
         return []
       }
 
-      // Fetch submissions in batches of 1000, max 1500 total per miner
-      const BATCH_SIZE = 1000
-      const MAX_SUBMISSIONS_PER_MINER = 1500
+      // Fetch last 1500 submissions for this miner in one query
+      const MAX_SUBMISSIONS = 1500
+      let subQuery = supabase
+        .from('transparency_log')
+        .select('email_hash, actor_hotkey, payload->>lead_id, ts')
+        .eq('event_type', 'SUBMISSION')
+        .eq('actor_hotkey', targetHotkey)
+        .order('ts', { ascending: false })
+        .limit(MAX_SUBMISSIONS)
+
+      if (leadId && leadId.trim()) {
+        subQuery = subQuery.or(`email_hash.eq.${leadId.trim()},payload->>lead_id.ilike.%${leadId.trim()}%`)
+      }
+
+      const { data: subData, error: subError } = await subQuery
+
+      if (subError) {
+        console.error('[Lead Search API] Submission query error:', subError)
+        return []
+      }
+
       const allSubs: { email_hash: string, actor_hotkey: string, lead_id: string | null, ts: string }[] = []
       const seenLeadIds = new Set<string>()
-      let offset = 0
-      let hasMore = true
-
-      while (hasMore && allSubs.length < MAX_SUBMISSIONS_PER_MINER) {
-        let subQuery = supabase
-          .from('transparency_log')
-          .select('email_hash, actor_hotkey, payload->>lead_id, ts')
-          .eq('event_type', 'SUBMISSION')
-          .eq('actor_hotkey', targetHotkey)
-          .not('email_hash', 'is', null)
-          .order('ts', { ascending: false })
-          .range(offset, offset + BATCH_SIZE - 1)
-
-        if (leadId && leadId.trim()) {
-          // Search both email_hash (exact) and lead_id (partial)
-          subQuery = subQuery.or(`email_hash.eq.${leadId.trim()},payload->>lead_id.ilike.%${leadId.trim()}%`)
-        }
-
-        const { data: subData, error: subError } = await subQuery
-
-        if (subError) {
-          console.error('[Lead Search API] Submission batch error:', subError)
-          break
-        }
-
-        if (!subData || subData.length === 0) {
-          hasMore = false
-          break
-        }
-
-        // Keep each unique lead_id (same email_hash can have multiple submissions)
-        for (const sub of subData) {
-          if (!sub.email_hash) continue
-          const lid = (sub as Record<string, unknown>)['lead_id'] as string | null
-          const dedupKey = lid || `${sub.email_hash}:${sub.ts}`
-          if (seenLeadIds.has(dedupKey)) continue
-          seenLeadIds.add(dedupKey)
-          allSubs.push({ email_hash: sub.email_hash, actor_hotkey: sub.actor_hotkey, lead_id: lid ?? null, ts: sub.ts })
-        }
-
-        // If we got fewer than batch size, no more data
-        if (subData.length < BATCH_SIZE) {
-          hasMore = false
-        } else {
-          offset += BATCH_SIZE
-        }
+      for (const sub of (subData || [])) {
+        if (!sub.email_hash) continue
+        const lid = (sub as Record<string, unknown>)['lead_id'] as string | null
+        const dedupKey = lid || `${sub.email_hash}:${sub.ts}`
+        if (seenLeadIds.has(dedupKey)) continue
+        seenLeadIds.add(dedupKey)
+        allSubs.push({ email_hash: sub.email_hash, actor_hotkey: sub.actor_hotkey, lead_id: lid ?? null, ts: sub.ts })
       }
 
       console.log(`[Lead Search API] Fetched ${allSubs.length} submissions for UID ${uid}`)
@@ -484,53 +463,32 @@ async function performSearch(
       }
     } else if (hotkeys && hotkeys.length > 0) {
       // HOTKEYS FILTER (for coldkey search): Query by multiple hotkeys - limit to last 1500 per miner
-      const BATCH_SIZE = 1000
       const MAX_SUBMISSIONS_PER_MINER = 1500
       const allSubs: { email_hash: string, actor_hotkey: string, lead_id: string | null, ts: string }[] = []
       const seenLeadIds = new Set<string>()
 
-      // Fetch submissions for each hotkey (max 1500 per miner)
+      // Fetch last 1500 submissions per hotkey in one query each
       for (const hotkey of hotkeys) {
-        if (allSubs.length >= MAX_SUBMISSIONS_PER_MINER * hotkeys.length) break
+        const { data: subData, error: subError } = await supabase
+          .from('transparency_log')
+          .select('email_hash, actor_hotkey, payload->>lead_id, ts')
+          .eq('event_type', 'SUBMISSION')
+          .eq('actor_hotkey', hotkey)
+          .order('ts', { ascending: false })
+          .limit(MAX_SUBMISSIONS_PER_MINER)
 
-        let offset = 0
-        let hasMore = true
-        let hotkeyCount = 0
+        if (subError) {
+          console.error('[Lead Search API] Submission query error:', subError)
+          continue
+        }
 
-        while (hasMore && hotkeyCount < MAX_SUBMISSIONS_PER_MINER) {
-          const { data: subData, error: subError } = await supabase
-            .from('transparency_log')
-            .select('email_hash, actor_hotkey, payload->>lead_id, ts')
-            .eq('event_type', 'SUBMISSION')
-            .eq('actor_hotkey', hotkey)
-            .not('email_hash', 'is', null)
-            .order('ts', { ascending: false })
-            .range(offset, offset + BATCH_SIZE - 1)
-
-          if (subError) {
-            console.error('[Lead Search API] Submission batch error:', subError)
-            break
-          }
-
-          if (!subData || subData.length === 0) {
-            hasMore = false
-            break
-          }
-
-          for (const sub of subData) {
-            if (!sub.email_hash) continue
-            const lid = (sub as Record<string, unknown>)['lead_id'] as string | null
-            const dedupKey = lid || `${sub.email_hash}:${sub.ts}`
-            if (seenLeadIds.has(dedupKey)) continue
-            seenLeadIds.add(dedupKey)
-            allSubs.push({ email_hash: sub.email_hash, actor_hotkey: sub.actor_hotkey, lead_id: lid ?? null, ts: sub.ts })
-          }
-
-          if (subData.length < BATCH_SIZE) {
-            hasMore = false
-          } else {
-            offset += BATCH_SIZE
-          }
+        for (const sub of (subData || [])) {
+          if (!sub.email_hash) continue
+          const lid = (sub as Record<string, unknown>)['lead_id'] as string | null
+          const dedupKey = lid || `${sub.email_hash}:${sub.ts}`
+          if (seenLeadIds.has(dedupKey)) continue
+          seenLeadIds.add(dedupKey)
+          allSubs.push({ email_hash: sub.email_hash, actor_hotkey: sub.actor_hotkey, lead_id: lid ?? null, ts: sub.ts })
         }
       }
 
