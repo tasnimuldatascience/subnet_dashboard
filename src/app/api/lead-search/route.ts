@@ -193,20 +193,21 @@ async function performSearch(
       }
 
     } else if (uid && uid !== 'all') {
-      // UID FILTER: Query SUBMISSION first with batched fetching to bypass 1000 limit
+      // UID FILTER: Query SUBMISSION first - limit to last 1500 submissions per miner
       const targetHotkey = uidToHotkey[parseInt(uid, 10)]
       if (!targetHotkey) {
         return []
       }
 
-      // Fetch submissions in batches of 1000 using range() to bypass Supabase limit
+      // Fetch submissions in batches of 1000, max 1500 total per miner
       const BATCH_SIZE = 1000
+      const MAX_SUBMISSIONS_PER_MINER = 1500
       const allSubs: { email_hash: string, actor_hotkey: string, payload: unknown, ts: string }[] = []
       const seenLeadIds = new Set<string>()
       let offset = 0
       let hasMore = true
 
-      while (hasMore && allSubs.length < limit * 2) {
+      while (hasMore && allSubs.length < MAX_SUBMISSIONS_PER_MINER) {
         let subQuery = supabase
           .from('transparency_log')
           .select('email_hash, actor_hotkey, payload, ts')
@@ -479,19 +480,21 @@ async function performSearch(
         if (results.length >= limit) break
       }
     } else if (hotkeys && hotkeys.length > 0) {
-      // HOTKEYS FILTER (for coldkey search): Query by multiple hotkeys
+      // HOTKEYS FILTER (for coldkey search): Query by multiple hotkeys - limit to last 1500 per miner
       const BATCH_SIZE = 1000
+      const MAX_SUBMISSIONS_PER_MINER = 1500
       const allSubs: { email_hash: string, actor_hotkey: string, payload: unknown, ts: string }[] = []
       const seenLeadIds = new Set<string>()
 
-      // Fetch submissions for each hotkey
+      // Fetch submissions for each hotkey (max 1500 per miner)
       for (const hotkey of hotkeys) {
-        if (allSubs.length >= limit * 2) break
+        if (allSubs.length >= MAX_SUBMISSIONS_PER_MINER * hotkeys.length) break
 
         let offset = 0
         let hasMore = true
+        let hotkeyCount = 0
 
-        while (hasMore && allSubs.length < limit * 2) {
+        while (hasMore && hotkeyCount < MAX_SUBMISSIONS_PER_MINER) {
           const { data: subData, error: subError } = await supabase
             .from('transparency_log')
             .select('email_hash, actor_hotkey, payload, ts')
