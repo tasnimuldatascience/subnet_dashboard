@@ -349,8 +349,20 @@ async function fetchModelCompetitionData(): Promise<unknown> {
     }
   })
 
-  // Current champion is the one without dethroned_at (null means no current champion)
-  const currentChampion = championsList.find((c: { dethronedAt: string | null }) => !c.dethronedAt) || null
+  // Current champion: only show if is_champion is TRUE in the leaderboard (source of truth)
+  const leaderboardChampion = recentSubmissions.find((s: { isChampion: boolean | null }) => s.isChampion === true)
+  const currentChampion = leaderboardChampion
+    ? championsList.find((c: { minerHotkey: string; dethronedAt: string | null }) => !c.dethronedAt && c.minerHotkey === leaderboardChampion.minerHotkey) || null
+    : null
+
+  // If no leaderboard champion, mark any undethroned history entries as stale so UI doesn't show them as current
+  if (!currentChampion) {
+    for (const c of championsList) {
+      if (!c.dethronedAt) {
+        c.dethronedAt = 'stale'
+      }
+    }
+  }
 
   // Stats
   const uniqueChampionMiners = new Set(champions.map((c: { miner_hotkey: string }) => c.miner_hotkey)).size
