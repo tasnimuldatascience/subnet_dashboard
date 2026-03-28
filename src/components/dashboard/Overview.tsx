@@ -159,6 +159,7 @@ export function Overview({
     // Find ALL metagraph miners not in minerStats with incentive > 0
     const additionalMiners: MinerStats[] = []
     for (const [hotkey, uid] of Object.entries(metagraph.hotkeyToUid)) {
+      if (uid === 0) continue // Exclude subnet owner
       if (!existingHotkeys.has(hotkey)) {
         const incentive = metagraph.incentives[hotkey] ?? 0
         if (incentive > 0) {
