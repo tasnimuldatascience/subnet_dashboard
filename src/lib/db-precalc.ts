@@ -649,6 +649,7 @@ function calculateIncentiveData(
   const result: IncentiveDataAggregated[] = []
 
   for (const [hotkey, uid] of Object.entries(metagraph.hotkeyToUid)) {
+    if (uid === 0) continue // Exclude subnet owner (UID 0)
     const stats = minerStats[hotkey]
     const accepted = stats?.accepted || 0
     const btIncentive = metagraph.incentives[hotkey] || 0
