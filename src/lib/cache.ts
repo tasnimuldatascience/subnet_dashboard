@@ -350,9 +350,10 @@ async function fetchModelCompetitionData(): Promise<unknown> {
   })
 
   // Current champion: only show if is_champion is TRUE in the leaderboard (source of truth)
-  const leaderboardChampion = recentSubmissions.find((s: { isChampion: boolean | null }) => s.isChampion === true)
+  // Search ALL leaderboard models, not just today's — champion may have been crowned on a previous day
+  const leaderboardChampion = models.find((m: { is_champion: boolean | null }) => m.is_champion === true)
   const currentChampion = leaderboardChampion
-    ? championsList.find((c: { minerHotkey: string; dethronedAt: string | null }) => !c.dethronedAt && c.minerHotkey === leaderboardChampion.minerHotkey) || null
+    ? championsList.find((c: { minerHotkey: string; dethronedAt: string | null }) => !c.dethronedAt && c.minerHotkey === leaderboardChampion.miner_hotkey) || null
     : null
 
   // If no leaderboard champion, mark any undethroned history entries as stale so UI doesn't show them as current
