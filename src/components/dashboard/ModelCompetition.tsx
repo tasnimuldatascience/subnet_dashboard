@@ -270,6 +270,14 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
 }
 
 // Score Breakdown Tab Component
+// Treat "NA", "N/A", "n/a", empty strings, and undefined/null as missing
+function clean(val: string | undefined | null): string {
+  if (!val) return ''
+  const trimmed = val.trim()
+  if (trimmed === '' || trimmed.toLowerCase() === 'na' || trimmed.toLowerCase() === 'n/a') return ''
+  return trimmed
+}
+
 function ScoreBreakdownTab({ breakdown, score }: { breakdown: ScoreBreakdown | null | undefined; score: number | null }) {
   const [copied, setCopied] = useState(false)
 
@@ -357,9 +365,9 @@ function ScoreBreakdownTab({ breakdown, score }: { breakdown: ScoreBreakdown | n
                 <div className="flex justify-between items-start mb-2">
                   <div className="flex-1">
                     <span className="text-xs text-muted-foreground">#{lead.rank}</span>
-                    {lead.lead && (
+                    {lead.lead && (clean(lead.lead.role) || clean(lead.lead.business)) && (
                       <p className="font-medium">
-                        {lead.lead.role} at {lead.lead.business}
+                        {[clean(lead.lead.role), clean(lead.lead.business)].filter(Boolean).join(' at ')}
                       </p>
                     )}
                   </div>
@@ -368,12 +376,18 @@ function ScoreBreakdownTab({ breakdown, score }: { breakdown: ScoreBreakdown | n
                 <p className="text-xs text-muted-foreground mb-2">
                   <span className="font-medium text-foreground">ICP:</span> {lead.icp_prompt}
                 </p>
-                {lead.lead && (
-                  <div className="text-xs text-muted-foreground mb-2">
-                    <span className="font-medium text-foreground">Location:</span> {lead.lead.city}, {lead.lead.state}, {lead.lead.country} |
-                    <span className="font-medium text-foreground ml-1">Industry:</span> {lead.lead.industry} ({lead.lead.sub_industry})
-                  </div>
-                )}
+                {lead.lead && (() => {
+                  const loc = [clean(lead.lead.city), clean(lead.lead.state), clean(lead.lead.country)].filter(Boolean).join(', ')
+                  const ind = [clean(lead.lead.industry), clean(lead.lead.sub_industry)].filter(Boolean)
+                  const indStr = ind.length > 1 ? `${ind[0]} (${ind[1]})` : ind[0] || ''
+                  return (loc || indStr) ? (
+                    <div className="text-xs text-muted-foreground mb-2">
+                      {loc && <><span className="font-medium text-foreground">Location:</span> {loc}</>}
+                      {loc && indStr && ' | '}
+                      {indStr && <><span className="font-medium text-foreground ml-1">Industry:</span> {indStr}</>}
+                    </div>
+                  ) : null
+                })()}
                 {lead.score_components && (
                   <div className="flex flex-wrap gap-2 text-xs">
                     <span className="bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded">
@@ -409,25 +423,31 @@ function ScoreBreakdownTab({ breakdown, score }: { breakdown: ScoreBreakdown | n
                 <div className="flex justify-between items-start mb-2">
                   <div className="flex-1">
                     <span className="text-xs text-muted-foreground">#{lead.rank}</span>
-                    {lead.lead ? (
+                    {lead.lead && (clean(lead.lead.role) || clean(lead.lead.business)) ? (
                       <p className="font-medium">
-                        {lead.lead.role} at {lead.lead.business}
+                        {[clean(lead.lead.role), clean(lead.lead.business)].filter(Boolean).join(' at ')}
                       </p>
-                    ) : (
+                    ) : !lead.lead ? (
                       <p className="font-medium text-red-400">No lead returned</p>
-                    )}
+                    ) : null}
                   </div>
                   <span className="text-lg font-bold text-red-500 ml-2 flex-shrink-0">{(lead.final_score ?? 0).toFixed(1)}</span>
                 </div>
                 <p className="text-xs text-muted-foreground mb-2">
                   <span className="font-medium text-foreground">ICP:</span> {lead.icp_prompt}
                 </p>
-                {lead.lead && (
-                  <div className="text-xs text-muted-foreground mb-2">
-                    <span className="font-medium text-foreground">Location:</span> {lead.lead.city}, {lead.lead.state}, {lead.lead.country} |
-                    <span className="font-medium text-foreground ml-1">Industry:</span> {lead.lead.industry} ({lead.lead.sub_industry})
-                  </div>
-                )}
+                {lead.lead && (() => {
+                  const loc = [clean(lead.lead.city), clean(lead.lead.state), clean(lead.lead.country)].filter(Boolean).join(', ')
+                  const ind = [clean(lead.lead.industry), clean(lead.lead.sub_industry)].filter(Boolean)
+                  const indStr = ind.length > 1 ? `${ind[0]} (${ind[1]})` : ind[0] || ''
+                  return (loc || indStr) ? (
+                    <div className="text-xs text-muted-foreground mb-2">
+                      {loc && <><span className="font-medium text-foreground">Location:</span> {loc}</>}
+                      {loc && indStr && ' | '}
+                      {indStr && <><span className="font-medium text-foreground ml-1">Industry:</span> {indStr}</>}
+                    </div>
+                  ) : null
+                })()}
                 {lead.failure_reason && (
                   <p className="text-xs text-red-400 mb-2">
                     <span className="font-medium">Failure Reason:</span> {lead.failure_reason}
