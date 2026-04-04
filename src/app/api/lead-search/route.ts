@@ -137,8 +137,8 @@ async function performSearch(
         }
 
         if (leadId && leadId.trim()) {
-          // Search both email_hash (exact) and lead_id (partial)
-          subQuery = subQuery.or(`email_hash.eq.${leadId.trim()},payload->>lead_id.ilike.%${leadId.trim()}%`)
+          // Search both email_hash (exact) and lead_id (exact)
+          subQuery = subQuery.or(`email_hash.eq.${leadId.trim()},payload->>lead_id.eq.${leadId.trim()}`)
         }
 
         const { data: subData, error: subError } = await subQuery
@@ -210,7 +210,7 @@ async function performSearch(
         .limit(MAX_SUBMISSIONS)
 
       if (leadId && leadId.trim()) {
-        subQuery = subQuery.or(`email_hash.eq.${leadId.trim()},payload->>lead_id.ilike.%${leadId.trim()}%`)
+        subQuery = subQuery.or(`email_hash.eq.${leadId.trim()},payload->>lead_id.eq.${leadId.trim()}`)
       }
 
       const { data: subData, error: subError } = await subQuery
@@ -333,7 +333,7 @@ async function performSearch(
           .from('transparency_log')
           .select('email_hash, actor_hotkey, payload, ts')
           .eq('event_type', 'SUBMISSION')
-          .eq('payload->>lead_id', searchTerm)
+          .filter('payload->>lead_id', 'eq', searchTerm)
           .order('ts', { ascending: false })
           .limit(limit)
 
