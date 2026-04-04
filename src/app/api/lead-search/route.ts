@@ -327,70 +327,26 @@ async function performSearch(
         }
       }
 
-      // If no email_hash results or fewer than limit, also search by lead_id
+      // If no email_hash results or fewer than limit, also search by lead_id (exact match)
       if (allSubs.length < limit) {
-        const isExactUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(searchTerm)
+        const { data: subData, error: subError } = await supabase
+          .from('transparency_log')
+          .select('email_hash, actor_hotkey, payload, ts')
+          .eq('event_type', 'SUBMISSION')
+          .eq('payload->>lead_id', searchTerm)
+          .order('ts', { ascending: false })
+          .limit(limit)
 
-        if (isExactUuid) {
-          // Exact UUID: use JSONB containment (@>) — keep query minimal to avoid timeout
-          const { data: subData, error: subError } = await supabase
-            .from('transparency_log')
-            .select('email_hash, actor_hotkey, payload, ts')
-            .eq('event_type', 'SUBMISSION')
-            .contains('payload', { lead_id: searchTerm })
-            .limit(limit)
-
-          if (subError) {
-            console.error('[Lead Search API] Submission containment error:', subError)
-          } else if (subData) {
-            for (const sub of subData) {
-              if (!sub.email_hash) continue
-              const lid = (sub.payload as { lead_id?: string })?.lead_id
-              const dedupKey = lid || `${sub.email_hash}:${sub.ts}`
-              if (seenLeadIds.has(dedupKey)) continue
-              seenLeadIds.add(dedupKey)
-              allSubs.push(sub)
-            }
-          }
-        } else {
-          // Partial match: paginate with ilike
-          let offset = 0
-          let hasMore = true
-
-          while (hasMore && allSubs.length < limit) {
-            const { data: subData, error: subError } = await supabase
-              .from('transparency_log')
-              .select('email_hash, actor_hotkey, payload, ts')
-              .eq('event_type', 'SUBMISSION')
-              .not('email_hash', 'is', null)
-              .ilike('payload->>lead_id', `%${searchTerm}%`)
-              .order('ts', { ascending: false })
-              .range(offset, offset + BATCH_SIZE - 1)
-
-            if (subError) {
-              console.error('[Lead Search API] Submission batch error:', subError)
-              break
-            }
-
-            if (!subData || subData.length === 0) {
-              hasMore = false
-              break
-            }
-
-            for (const sub of subData) {
-              if (!sub.email_hash) continue
-              const lid = (sub.payload as { lead_id?: string })?.lead_id
-              const dedupKey = lid || `${sub.email_hash}:${sub.ts}`
-              if (seenLeadIds.has(dedupKey)) continue
-              seenLeadIds.add(dedupKey)
-              allSubs.push(sub)
-            }
-
-            if (subData.length < BATCH_SIZE) {
-              hasMore = false
-            } else {
-              offset += BATCH_SIZE
-            }
+        if (subError) {
+          console.error('[Lead Search API] Submission lead_id error:', subError)
+        } else if (subData) {
+          for (const sub of subData) {
+            if (!sub.email_hash) continue
+            const lid = (sub.payload as { lead_id?: string })?.lead_id
+            const dedupKey = lid || `${sub.email_hash}:${sub.ts}`
+            if (seenLeadIds.has(dedupKey)) continue
+            seenLeadIds.add(dedupKey)
+            allSubs.push(sub)
           }
         }
       }

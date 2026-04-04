@@ -647,7 +647,7 @@ export function useLeadsQuery(options: UseLeadsQueryOptions = {}): UseLeadsQuery
         .from('transparency_log')
         .select('ts, email_hash, actor_hotkey, payload')
         .eq('event_type', 'SUBMISSION')
-        .ilike('payload->>lead_id', `%${leadId}%`)
+        .eq('payload->>lead_id', leadId)
         .not('email_hash', 'is', null)
         .order('ts', { ascending: false })
         .limit(100)
