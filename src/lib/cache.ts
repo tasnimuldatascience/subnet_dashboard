@@ -307,6 +307,17 @@ async function fetchModelCompetitionData(): Promise<unknown> {
   // Map champions to the expected format
   // (twentyFourHoursAgo already declared above for submissions)
   // code_content is now directly in qualification_champion_history
+  // Build a lookup map of score_breakdown from qualification_leaderboard by model_id
+  const scoreBreakdownMap = new Map<string, unknown>()
+  for (const m of models) {
+    if ((m as { model_id: string; score_breakdown: unknown }).score_breakdown) {
+      scoreBreakdownMap.set(
+        (m as { model_id: string }).model_id,
+        (m as { score_breakdown: unknown }).score_breakdown
+      )
+    }
+  }
+
   const championsList = champions.map((c: {
     model_id: string
     miner_hotkey: string
@@ -346,6 +357,7 @@ async function fetchModelCompetitionData(): Promise<unknown> {
       codeContent: parsedCodeContent,
       hasCode,
       canShowCode,
+      scoreBreakdown: scoreBreakdownMap.get(c.model_id) || null,
     }
   })
 

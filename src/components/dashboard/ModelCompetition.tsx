@@ -41,6 +41,7 @@ interface ChampionHistoryEntry {
   codeContent: unknown | null
   hasCode: boolean
   canShowCode: boolean
+  scoreBreakdown: ScoreBreakdown | null
 }
 
 // Score breakdown types
@@ -551,6 +552,7 @@ function ChampionDetailDialog({
   const [loadingCode, setLoadingCode] = useState(false)
   const [codeError, setCodeError] = useState<string | null>(null)
   const [activeFile, setActiveFile] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<'score' | 'code'>('score')
 
   // Load code directly from champion data when dialog opens
   useEffect(() => {
@@ -559,6 +561,7 @@ function ChampionDetailDialog({
     // Reset state
     setCodeError(null)
     setLoadingCode(false)
+    setActiveTab('score')
 
     // Use code directly from champion data (already parsed in cache.ts)
     if (champion.canShowCode && champion.codeContent) {
@@ -577,6 +580,22 @@ function ChampionDetailDialog({
   if (!champion) return null
 
   const isCurrentChampion = !champion.dethronedAt
+
+  // Parse score breakdown
+  let scoreBreakdown: ScoreBreakdown | null = null
+  if (champion.scoreBreakdown) {
+    if (typeof champion.scoreBreakdown === 'string') {
+      try {
+        scoreBreakdown = JSON.parse(champion.scoreBreakdown)
+      } catch {
+        scoreBreakdown = null
+      }
+    } else {
+      scoreBreakdown = champion.scoreBreakdown
+    }
+  }
+
+  const hasCode = champion.canShowCode && codeContent && Object.keys(codeContent).length > 0
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -624,16 +643,38 @@ function ChampionDetailDialog({
           </div>
         </div>
 
-        {/* Model Code Section */}
-        <div className="flex items-center gap-2 border-b pb-2">
-          <Code className="h-4 w-4 text-cyan-500" />
-          <span className="text-sm font-medium">Model Code</span>
-          {!champion.canShowCode && <Lock className="h-3 w-3 text-muted-foreground" />}
+        {/* Tabs */}
+        <div className="flex gap-2 border-b">
+          <button
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'score'
+                ? 'border-yellow-500 text-yellow-500'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+            onClick={() => setActiveTab('score')}
+          >
+            <CheckCircle className="h-4 w-4 inline mr-1.5" />
+            Score Breakdown
+          </button>
+          <button
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'code'
+                ? 'border-cyan-500 text-cyan-500'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+            onClick={() => setActiveTab('code')}
+          >
+            <Code className="h-4 w-4 inline mr-1.5" />
+            Model Code
+            {!champion.canShowCode && <Lock className="h-3 w-3 inline ml-1.5 text-muted-foreground" />}
+          </button>
         </div>
 
-        {/* Code Content */}
+        {/* Tab Content */}
         <div className="flex-1 overflow-y-auto pr-2 pt-4">
-          {!champion.canShowCode ? (
+          {activeTab === 'score' ? (
+            <ScoreBreakdownTab breakdown={scoreBreakdown} score={champion.score} />
+          ) : !champion.canShowCode ? (
             <div className="flex flex-col items-center justify-center py-12 text-center">
               <Lock className="h-12 w-12 text-muted-foreground mb-4" />
               <p className="text-lg font-medium">Code Hidden</p>
@@ -644,7 +685,7 @@ function ChampionDetailDialog({
                 Available: {formatDate(new Date(new Date(champion.championAt).getTime() + 24 * 60 * 60 * 1000).toISOString())}
               </p>
             </div>
-          ) : (
+          ) : hasCode && codeContent && activeFile ? (
             <ChampionCodeTab
               champion={champion}
               codeContent={codeContent}
@@ -653,6 +694,11 @@ function ChampionDetailDialog({
               activeFile={activeFile}
               setActiveFile={setActiveFile}
             />
+          ) : (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <Code className="h-12 w-12 text-muted-foreground mb-4" />
+              <p className="text-sm text-muted-foreground">No code available</p>
+            </div>
           )}
         </div>
       </DialogContent>
