@@ -254,6 +254,14 @@ async function fetchModelCompetitionData(): Promise<unknown> {
   const now = new Date()
   const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000)
 
+  // Fetch current champion from qualification_models (persistent, not cleared daily)
+  const { data: champModel } = await supabase
+    .from('qualification_models')
+    .select('id, miner_hotkey, model_name, score, score_breakdown, code_content, champion_at')
+    .eq('is_champion', true)
+    .limit(1)
+    .single()
+
   // Map today's submissions
   const recentSubmissions = todaysModels
     .sort((a: { created_at: string }, b: { created_at: string }) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
@@ -285,7 +293,7 @@ async function fetchModelCompetitionData(): Promise<unknown> {
         codeContent: parsedCodeContent,
         createdAt: m.created_at,
         evaluatedAt: m.evaluated_at,
-        isChampion: m.is_champion,
+        isChampion: champModel ? m.model_id === champModel.id : false,
         canShowCode,
       }
     })
@@ -361,19 +369,53 @@ async function fetchModelCompetitionData(): Promise<unknown> {
     }
   })
 
-  // Current champion: only show if is_champion is TRUE in the leaderboard (source of truth)
-  // Search ALL leaderboard models, not just today's — champion may have been crowned on a previous day
-  const leaderboardChampion = models.find((m: { is_champion: boolean | null }) => m.is_champion === true)
-  const currentChampion = leaderboardChampion
-    ? championsList.find((c: { minerHotkey: string; dethronedAt: string | null }) => !c.dethronedAt && c.minerHotkey === leaderboardChampion.miner_hotkey) || null
-    : null
-
-  // If no leaderboard champion, mark any undethroned history entries as stale so UI doesn't show them as current
-  if (!currentChampion) {
-    for (const c of championsList) {
-      if (!c.dethronedAt) {
-        c.dethronedAt = 'stale'
+  // Current champion: qualification_models is source of truth
+  if (champModel) {
+    const champEntry = championsList.find((c: { modelId: string }) => c.modelId === champModel.id)
+    if (champEntry) {
+      // Override history — qualification_models says this is champion
+      champEntry.dethronedAt = null
+      champEntry.scoreBreakdown = champModel.score_breakdown || champEntry.scoreBreakdown
+      // Parse and set code from qualification_models if available
+      if (champModel.code_content) {
+        try {
+          const code = typeof champModel.code_content === 'string'
+            ? JSON.parse(champModel.code_content)
+            : champModel.code_content
+          champEntry.codeContent = code
+          champEntry.hasCode = true
+        } catch { /* keep existing */ }
       }
+    } else {
+      // Champion not in history yet — add it directly from qualification_models
+      let parsedCode: Record<string, string> | null = null
+      if (champModel.code_content) {
+        try {
+          parsedCode = typeof champModel.code_content === 'string'
+            ? JSON.parse(champModel.code_content)
+            : champModel.code_content as Record<string, string>
+        } catch { /* skip */ }
+      }
+      championsList.unshift({
+        modelId: champModel.id,
+        minerHotkey: champModel.miner_hotkey,
+        modelName: champModel.model_name || 'Unnamed',
+        score: champModel.score,
+        championAt: champModel.champion_at,
+        dethronedAt: null,
+        reignDuration: null,
+        codeContent: parsedCode,
+        hasCode: parsedCode !== null,
+        canShowCode: true,
+        scoreBreakdown: champModel.score_breakdown || null,
+      })
+    }
+  }
+
+  // Mark any other undethroned history entries as stale
+  for (const c of championsList) {
+    if (!c.dethronedAt && (!champModel || c.modelId !== champModel.id)) {
+      c.dethronedAt = 'stale'
     }
   }
 
@@ -394,7 +436,7 @@ async function fetchModelCompetitionData(): Promise<unknown> {
       },
       totalChampions: championsList.length,
       uniqueChampionMiners,
-      currentChampionScore: currentChampion?.score || 0,
+      currentChampionScore: champModel?.score || 0,
     },
     fetchedAt: new Date().toISOString(),
   }
