@@ -246,6 +246,7 @@ async function fetchModelCompetitionData(): Promise<unknown> {
     m.status === 'evaluated' && m.score !== null && isToday(m.evaluated_at)
   )
   const submittedModels = todaysModels.filter((m: { status: string }) => m.status === 'submitted')
+  const evaluatingModels = todaysModels.filter((m: { status: string }) => m.status === 'evaluating')
 
   const totalToday = todaysModels.length
   const uniqueMinersToday = new Set(todaysModels.map((l: { miner_hotkey: string }) => l.miner_hotkey)).size
@@ -430,7 +431,7 @@ async function fetchModelCompetitionData(): Promise<unknown> {
       uniqueMiners: uniqueMinersToday,
       statusCounts: {
         submitted: submittedModels.length,
-        evaluating: 0,
+        evaluating: evaluatingModels.length,
         evaluated: evaluatedModelsToday.length,
         failed: 0,
       },

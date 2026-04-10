@@ -1009,7 +1009,10 @@ export function ModelCompetition() {
           <CardContent>
             <div className="text-2xl font-bold">{data.stats.statusCounts.evaluated}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              {data.stats.statusCounts.submitted} pending today
+              {data.stats.statusCounts.evaluating > 0 && (
+                <span className="text-blue-500">{data.stats.statusCounts.evaluating} evaluating · </span>
+              )}
+              {data.stats.statusCounts.submitted} pending
             </p>
           </CardContent>
         </Card>
