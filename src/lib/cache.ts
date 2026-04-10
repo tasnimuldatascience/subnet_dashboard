@@ -246,10 +246,6 @@ async function fetchModelCompetitionData(): Promise<unknown> {
     m.status === 'evaluated' && m.score !== null && isToday(m.evaluated_at)
   )
   const submittedModels = todaysModels.filter((m: { status: string }) => m.status === 'submitted')
-  const evaluatingModels = todaysModels.filter((m: { status: string }) => m.status === 'evaluating')
-
-  const totalToday = todaysModels.length
-  const uniqueMinersToday = new Set(todaysModels.map((l: { miner_hotkey: string }) => l.miner_hotkey)).size
 
   // Check if submission is more than 24 hours ago (code can be shown)
   const now = new Date()
@@ -262,6 +258,38 @@ async function fetchModelCompetitionData(): Promise<unknown> {
     .eq('is_champion', true)
     .limit(1)
     .single()
+
+  // Fetch evaluating models from qualification_models (not always in leaderboard)
+  const { data: evaluatingFromModels } = await supabase
+    .from('qualification_models')
+    .select('id, miner_hotkey, model_name, status, score, score_breakdown, created_at, evaluated_at')
+    .eq('status', 'evaluating')
+
+  // Merge evaluating models into todaysModels if not already present
+  if (evaluatingFromModels && evaluatingFromModels.length > 0) {
+    const existingIds = new Set(todaysModels.map((m: { model_id: string }) => m.model_id))
+    for (const em of evaluatingFromModels) {
+      if (!existingIds.has(em.id)) {
+        todaysModels.push({
+          model_id: em.id,
+          miner_hotkey: em.miner_hotkey,
+          model_name: em.model_name,
+          status: em.status,
+          score: em.score,
+          score_breakdown: em.score_breakdown,
+          code_content: null,
+          created_at: em.created_at,
+          evaluated_at: em.evaluated_at,
+          is_champion: false,
+        })
+      }
+    }
+  }
+
+  // Recalculate stats after merge
+  const evaluatingModels = todaysModels.filter((m: { status: string }) => m.status === 'evaluating')
+  const totalToday = todaysModels.length
+  const uniqueMinersToday = new Set(todaysModels.map((l: { miner_hotkey: string }) => l.miner_hotkey)).size
 
   // Map today's submissions
   const recentSubmissions = todaysModels
