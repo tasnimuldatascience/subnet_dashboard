@@ -8,7 +8,7 @@ export const revalidate = 0
 // Create a fresh Supabase client for each request
 function getFreshSupabaseClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  const key = process.env.SUPABASE_SECRET_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   return createClient(url, key, {
     auth: { persistSession: false },
   })
