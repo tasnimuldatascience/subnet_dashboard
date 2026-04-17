@@ -10,6 +10,7 @@ import {
   ModelCompetition,
   FAQ,
 } from '@/components/dashboard'
+import { Fulfillment } from '@/components/dashboard/Fulfillment'
 import type {
   MetagraphData,
 } from '@/lib/types'
@@ -21,6 +22,7 @@ import {
   Search,
   HelpCircle,
   Trophy,
+  Package,
 } from 'lucide-react'
 
 // Server handles background refresh every 5 minutes via instrumentation.ts
@@ -319,7 +321,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4 md:space-y-6">
-          <TabsList className="grid w-full grid-cols-6">
+          <TabsList className="flex w-full overflow-x-auto">
             <TabsTrigger value="overview" className="flex-1 gap-1.5">
               <LayoutDashboard className="h-4 w-4 shrink-0" />
               <span className="hidden sm:inline lg:hidden text-xs whitespace-nowrap">Overview</span>
@@ -344,6 +346,11 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
               <Trophy className="h-4 w-4 shrink-0" />
               <span className="hidden sm:inline lg:hidden text-xs whitespace-nowrap">Model</span>
               <span className="hidden lg:inline text-xs whitespace-nowrap">Model Competition</span>
+            </TabsTrigger>
+            <TabsTrigger value="fulfillment" className="flex-1 gap-1.5">
+              <Package className="h-4 w-4 shrink-0" />
+              <span className="hidden sm:inline lg:hidden text-xs whitespace-nowrap">Fulfill</span>
+              <span className="hidden lg:inline text-xs whitespace-nowrap">Fulfillment</span>
             </TabsTrigger>
             <TabsTrigger value="faq" className="flex-1 gap-1.5">
               <HelpCircle className="h-4 w-4 shrink-0" />
@@ -399,6 +406,10 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
 
           <TabsContent value="model-competition" keepMounted>
             <ModelCompetition />
+          </TabsContent>
+
+          <TabsContent value="fulfillment" keepMounted>
+            <Fulfillment />
           </TabsContent>
 
           <TabsContent value="faq" keepMounted>
