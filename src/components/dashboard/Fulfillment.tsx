@@ -229,7 +229,7 @@ export function Fulfillment() {
   return (
     <div className="space-y-6">
       {/* Stats */}
-      <div className="grid gap-4 grid-cols-2 md:grid-cols-4">
+      <div className="grid gap-4 grid-cols-3">
         <Card className="bg-gradient-to-br from-green-500/10 to-emerald-500/5 border-green-500/20">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Open Requests</CardTitle>
@@ -238,17 +238,6 @@ export function Fulfillment() {
           <CardContent>
             <div className="text-2xl font-bold">{pendingRequests.length}</div>
             <p className="text-xs text-muted-foreground mt-1">awaiting submissions</p>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-gradient-to-br from-blue-500/10 to-cyan-500/5 border-blue-500/20">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Scored Leads</CardTitle>
-            <Target className="h-4 w-4 text-blue-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{data.stats.totalConsensus}</div>
-            <p className="text-xs text-muted-foreground mt-1">consensus results</p>
           </CardContent>
         </Card>
 
