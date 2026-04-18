@@ -14,8 +14,6 @@ import {
   Clock,
   Target,
   Copy,
-  ChevronDown,
-  ChevronUp,
   Recycle,
 } from 'lucide-react'
 
@@ -147,69 +145,12 @@ function formatDate(dateStr: string): string {
   })
 }
 
-function RequestCard({ request, expanded, onToggle }: { request: ActiveRequest; expanded: boolean; onToggle: () => void }) {
-  const icp = request.icp_details
-  return (
-    <div
-      className="p-3 rounded-lg bg-muted/30 border border-border/50 cursor-pointer hover:bg-muted/50 transition-colors"
-      onClick={onToggle}
-    >
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <RequestStatusBadge status={request.status} />
-          <span className="text-sm font-medium">{icp?.industry || 'Unknown'}</span>
-          {icp?.sub_industry && <span className="text-xs text-muted-foreground">/ {icp.sub_industry}</span>}
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground">{request.num_leads} leads</span>
-          {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-        </div>
-      </div>
-      {expanded && (
-        <div className="mt-3 space-y-2 text-sm">
-          {icp?.prompt && (
-            <p className="text-muted-foreground text-xs leading-relaxed">{icp.prompt}</p>
-          )}
-          <div className="flex flex-wrap gap-2 text-xs">
-            {icp?.country && <Badge variant="outline">{icp.country}</Badge>}
-            {icp?.company_stage && <Badge variant="outline">{icp.company_stage}</Badge>}
-            {icp?.employee_count && <Badge variant="outline">{icp.employee_count} employees</Badge>}
-            {icp?.target_seniority && <Badge variant="outline">{icp.target_seniority}</Badge>}
-          </div>
-          {icp?.target_roles && icp.target_roles.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              <span className="text-xs text-muted-foreground">Roles:</span>
-              {icp.target_roles.map((r, i) => <Badge key={i} variant="secondary" className="text-xs">{r}</Badge>)}
-            </div>
-          )}
-          {icp?.intent_signals && icp.intent_signals.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              <span className="text-xs text-muted-foreground">Signals:</span>
-              {icp.intent_signals.map((s, i) => <Badge key={i} variant="outline" className="text-xs">{s}</Badge>)}
-            </div>
-          )}
-          <div className="flex gap-4 text-xs text-muted-foreground pt-1">
-            {request.window_start && <span>Window: {formatDate(request.window_start)}</span>}
-            {request.window_end && <span>- {formatDate(request.window_end)}</span>}
-          </div>
-          <div className="flex items-center gap-1 text-xs">
-            <code className="bg-muted px-1.5 py-0.5 rounded font-mono text-[10px]">{request.request_id.slice(0, 8)}...</code>
-            <CopyButton text={request.request_id} />
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
 export function Fulfillment() {
   const [data, setData] = useState<FulfillmentData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [minerSearch, setMinerSearch] = useState('')
   const [searchedMiner, setSearchedMiner] = useState<string | null>(null)
-  const [expandedRequest, setExpandedRequest] = useState<string | null>(null)
-  const [expandedResult, setExpandedResult] = useState<string | null>(null)
 
   const fetchData = useCallback(async (minerHotkey?: string) => {
     try {
@@ -271,17 +212,19 @@ export function Fulfillment() {
 
   if (!data) return null
 
-  // Group consensus results by request_id
-  const resultsByRequest = new Map<string, ConsensusResult[]>()
+  // Build winners map: request_id -> winner hotkeys
+  const winnersByRequest = new Map<string, ConsensusResult[]>()
   for (const c of data.allConsensus) {
-    const list = resultsByRequest.get(c.request_id) || []
-    list.push(c)
-    resultsByRequest.set(c.request_id, list)
+    if (c.is_winner) {
+      const list = winnersByRequest.get(c.request_id) || []
+      list.push(c)
+      winnersByRequest.set(c.request_id, list)
+    }
   }
-  // Sort each group by score descending
-  for (const [, leads] of resultsByRequest) {
-    leads.sort((a, b) => b.consensus_final_score - a.consensus_final_score)
-  }
+
+  // Split requests into pending and completed
+  const pendingRequests = data.activeRequests.filter(r => ['open', 'commit_closed', 'scoring'].includes(r.status))
+  const completedRequests = data.activeRequests.filter(r => r.status === 'fulfilled')
 
   return (
     <div className="space-y-6">
@@ -293,7 +236,7 @@ export function Fulfillment() {
             <Package className="h-4 w-4 text-green-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{data.stats.activeRequestCount}</div>
+            <div className="text-2xl font-bold">{pendingRequests.length}</div>
             <p className="text-xs text-muted-foreground mt-1">awaiting submissions</p>
           </CardContent>
         </Card>
@@ -305,7 +248,7 @@ export function Fulfillment() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{data.stats.totalConsensus}</div>
-            <p className="text-xs text-muted-foreground mt-1">across {resultsByRequest.size} requests</p>
+            <p className="text-xs text-muted-foreground mt-1">consensus results</p>
           </CardContent>
         </Card>
 
@@ -334,110 +277,71 @@ export function Fulfillment() {
         </Card>
       </div>
 
-      {/* Active Requests */}
+      {/* Request History */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Package className="h-5 w-5" />
-            Active Requests
+            Request History
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="space-y-2 max-h-[400px] overflow-y-auto">
+          <div className="space-y-2 max-h-[600px] overflow-y-auto">
             {data.activeRequests.length === 0 ? (
-              <p className="text-center text-muted-foreground py-8">No active requests</p>
+              <p className="text-center text-muted-foreground py-8">No requests</p>
             ) : (
-              data.activeRequests.map((req) => (
-                <RequestCard
-                  key={req.request_id}
-                  request={req}
-                  expanded={expandedRequest === req.request_id}
-                  onToggle={() => setExpandedRequest(expandedRequest === req.request_id ? null : req.request_id)}
-                />
-              ))
-            )}
-          </div>
-        </CardContent>
-      </Card>
+              data.activeRequests.map((req) => {
+                const icp = req.icp_details
+                const winners = winnersByRequest.get(req.request_id) || []
+                const isFulfilled = req.status === 'fulfilled'
 
-      {/* Results per Request */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Target className="h-5 w-5" />
-            Results by Request
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4 max-h-[500px] overflow-y-auto">
-            {resultsByRequest.size === 0 ? (
-              <p className="text-center text-muted-foreground py-8">No scored results yet</p>
-            ) : (
-              Array.from(resultsByRequest.entries()).map(([requestId, leads]) => {
-                const req = data.requestMap[requestId]
-                const icp = req?.icp_details as IcpDetails | undefined
-                const isExpanded = expandedResult === requestId
-                const winnerCount = leads.filter(l => l.is_winner).length
                 return (
-                  <div key={requestId} className="rounded-lg border border-border/50 overflow-hidden">
-                    <div
-                      className="p-3 bg-muted/20 cursor-pointer hover:bg-muted/40 transition-colors flex items-center justify-between"
-                      onClick={() => setExpandedResult(isExpanded ? null : requestId)}
-                    >
+                  <div
+                    key={req.request_id}
+                    className={`p-3 rounded-lg border ${
+                      isFulfilled
+                        ? 'bg-green-500/5 border-green-500/20'
+                        : 'bg-muted/30 border-border/50'
+                    }`}
+                  >
+                    {/* Request header */}
+                    <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <RequestStatusBadge status={req?.status || 'unknown'} />
-                        <span className="text-sm font-medium">{icp?.industry || 'Unknown'}</span>
-                        {icp?.sub_industry && <span className="text-xs text-muted-foreground">/ {icp.sub_industry}</span>}
+                        <code className="text-xs font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded">{req.request_id.slice(0, 8)}</code>
+                        <CopyButton text={req.request_id} />
+                        <span className="text-sm font-medium">
+                          {icp?.industry || 'Unknown'}{icp?.sub_industry ? ` / ${icp.sub_industry}` : ''}
+                        </span>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <span className="text-xs text-muted-foreground">{leads.length} leads</span>
-                        {winnerCount > 0 && (
-                          <Badge variant="outline" className="text-yellow-500 border-yellow-500/30 text-xs gap-1">
-                            <Trophy className="h-3 w-3" />{winnerCount} won
-                          </Badge>
+                      <div className="flex items-center gap-2">
+                        {req.window_start && req.window_end && (
+                          <span className="text-xs text-muted-foreground">
+                            {formatDate(req.window_start)} - {formatDate(req.window_end)}
+                          </span>
                         )}
-                        {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                        <RequestStatusBadge status={req.status} />
                       </div>
                     </div>
-                    {isExpanded && (
-                      <div className="p-3 space-y-2">
-                        {leads.map((lead, idx) => (
-                          <div
-                            key={lead.consensus_id}
-                            className={`p-2.5 rounded-lg border ${
-                              lead.is_winner
-                                ? 'bg-yellow-500/5 border-yellow-500/20'
-                                : lead.consensus_final_score > 0
-                                ? 'bg-muted/30 border-border/50'
-                                : 'bg-red-500/5 border-red-500/10'
-                            }`}
-                          >
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs text-muted-foreground w-5">#{idx + 1}</span>
-                                {lead.is_winner && <Trophy className="h-3.5 w-3.5 text-yellow-500" />}
-                                <code className="text-sm font-mono">{truncateHotkey(lead.miner_hotkey)}</code>
-                                <CopyButton text={lead.miner_hotkey} />
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs text-muted-foreground">Rep: {lead.consensus_rep_score.toFixed(1)}</span>
-                                <span className={`text-sm font-mono font-bold ${lead.consensus_final_score > 0 ? 'text-green-500' : 'text-red-400'}`}>
-                                  {lead.consensus_final_score.toFixed(2)}
-                                </span>
-                              </div>
+
+                    {/* Winners for fulfilled requests */}
+                    {isFulfilled && winners.length > 0 && (
+                      <div className="mt-2 pt-2 border-t border-border/30">
+                        <div className="flex flex-wrap gap-2">
+                          {winners.map((w) => (
+                            <div key={w.consensus_id} className="flex items-center gap-1.5 bg-yellow-500/10 border border-yellow-500/20 rounded px-2 py-1">
+                              <Trophy className="h-3 w-3 text-yellow-500" />
+                              <code className="text-xs font-mono">{truncateHotkey(w.miner_hotkey)}</code>
+                              <CopyButton text={w.miner_hotkey} />
+                              <span className="text-xs font-bold text-yellow-500">{w.consensus_final_score.toFixed(2)}</span>
                             </div>
-                            <div className="flex flex-wrap gap-1.5 mt-2">
-                              <VerificationBadge label="Email" passed={lead.consensus_email_verified} />
-                              <VerificationBadge label="Person" passed={lead.consensus_person_verified} />
-                              <VerificationBadge label="Company" passed={lead.consensus_company_verified} />
-                              {lead.any_fabricated && (
-                                <Badge variant="destructive" className="text-[10px] gap-0.5">
-                                  <AlertCircle className="h-2.5 w-2.5" />Fabricated
-                                </Badge>
-                              )}
-                            </div>
-                          </div>
-                        ))}
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {isFulfilled && winners.length === 0 && (
+                      <div className="mt-2 pt-2 border-t border-border/30">
+                        <span className="text-xs text-muted-foreground">No winners</span>
                       </div>
                     )}
                   </div>
@@ -448,7 +352,7 @@ export function Fulfillment() {
         </CardContent>
       </Card>
 
-      {/* Miner Rejection Lookup */}
+      {/* Miner Score Lookup */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">

@@ -327,6 +327,16 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
               <span className="hidden sm:inline lg:hidden text-xs whitespace-nowrap">Overview</span>
               <span className="hidden lg:inline text-xs whitespace-nowrap">Overview</span>
             </TabsTrigger>
+            <TabsTrigger value="fulfillment" className="flex-1 gap-1.5">
+              <Package className="h-4 w-4 shrink-0" />
+              <span className="hidden sm:inline lg:hidden text-xs whitespace-nowrap">Fulfill</span>
+              <span className="hidden lg:inline text-xs whitespace-nowrap">Fulfillment</span>
+            </TabsTrigger>
+            <TabsTrigger value="model-competition" className="flex-1 gap-1.5">
+              <Trophy className="h-4 w-4 shrink-0" />
+              <span className="hidden sm:inline lg:hidden text-xs whitespace-nowrap">Model</span>
+              <span className="hidden lg:inline text-xs whitespace-nowrap">Model Competition</span>
+            </TabsTrigger>
             <TabsTrigger value="miner-tracker" className="flex-1 gap-1.5">
               <Pickaxe className="h-4 w-4 shrink-0" />
               <span className="hidden sm:inline lg:hidden text-xs whitespace-nowrap">Miner</span>
@@ -341,16 +351,6 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
               <Search className="h-4 w-4 shrink-0" />
               <span className="hidden sm:inline lg:hidden text-xs whitespace-nowrap">Search</span>
               <span className="hidden lg:inline text-xs whitespace-nowrap">Lead Search</span>
-            </TabsTrigger>
-            <TabsTrigger value="model-competition" className="flex-1 gap-1.5">
-              <Trophy className="h-4 w-4 shrink-0" />
-              <span className="hidden sm:inline lg:hidden text-xs whitespace-nowrap">Model</span>
-              <span className="hidden lg:inline text-xs whitespace-nowrap">Model Competition</span>
-            </TabsTrigger>
-            <TabsTrigger value="fulfillment" className="flex-1 gap-1.5">
-              <Package className="h-4 w-4 shrink-0" />
-              <span className="hidden sm:inline lg:hidden text-xs whitespace-nowrap">Fulfill</span>
-              <span className="hidden lg:inline text-xs whitespace-nowrap">Fulfillment</span>
             </TabsTrigger>
             <TabsTrigger value="faq" className="flex-1 gap-1.5">
               <HelpCircle className="h-4 w-4 shrink-0" />
