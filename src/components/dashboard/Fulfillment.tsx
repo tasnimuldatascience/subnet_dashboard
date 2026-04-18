@@ -190,7 +190,7 @@ export function Fulfillment() {
   if (loading && !data) {
     return (
       <div className="space-y-6">
-        <div className="grid gap-4 md:grid-cols-4">
+        <div className="grid gap-4 grid-cols-2 md:grid-cols-4">
           {[...Array(4)].map((_, i) => (
             <Card key={i}><CardHeader className="pb-2"><Skeleton className="h-4 w-24" /></CardHeader><CardContent><Skeleton className="h-8 w-16" /></CardContent></Card>
           ))}
@@ -229,7 +229,7 @@ export function Fulfillment() {
   return (
     <div className="space-y-6">
       {/* Stats */}
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 grid-cols-2 md:grid-cols-4">
         <Card className="bg-gradient-to-br from-green-500/10 to-emerald-500/5 border-green-500/20">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Open Requests</CardTitle>
@@ -305,15 +305,15 @@ export function Fulfillment() {
                     }`}
                   >
                     {/* Request header */}
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <code className="text-xs font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded">{req.request_id.slice(0, 8)}</code>
                         <CopyButton text={req.request_id} />
                         <span className="text-sm font-medium">
-                          {icp?.industry || 'Unknown'}{icp?.sub_industry ? ` / ${icp.sub_industry}` : ''}
+                          {icp?.industry || 'Not Specified'}{icp?.sub_industry ? ` / ${icp.sub_industry}` : ''}
                         </span>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         {req.window_start && req.window_end && (
                           <span className="text-xs text-muted-foreground">
                             {formatDate(req.window_start)} - {formatDate(req.window_end)}
@@ -328,11 +328,11 @@ export function Fulfillment() {
                       <div className="mt-2 pt-2 border-t border-border/30">
                         <div className="flex flex-wrap gap-2">
                           {winners.map((w) => (
-                            <div key={w.consensus_id} className="flex items-center gap-1.5 bg-yellow-500/10 border border-yellow-500/20 rounded px-2 py-1">
-                              <Trophy className="h-3 w-3 text-yellow-500" />
-                              <code className="text-xs font-mono">{truncateHotkey(w.miner_hotkey)}</code>
+                            <div key={w.consensus_id} className="flex items-center gap-1.5 bg-yellow-500/10 border border-yellow-500/20 rounded px-2 py-1 text-xs">
+                              <Trophy className="h-3 w-3 text-yellow-500 shrink-0" />
+                              <code className="font-mono truncate">{truncateHotkey(w.miner_hotkey)}</code>
                               <CopyButton text={w.miner_hotkey} />
-                              <span className="text-xs font-bold text-yellow-500">{w.consensus_final_score.toFixed(2)}</span>
+                              <span className="font-bold text-yellow-500 shrink-0">{w.consensus_final_score.toFixed(2)}</span>
                             </div>
                           ))}
                         </div>
@@ -410,7 +410,7 @@ export function Fulfillment() {
                             : 'bg-green-500/5 border-green-500/20'
                         }`}
                       >
-                        <div className="flex items-center justify-between">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
                           <div className="flex items-center gap-2">
                             {score.failure_reason ? (
                               <XCircle className="h-4 w-4 text-red-500 shrink-0" />
