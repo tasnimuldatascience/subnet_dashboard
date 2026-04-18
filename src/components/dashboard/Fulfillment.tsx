@@ -305,37 +305,41 @@ export function Fulfillment() {
                     }`}
                   >
                     {/* Request header */}
-                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5">
-                      <div className="flex items-center gap-2 flex-wrap">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1">
                         <code className="text-xs font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded">{req.request_id.slice(0, 8)}</code>
                         <CopyButton text={req.request_id} />
-                        <span className="text-sm font-medium">
-                          {icp?.industry || 'Not Specified'}{icp?.sub_industry ? ` / ${icp.sub_industry}` : ''}
+                      </div>
+                      <RequestStatusBadge status={req.status} />
+                    </div>
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 mt-1.5">
+                      <span className="text-sm font-medium">
+                        {[
+                          icp?.industry || 'Not Specified',
+                          icp?.sub_industry,
+                          (icp as IcpDetails & { target_role_types?: string[] })?.target_role_types?.[0],
+                        ].filter(Boolean).join(' / ')}
+                      </span>
+                      {req.window_start && req.window_end && (
+                        <span className="text-xs text-muted-foreground">
+                          {formatDate(req.window_start)} - {formatDate(req.window_end)}
                         </span>
-                      </div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {req.window_start && req.window_end && (
-                          <span className="text-xs text-muted-foreground">
-                            {formatDate(req.window_start)} - {formatDate(req.window_end)}
-                          </span>
-                        )}
-                        <RequestStatusBadge status={req.status} />
-                      </div>
+                      )}
                     </div>
 
                     {/* Winners for fulfilled requests */}
                     {isFulfilled && winners.length > 0 && (
-                      <div className="mt-2 pt-2 border-t border-border/30">
-                        <div className="flex flex-wrap gap-2">
-                          {winners.map((w) => (
-                            <div key={w.consensus_id} className="flex items-center gap-1.5 bg-yellow-500/10 border border-yellow-500/20 rounded px-2 py-1 text-xs">
-                              <Trophy className="h-3 w-3 text-yellow-500 shrink-0" />
-                              <code className="font-mono truncate">{truncateHotkey(w.miner_hotkey)}</code>
+                      <div className="mt-2 pt-2 border-t border-border/30 space-y-1.5">
+                        {winners.map((w) => (
+                          <div key={w.consensus_id} className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5">
+                              <Trophy className="h-3.5 w-3.5 text-yellow-500 shrink-0" />
+                              <code className="text-xs font-mono">{truncateHotkey(w.miner_hotkey)}</code>
                               <CopyButton text={w.miner_hotkey} />
-                              <span className="font-bold text-yellow-500 shrink-0">{w.consensus_final_score.toFixed(2)}</span>
                             </div>
-                          ))}
-                        </div>
+                            <span className="text-base font-bold text-yellow-500">{w.consensus_final_score.toFixed(2)}</span>
+                          </div>
+                        ))}
                       </div>
                     )}
 
