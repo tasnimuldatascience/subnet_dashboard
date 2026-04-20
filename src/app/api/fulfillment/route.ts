@@ -14,7 +14,7 @@ const CACHE_TTL = 60_000
 async function fetchFulfillmentData() {
   const supabase = getSupabase()
 
-  const [reqResult, countResult, consResult] = await Promise.all([
+  const [reqResult, countResult, consResult, scoresResult] = await Promise.all([
     supabase.from('fulfillment_requests')
       .select('request_id, icp_details, num_leads, window_start, window_end, status, created_at')
       .in('status', ['open', 'commit_closed', 'scoring', 'fulfilled'])
@@ -27,6 +27,10 @@ async function fetchFulfillmentData() {
       .select('consensus_id, request_id, miner_hotkey, lead_id, consensus_final_score, consensus_rep_score, consensus_tier2_passed, is_winner, reward_pct, computed_at, any_fabricated, consensus_email_verified, consensus_person_verified, consensus_company_verified')
       .order('computed_at', { ascending: false })
       .limit(500),
+    supabase.from('fulfillment_scores')
+      .select('failure_reason')
+      .order('scored_at', { ascending: false })
+      .limit(500),
   ])
 
   if (reqResult.error) console.error('[Fulfillment API] Error fetching requests:', reqResult.error)
@@ -35,8 +39,23 @@ async function fetchFulfillmentData() {
   const activeRequests = reqResult.data || []
   const allCounts = countResult.data || []
   const consensusData = consResult.data || []
+  const allScores = scoresResult.data || []
   const fulfilledCount = allCounts.filter(r => r.status === 'fulfilled').length
   const recycledCount = allCounts.filter(r => r.status === 'recycled').length
+
+  // Build rejection reason breakdown
+  const rejectionCounts: Record<string, number> = {}
+  let passedCount = 0
+  for (const s of allScores) {
+    if (s.failure_reason) {
+      rejectionCounts[s.failure_reason] = (rejectionCounts[s.failure_reason] || 0) + 1
+    } else {
+      passedCount++
+    }
+  }
+  const rejectionBreakdown = Object.entries(rejectionCounts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([reason, count]) => ({ reason, count }))
 
   // Fetch request details for consensus joins
   const requestIds = new Set(consensusData.map(c => c.request_id))
@@ -61,6 +80,8 @@ async function fetchFulfillmentData() {
     allConsensus: consensusData,
     minerScores: null,
     requestMap,
+    rejectionBreakdown,
+    scoreTotals: { passed: passedCount, failed: allScores.length - passedCount },
     stats: {
       activeRequestCount: activeRequests.filter(r => r.status !== 'fulfilled').length,
       totalConsensus: consensusData.length,

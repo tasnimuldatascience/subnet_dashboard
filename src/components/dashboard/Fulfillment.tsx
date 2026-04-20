@@ -81,6 +81,8 @@ interface FulfillmentData {
   allConsensus: ConsensusResult[]
   minerScores: MinerScore[] | null
   requestMap: Record<string, { icp_details: IcpDetails; num_leads: number; status: string }>
+  rejectionBreakdown: { reason: string; count: number }[]
+  scoreTotals: { passed: number; failed: number }
   stats: {
     activeRequestCount: number
     totalConsensus: number
@@ -88,6 +90,23 @@ interface FulfillmentData {
     fulfilledCount: number
     recycledCount: number
   }
+}
+
+const REJECTION_LABELS: Record<string, string> = {
+  seniority_mismatch: 'Seniority Mismatch',
+  insufficient_intent: 'Insufficient Intent',
+  lead_validation_stage4: 'Person Not Verified (LinkedIn)',
+  truelist_inline_verification: 'Email Verification Failed',
+  check_stage5_unified: 'Company Verification Failed',
+  industry_mismatch: 'Industry Mismatch',
+  role_mismatch: 'Role Mismatch',
+  geography_mismatch: 'Geography Mismatch',
+  duplicate_company: 'Duplicate Company',
+  fabricated_lead: 'Fabricated Lead',
+}
+
+function readableReason(reason: string): string {
+  return REJECTION_LABELS[reason] || reason.replace(/_/g, ' ')
 }
 
 function truncateHotkey(hotkey: string): string {
@@ -151,6 +170,7 @@ export function Fulfillment() {
   const [error, setError] = useState<string | null>(null)
   const [minerSearch, setMinerSearch] = useState('')
   const [searchedMiner, setSearchedMiner] = useState<string | null>(null)
+  const [expandedRequest, setExpandedRequest] = useState<string | null>(null)
 
   const fetchData = useCallback(async (minerHotkey?: string) => {
     try {
@@ -212,14 +232,15 @@ export function Fulfillment() {
 
   if (!data) return null
 
-  // Build winners map: request_id -> winner hotkeys
-  const winnersByRequest = new Map<string, ConsensusResult[]>()
+  // Build consensus map: request_id -> all leads (sorted by score desc)
+  const leadsByRequest = new Map<string, ConsensusResult[]>()
   for (const c of data.allConsensus) {
-    if (c.is_winner) {
-      const list = winnersByRequest.get(c.request_id) || []
-      list.push(c)
-      winnersByRequest.set(c.request_id, list)
-    }
+    const list = leadsByRequest.get(c.request_id) || []
+    list.push(c)
+    leadsByRequest.set(c.request_id, list)
+  }
+  for (const [, leads] of leadsByRequest) {
+    leads.sort((a, b) => b.consensus_final_score - a.consensus_final_score)
   }
 
   // Split requests into pending and completed
@@ -266,6 +287,58 @@ export function Fulfillment() {
         </Card>
       </div>
 
+      {/* Rejection Breakdown */}
+      {data.rejectionBreakdown.length > 0 && (() => {
+        const total = data.scoreTotals.passed + data.scoreTotals.failed
+        const maxCount = Math.max(...data.rejectionBreakdown.map(r => r.count))
+        return (
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2">
+                <AlertCircle className="h-5 w-5" />
+                Rejection Reasons
+              </CardTitle>
+              <div className="flex gap-4 mt-2">
+                <div className="flex items-center gap-1.5">
+                  <div className="h-2.5 w-2.5 rounded-full bg-green-500" />
+                  <span className="text-xs text-muted-foreground">{data.scoreTotals.passed} passed</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="h-2.5 w-2.5 rounded-full bg-red-500" />
+                  <span className="text-xs text-muted-foreground">{data.scoreTotals.failed} failed</span>
+                </div>
+                <span className="text-xs text-muted-foreground ml-auto">{total} total scored</span>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {data.rejectionBreakdown.map(({ reason, count }) => {
+                  const barPct = maxCount > 0 ? (count / maxCount) * 100 : 0
+                  const ofTotal = total > 0 ? ((count / total) * 100).toFixed(1) : '0'
+                  return (
+                    <div key={reason}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-medium">{readableReason(reason)}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground">{ofTotal}%</span>
+                          <span className="text-xs font-mono font-semibold w-6 text-right">{count}</span>
+                        </div>
+                      </div>
+                      <div className="bg-muted/50 rounded-full h-2.5 overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-red-500 to-red-400 transition-all duration-500"
+                          style={{ width: `${barPct}%` }}
+                        />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )
+      })()}
+
       {/* Request History */}
       <Card>
         <CardHeader>
@@ -281,8 +354,10 @@ export function Fulfillment() {
             ) : (
               data.activeRequests.map((req) => {
                 const icp = req.icp_details
-                const winners = winnersByRequest.get(req.request_id) || []
+                const leads = leadsByRequest.get(req.request_id) || []
                 const isFulfilled = req.status === 'fulfilled'
+                const isExpanded = expandedRequest === req.request_id
+                const winnerCount = leads.filter(l => l.is_winner).length
 
                 return (
                   <div
@@ -293,48 +368,64 @@ export function Fulfillment() {
                         : 'bg-muted/30 border-border/50'
                     }`}
                   >
-                    {/* Request header */}
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1">
-                        <code className="text-xs font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded">{req.request_id.slice(0, 8)}</code>
-                        <CopyButton text={req.request_id} />
+                    {/* Request header — clickable */}
+                    <div
+                      className="cursor-pointer"
+                      onClick={() => setExpandedRequest(isExpanded ? null : req.request_id)}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1">
+                          <code className="text-xs font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded">{req.request_id.slice(0, 8)}</code>
+                          <CopyButton text={req.request_id} />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {isFulfilled && winnerCount > 0 && (
+                            <span className="text-xs text-muted-foreground">{winnerCount} lead{winnerCount !== 1 ? 's' : ''} won</span>
+                          )}
+                          <RequestStatusBadge status={req.status} />
+                        </div>
                       </div>
-                      <RequestStatusBadge status={req.status} />
-                    </div>
-                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 mt-1.5">
-                      <span className="text-sm font-medium">
-                        {[
-                          icp?.industry || 'Not Specified',
-                          icp?.sub_industry,
-                          (icp as IcpDetails & { target_role_types?: string[] })?.target_role_types?.[0],
-                        ].filter(Boolean).join(' / ')}
-                      </span>
-                      {req.window_start && req.window_end && (
-                        <span className="text-xs text-muted-foreground">
-                          {formatDate(req.window_start)} - {formatDate(req.window_end)}
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 mt-1.5">
+                        <span className="text-sm font-medium">
+                          {[
+                            icp?.industry || 'Not Specified',
+                            icp?.sub_industry,
+                            (icp as IcpDetails & { target_role_types?: string[] })?.target_role_types?.[0],
+                          ].filter(Boolean).join(' / ')}
                         </span>
-                      )}
+                        {req.window_start && req.window_end && (
+                          <span className="text-xs text-muted-foreground">
+                            {formatDate(req.window_start)} - {formatDate(req.window_end)}
+                          </span>
+                        )}
+                      </div>
                     </div>
 
-                    {/* Winners for fulfilled requests */}
-                    {isFulfilled && winners.length > 0 && (
+                    {/* Expanded: show all leads */}
+                    {isExpanded && leads.length > 0 && (
                       <div className="mt-2 pt-2 border-t border-border/30 space-y-1.5">
-                        {winners.map((w) => (
-                          <div key={w.consensus_id} className="flex items-center justify-between">
-                            <div className="flex items-center gap-1.5">
-                              <Trophy className="h-3.5 w-3.5 text-yellow-500 shrink-0" />
-                              <code className="text-xs font-mono">{truncateHotkey(w.miner_hotkey)}</code>
-                              <CopyButton text={w.miner_hotkey} />
+                        {leads.map((lead, idx) => (
+                          <div
+                            key={lead.consensus_id}
+                            className={`flex items-center justify-between py-1 ${idx > 0 ? 'border-t border-border/20' : ''}`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-muted-foreground w-5">#{idx + 1}</span>
+                              {lead.is_winner && <Trophy className="h-3.5 w-3.5 text-yellow-500 shrink-0" />}
+                              <code className="text-xs font-mono">{truncateHotkey(lead.miner_hotkey)}</code>
+                              <CopyButton text={lead.miner_hotkey} />
                             </div>
-                            <span className="text-base font-bold text-yellow-500">{w.consensus_final_score.toFixed(2)}</span>
+                            <span className={`text-sm font-mono font-bold ${lead.is_winner ? 'text-yellow-500' : lead.consensus_final_score > 0 ? 'text-green-500' : 'text-red-400'}`}>
+                              {lead.consensus_final_score.toFixed(2)}
+                            </span>
                           </div>
                         ))}
                       </div>
                     )}
 
-                    {isFulfilled && winners.length === 0 && (
+                    {isExpanded && leads.length === 0 && isFulfilled && (
                       <div className="mt-2 pt-2 border-t border-border/30">
-                        <span className="text-xs text-muted-foreground">No winners</span>
+                        <span className="text-xs text-muted-foreground">No scored leads</span>
                       </div>
                     )}
                   </div>
@@ -412,7 +503,7 @@ export function Fulfillment() {
                             )}
                             <span className="text-sm font-medium">
                               {score.failure_reason
-                                ? score.failure_reason.replace(/_/g, ' ')
+                                ? readableReason(score.failure_reason)
                                 : 'Passed all tiers'}
                             </span>
                           </div>
