@@ -379,8 +379,9 @@ export function Fulfillment() {
                           <CopyButton text={req.request_id} />
                         </div>
                         <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground">{req.num_leads} leads</span>
                           {isFulfilled && winnerCount > 0 && (
-                            <span className="text-xs text-muted-foreground">{winnerCount} lead{winnerCount !== 1 ? 's' : ''} won</span>
+                            <span className="text-xs text-yellow-500">{winnerCount} won</span>
                           )}
                           <RequestStatusBadge status={req.status} />
                         </div>
