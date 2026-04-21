@@ -287,58 +287,6 @@ export function Fulfillment() {
         </Card>
       </div>
 
-      {/* Rejection Breakdown */}
-      {data.rejectionBreakdown.length > 0 && (() => {
-        const total = data.scoreTotals.passed + data.scoreTotals.failed
-        const maxCount = Math.max(...data.rejectionBreakdown.map(r => r.count))
-        return (
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2">
-                <AlertCircle className="h-5 w-5" />
-                Rejection Reasons
-              </CardTitle>
-              <div className="flex gap-4 mt-2">
-                <div className="flex items-center gap-1.5">
-                  <div className="h-2.5 w-2.5 rounded-full bg-green-500" />
-                  <span className="text-xs text-muted-foreground">{data.scoreTotals.passed} passed</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <div className="h-2.5 w-2.5 rounded-full bg-red-500" />
-                  <span className="text-xs text-muted-foreground">{data.scoreTotals.failed} failed</span>
-                </div>
-                <span className="text-xs text-muted-foreground ml-auto">{total} total scored</span>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                {data.rejectionBreakdown.map(({ reason, count }) => {
-                  const barPct = maxCount > 0 ? (count / maxCount) * 100 : 0
-                  const ofTotal = total > 0 ? ((count / total) * 100).toFixed(1) : '0'
-                  return (
-                    <div key={reason}>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-medium">{readableReason(reason)}</span>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-muted-foreground">{ofTotal}%</span>
-                          <span className="text-xs font-mono font-semibold w-6 text-right">{count}</span>
-                        </div>
-                      </div>
-                      <div className="bg-muted/50 rounded-full h-2.5 overflow-hidden">
-                        <div
-                          className="h-full rounded-full bg-gradient-to-r from-red-500 to-red-400 transition-all duration-500"
-                          style={{ width: `${barPct}%` }}
-                        />
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </CardContent>
-          </Card>
-        )
-      })()}
-
       {/* Request History */}
       <Card>
         <CardHeader>
@@ -436,6 +384,58 @@ export function Fulfillment() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Rejection Breakdown */}
+      {data.rejectionBreakdown.length > 0 && (() => {
+        const total = data.scoreTotals.passed + data.scoreTotals.failed
+        const maxCount = Math.max(...data.rejectionBreakdown.map(r => r.count))
+        return (
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2">
+                <AlertCircle className="h-5 w-5" />
+                Rejection Reasons
+              </CardTitle>
+              <div className="flex gap-4 mt-2">
+                <div className="flex items-center gap-1.5">
+                  <div className="h-2.5 w-2.5 rounded-full bg-green-500" />
+                  <span className="text-xs text-muted-foreground">{data.scoreTotals.passed} passed</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="h-2.5 w-2.5 rounded-full bg-red-500" />
+                  <span className="text-xs text-muted-foreground">{data.scoreTotals.failed} failed</span>
+                </div>
+                <span className="text-xs text-muted-foreground ml-auto">{total} total scored</span>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {data.rejectionBreakdown.map(({ reason, count }) => {
+                  const barPct = maxCount > 0 ? (count / maxCount) * 100 : 0
+                  const ofTotal = total > 0 ? ((count / total) * 100).toFixed(1) : '0'
+                  return (
+                    <div key={reason}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-medium">{readableReason(reason)}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground">{ofTotal}%</span>
+                          <span className="text-xs font-mono font-semibold w-6 text-right">{count}</span>
+                        </div>
+                      </div>
+                      <div className="bg-muted/50 rounded-full h-2.5 overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-red-500 to-red-400 transition-all duration-500"
+                          style={{ width: `${barPct}%` }}
+                        />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )
+      })()}
 
       {/* Miner Score Lookup */}
       <Card>
