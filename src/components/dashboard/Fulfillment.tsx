@@ -143,6 +143,8 @@ function VerificationBadge({ label, passed }: { label: string; passed: boolean }
 
 function RequestStatusBadge({ status }: { status: string }) {
   switch (status) {
+    case 'pending':
+      return <Badge variant="secondary" className="gap-1"><Clock className="h-3 w-3" />Pending</Badge>
     case 'open':
       return <Badge variant="default" className="gap-1 bg-green-600"><Clock className="h-3 w-3" />Open</Badge>
     case 'commit_closed':
@@ -244,7 +246,7 @@ export function Fulfillment() {
   }
 
   // Split requests into pending and completed
-  const pendingRequests = data.activeRequests.filter(r => ['open', 'commit_closed', 'scoring'].includes(r.status))
+  const pendingRequests = data.activeRequests.filter(r => ['pending', 'open', 'commit_closed', 'scoring'].includes(r.status))
   const completedRequests = data.activeRequests.filter(r => r.status === 'fulfilled')
 
   return (
