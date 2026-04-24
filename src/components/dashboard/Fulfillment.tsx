@@ -254,10 +254,14 @@ export function Fulfillment() {
   const pendingRequests = data.activeRequests.filter(r => ['pending', 'open', 'commit_closed', 'scoring'].includes(r.status))
   const completedRequests = data.activeRequests.filter(r => r.status === 'fulfilled')
 
+  // Winners from last 2 fulfilled requests only
+  const last2FulfilledIds = new Set(completedRequests.slice(0, 2).map(r => r.request_id))
+  const recentWinnerCount = data.allConsensus.filter(c => c.is_winner && last2FulfilledIds.has(c.request_id)).length
+
   return (
     <div className="space-y-6">
       {/* Stats */}
-      <div className="grid gap-4 grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-3">
         <Card className="bg-gradient-to-br from-green-500/10 to-emerald-500/5 border-green-500/20">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Open Requests</CardTitle>
@@ -275,8 +279,8 @@ export function Fulfillment() {
             <Trophy className="h-4 w-4 text-yellow-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{data.stats.totalWinners}</div>
-            <p className="text-xs text-muted-foreground mt-1">top leads selected</p>
+            <div className="text-2xl font-bold">{recentWinnerCount}</div>
+            <p className="text-xs text-muted-foreground mt-1">from last 2 requests</p>
           </CardContent>
         </Card>
 
