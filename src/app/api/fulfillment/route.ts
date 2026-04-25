@@ -14,7 +14,7 @@ const CACHE_TTL = 60_000
 async function fetchFulfillmentData() {
   const supabase = getSupabase()
 
-  const [reqResult, countResult, consResult, scoresResult] = await Promise.all([
+  const [reqResult, countResult, scoresResult] = await Promise.all([
     supabase.from('fulfillment_requests')
       .select('request_id, icp_details, num_leads, window_start, window_end, status, created_at')
       .in('status', ['pending', 'open', 'commit_closed', 'scoring', 'fulfilled'])
@@ -23,10 +23,6 @@ async function fetchFulfillmentData() {
     supabase.from('fulfillment_requests')
       .select('status')
       .limit(1000),
-    supabase.from('fulfillment_score_consensus')
-      .select('consensus_id, request_id, miner_hotkey, lead_id, consensus_final_score, consensus_rep_score, consensus_tier2_passed, is_winner, reward_pct, computed_at, any_fabricated, consensus_email_verified, consensus_person_verified, consensus_company_verified')
-      .order('computed_at', { ascending: false })
-      .limit(500),
     supabase.from('fulfillment_scores')
       .select('failure_reason')
       .order('scored_at', { ascending: false })
@@ -34,12 +30,25 @@ async function fetchFulfillmentData() {
   ])
 
   if (reqResult.error) console.error('[Fulfillment API] Error fetching requests:', reqResult.error)
-  if (consResult.error) console.error('[Fulfillment API] Error fetching consensus:', consResult.error)
 
   const activeRequests = reqResult.data || []
   const allCounts = countResult.data || []
-  const consensusData = consResult.data || []
   const allScores = scoresResult.data || []
+
+  // Fetch consensus for fulfilled requests specifically
+  const fulfilledRequestIds = activeRequests.filter(r => r.status === 'fulfilled').map(r => r.request_id)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let consensusData: any[] = []
+  if (fulfilledRequestIds.length > 0) {
+    const { data: consData, error: consError } = await supabase
+      .from('fulfillment_score_consensus')
+      .select('consensus_id, request_id, miner_hotkey, lead_id, consensus_final_score, consensus_rep_score, consensus_tier2_passed, is_winner, reward_pct, computed_at, any_fabricated, consensus_email_verified, consensus_person_verified, consensus_company_verified')
+      .in('request_id', fulfilledRequestIds)
+      .order('consensus_final_score', { ascending: false })
+      .limit(500)
+    if (consError) console.error('[Fulfillment API] Error fetching consensus:', consError)
+    consensusData = consData || []
+  }
   const fulfilledCount = allCounts.filter(r => r.status === 'fulfilled').length
   const recycledCount = allCounts.filter(r => r.status === 'recycled').length
 
