@@ -17,7 +17,7 @@ async function fetchFulfillmentData() {
   const [reqResult, countResult, scoresResult] = await Promise.all([
     supabase.from('fulfillment_requests')
       .select('request_id, icp_details, num_leads, window_start, window_end, status, created_at')
-      .in('status', ['pending', 'open', 'commit_closed', 'scoring', 'fulfilled'])
+      .in('status', ['pending', 'open', 'continued_open', 'commit_closed', 'scoring', 'fulfilled'])
       .order('created_at', { ascending: false })
       .limit(100),
     supabase.from('fulfillment_requests')

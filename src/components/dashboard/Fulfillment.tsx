@@ -152,6 +152,8 @@ function RequestStatusBadge({ status }: { status: string }) {
       return <Badge variant="secondary" className="gap-1"><Clock className="h-3 w-3" />Pending</Badge>
     case 'open':
       return <Badge variant="default" className="gap-1 bg-green-600"><Clock className="h-3 w-3" />Open</Badge>
+    case 'continued_open':
+      return <Badge variant="default" className="gap-1 bg-green-600"><Clock className="h-3 w-3" />Open</Badge>
     case 'commit_closed':
       return <Badge variant="secondary" className="gap-1"><Package className="h-3 w-3" />Commits Closed</Badge>
     case 'scoring':
@@ -251,7 +253,7 @@ export function Fulfillment() {
   }
 
   // Split requests into pending and completed
-  const pendingRequests = data.activeRequests.filter(r => ['pending', 'open', 'commit_closed', 'scoring'].includes(r.status))
+  const pendingRequests = data.activeRequests.filter(r => ['pending', 'open', 'continued_open', 'commit_closed', 'scoring'].includes(r.status))
   const completedRequests = data.activeRequests.filter(r => r.status === 'fulfilled')
 
   // Winners from last 2 fulfilled requests only
