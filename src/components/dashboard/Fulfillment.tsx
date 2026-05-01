@@ -82,6 +82,7 @@ interface FulfillmentData {
   minerScores: MinerScore[] | null
   requestMap: Record<string, { icp_details: IcpDetails; num_leads: number; status: string }>
   rejectionBreakdown: { reason: string; count: number }[]
+  leaderboard: { rank: number; hotkey: string; wins: number; bonusPct: number }[]
   scoreTotals: { passed: number; failed: number }
   stats: {
     activeRequestCount: number
@@ -101,13 +102,30 @@ const REJECTION_LABELS: Record<string, string> = {
   check_stage5_unified: 'Company Verification Failed',
   check_domain_age: 'Domain Age Check Failed',
   check_mx_record: 'MX Record Check Failed',
+  check_head_request: 'Website Head Request Failed',
   industry_mismatch: 'Industry Mismatch',
+  sub_industry_mismatch: 'Sub-Industry Mismatch',
   employee_count_mismatch: 'Employee Count Mismatch',
   country_mismatch: 'Country Mismatch',
   role_mismatch: 'Role Mismatch',
   geography_mismatch: 'Geography Mismatch',
   duplicate_company: 'Duplicate Company',
+  company_excluded: 'Company Excluded',
   fabricated_lead: 'Fabricated Lead',
+  fulfillment_company_industry_mismatch: 'Company Industry Mismatch',
+  fulfillment_company_website_mismatch: 'Company Website Mismatch',
+  fulfillment_company_name_mismatch: 'Company Name Mismatch',
+  fulfillment_company_description_invalid: 'Company Description Invalid',
+  fulfillment_company_size_mismatch: 'Company Size Mismatch',
+  fulfillment_person_company_name_mismatch: 'Person/Company Name Mismatch',
+  fulfillment_person_company_url_mismatch: 'Person/Company URL Mismatch',
+  fulfillment_person_no_company_url: 'Person No Company URL',
+  fulfillment_person_location_mismatch: 'Person Location Mismatch',
+  fulfillment_person_role_mismatch: 'Person Role Mismatch',
+  email_accept_all: 'Email Accept-All (Unverifiable)',
+  email_unknown_error: 'Email Verification Error',
+  email_failed_greylisted: 'Email Greylisted',
+  email_failed_no_mailbox: 'Email No Mailbox',
 }
 
 function readableReason(reason: string): string {
@@ -398,10 +416,69 @@ export function Fulfillment() {
         </CardContent>
       </Card>
 
+      {/* Fulfillment Leaderboard */}
+      {data.leaderboard && data.leaderboard.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Trophy className="h-5 w-5 text-yellow-500" />
+              Fulfillment Leaderboard
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {data.leaderboard.map((entry) => (
+                <div
+                  key={entry.hotkey}
+                  className={`flex items-center justify-between p-3 rounded-lg border ${
+                    entry.rank === 1 ? 'bg-yellow-500/10 border-yellow-500/30' :
+                    entry.rank === 2 ? 'bg-gray-300/10 border-gray-400/30' :
+                    entry.rank === 3 ? 'bg-amber-700/10 border-amber-700/30' :
+                    'bg-muted/30 border-border/50'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <span className={`text-lg font-bold w-8 ${
+                      entry.rank === 1 ? 'text-yellow-500' :
+                      entry.rank === 2 ? 'text-gray-400' :
+                      entry.rank === 3 ? 'text-amber-700' :
+                      'text-muted-foreground'
+                    }`}>
+                      #{entry.rank}
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      {entry.rank <= 3 && <Trophy className={`h-4 w-4 ${
+                        entry.rank === 1 ? 'text-yellow-500' :
+                        entry.rank === 2 ? 'text-gray-400' :
+                        'text-amber-700'
+                      }`} />}
+                      <code className="text-sm font-mono">{truncateHotkey(entry.hotkey)}</code>
+                      <CopyButton text={entry.hotkey} />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <div className="text-right">
+                      <span className="text-base font-bold">{entry.wins}</span>
+                      <span className="text-xs text-muted-foreground ml-1">wins</span>
+                    </div>
+                    {entry.bonusPct > 0 && (
+                      <Badge variant="outline" className="text-yellow-500 border-yellow-500/30 text-xs">
+                        +{entry.bonusPct}%
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Rejection Breakdown */}
       {data.rejectionBreakdown.length > 0 && (() => {
         const total = data.scoreTotals.passed + data.scoreTotals.failed
-        const maxCount = Math.max(...data.rejectionBreakdown.map(r => r.count))
+        const top10 = data.rejectionBreakdown.slice(0, 10)
+        const maxCount = Math.max(...top10.map(r => r.count))
         return (
           <Card>
             <CardHeader className="pb-3">
@@ -423,7 +500,7 @@ export function Fulfillment() {
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
-                {data.rejectionBreakdown.map(({ reason, count }) => {
+                {top10.map(({ reason, count }) => {
                   const barPct = maxCount > 0 ? (count / maxCount) * 100 : 0
                   const ofTotal = total > 0 ? ((count / total) * 100).toFixed(1) : '0'
                   return (

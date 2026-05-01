@@ -82,6 +82,32 @@ async function fetchFulfillmentData() {
 
   const winners = consensusData.filter(c => c.is_winner)
 
+  // Leaderboard: wins per miner, excluding banned hotkeys
+  const { data: allWinners } = await supabase
+    .from('fulfillment_score_consensus')
+    .select('miner_hotkey')
+    .eq('is_winner', true)
+
+  const { data: bannedHotkeys } = await supabase
+    .from('banned_hotkeys')
+    .select('hotkey')
+
+  const bannedSet = new Set((bannedHotkeys || []).map(b => b.hotkey))
+  const winCounts: Record<string, number> = {}
+  for (const w of allWinners || []) {
+    if (bannedSet.has(w.miner_hotkey)) continue
+    winCounts[w.miner_hotkey] = (winCounts[w.miner_hotkey] || 0) + 1
+  }
+  const leaderboard = Object.entries(winCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([hotkey, wins], idx) => ({
+      rank: idx + 1,
+      hotkey,
+      wins,
+      bonusPct: idx === 0 ? 2.5 : idx === 1 ? 1.0 : idx === 2 ? 0.5 : 0,
+    }))
+
   return {
     activeRequests,
     winners,
@@ -89,6 +115,7 @@ async function fetchFulfillmentData() {
     minerScores: null,
     requestMap,
     rejectionBreakdown,
+    leaderboard,
     scoreTotals: { passed: passedCount, failed: allScores.length - passedCount },
     stats: {
       activeRequestCount: activeRequests.filter(r => r.status !== 'fulfilled').length,
@@ -122,10 +149,10 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const result = baseData as { activeRequests: unknown[]; winners: unknown[]; allConsensus: unknown[]; minerScores: unknown; requestMap: Record<string, unknown>; stats: unknown }
-
     // Fetch miner scores separately (not cached — specific to each search)
     if (minerHotkey) {
+      const base = baseData as { activeRequests: unknown[]; winners: unknown[]; allConsensus: unknown[]; minerScores: unknown; requestMap: Record<string, unknown>; stats: unknown }
+      const result = { ...base, requestMap: { ...base.requestMap } }
       const supabase = getSupabase()
       const { data: scores, error: scoresError } = await supabase
         .from('fulfillment_scores')
@@ -157,7 +184,7 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    return NextResponse.json({ success: true, data: result })
+    return NextResponse.json({ success: true, data: baseData })
   } catch (error) {
     console.error('[Fulfillment API] Error:', error)
     return NextResponse.json({ success: false, error: 'Failed to fetch fulfillment data' }, { status: 500 })
