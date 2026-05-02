@@ -82,10 +82,10 @@ async function fetchFulfillmentData() {
 
   const winners = consensusData.filter(c => c.is_winner)
 
-  // Leaderboard: wins per miner, excluding banned hotkeys
+  // Leaderboard: wins per miner, tie-break by total_reward_pct, excluding banned
   const { data: allWinners } = await supabase
     .from('fulfillment_score_consensus')
-    .select('miner_hotkey')
+    .select('miner_hotkey, reward_pct')
     .eq('is_winner', true)
 
   const { data: bannedHotkeys } = await supabase
@@ -93,18 +93,23 @@ async function fetchFulfillmentData() {
     .select('hotkey')
 
   const bannedSet = new Set((bannedHotkeys || []).map(b => b.hotkey))
-  const winCounts: Record<string, number> = {}
+  const minerStats: Record<string, { wins: number; totalRewardPct: number }> = {}
   for (const w of allWinners || []) {
     if (bannedSet.has(w.miner_hotkey)) continue
-    winCounts[w.miner_hotkey] = (winCounts[w.miner_hotkey] || 0) + 1
+    if (!minerStats[w.miner_hotkey]) {
+      minerStats[w.miner_hotkey] = { wins: 0, totalRewardPct: 0 }
+    }
+    minerStats[w.miner_hotkey].wins++
+    minerStats[w.miner_hotkey].totalRewardPct += (w.reward_pct || 0)
   }
-  const leaderboard = Object.entries(winCounts)
-    .sort((a, b) => b[1] - a[1])
+  const leaderboard = Object.entries(minerStats)
+    .sort((a, b) => b[1].wins - a[1].wins || b[1].totalRewardPct - a[1].totalRewardPct)
     .slice(0, 5)
-    .map(([hotkey, wins], idx) => ({
+    .map(([hotkey, stats], idx) => ({
       rank: idx + 1,
       hotkey,
-      wins,
+      wins: stats.wins,
+      totalRewardPct: Math.round(stats.totalRewardPct * 10000) / 10000,
       bonusPct: idx === 0 ? 2.5 : idx === 1 ? 1.0 : idx === 2 ? 0.5 : 0,
     }))
 
