@@ -430,15 +430,15 @@ export function Fulfillment() {
               {data.leaderboard.map((entry) => (
                 <div
                   key={entry.hotkey}
-                  className={`flex items-center justify-between p-3 rounded-lg border ${
+                  className={`flex flex-col sm:flex-row sm:items-center sm:justify-between p-3 rounded-lg border gap-2 ${
                     entry.rank === 1 ? 'bg-yellow-500/10 border-yellow-500/30' :
                     entry.rank === 2 ? 'bg-gray-300/10 border-gray-400/30' :
                     entry.rank === 3 ? 'bg-amber-700/10 border-amber-700/30' :
                     'bg-muted/30 border-border/50'
                   }`}
                 >
-                  <div className="flex items-center gap-3">
-                    <span className={`text-lg font-bold w-8 ${
+                  <div className="flex items-center gap-2">
+                    <span className={`text-lg font-bold w-7 shrink-0 ${
                       entry.rank === 1 ? 'text-yellow-500' :
                       entry.rank === 2 ? 'text-gray-400' :
                       entry.rank === 3 ? 'text-amber-700' :
@@ -446,17 +446,15 @@ export function Fulfillment() {
                     }`}>
                       #{entry.rank}
                     </span>
-                    <div className="flex items-center gap-1.5">
-                      {entry.rank <= 3 && <Trophy className={`h-4 w-4 ${
-                        entry.rank === 1 ? 'text-yellow-500' :
-                        entry.rank === 2 ? 'text-gray-400' :
-                        'text-amber-700'
-                      }`} />}
-                      <code className="text-sm font-mono">{truncateHotkey(entry.hotkey)}</code>
-                      <CopyButton text={entry.hotkey} />
-                    </div>
+                    {entry.rank <= 3 && <Trophy className={`h-4 w-4 shrink-0 ${
+                      entry.rank === 1 ? 'text-yellow-500' :
+                      entry.rank === 2 ? 'text-gray-400' :
+                      'text-amber-700'
+                    }`} />}
+                    <code className="text-sm font-mono truncate">{truncateHotkey(entry.hotkey)}</code>
+                    <CopyButton text={entry.hotkey} />
                   </div>
-                  <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-3 ml-9 sm:ml-0">
                     <div className="text-right">
                       <span className="text-base font-bold">{entry.wins}</span>
                       <span className="text-xs text-muted-foreground ml-1">wins</span>
@@ -481,22 +479,11 @@ export function Fulfillment() {
         const maxCount = Math.max(...top10.map(r => r.count))
         return (
           <Card>
-            <CardHeader className="pb-3">
+            <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <AlertCircle className="h-5 w-5" />
                 Rejection Reasons
               </CardTitle>
-              <div className="flex gap-4 mt-2">
-                <div className="flex items-center gap-1.5">
-                  <div className="h-2.5 w-2.5 rounded-full bg-green-500" />
-                  <span className="text-xs text-muted-foreground">{data.scoreTotals.passed} passed</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <div className="h-2.5 w-2.5 rounded-full bg-red-500" />
-                  <span className="text-xs text-muted-foreground">{data.scoreTotals.failed} failed</span>
-                </div>
-                <span className="text-xs text-muted-foreground ml-auto">{total} total scored</span>
-              </div>
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
