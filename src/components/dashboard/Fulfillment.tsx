@@ -341,7 +341,7 @@ export function Fulfillment() {
                 return (
                   <div
                     key={req.request_id}
-                    className={`p-3 rounded-lg border ${
+                    className={`p-3 rounded-lg border overflow-hidden ${
                       isFulfilled
                         ? 'bg-green-500/5 border-green-500/20'
                         : 'bg-muted/30 border-border/50'
@@ -352,15 +352,15 @@ export function Fulfillment() {
                       className="cursor-pointer"
                       onClick={() => setExpandedRequest(isExpanded ? null : req.request_id)}
                     >
-                      <div className="flex items-center justify-between">
+                      <div className="flex flex-wrap items-center justify-between gap-1">
                         <div className="flex items-center gap-1">
-                          <code className="text-xs font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded">{req.request_id.slice(0, 8)}</code>
+                          <code className="text-[10px] font-mono text-muted-foreground bg-muted px-1 py-0.5 rounded">{req.request_id.slice(0, 8)}</code>
                           <CopyButton text={req.request_id} />
                         </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-muted-foreground">{req.num_leads} leads</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] text-muted-foreground">{req.num_leads} leads</span>
                           {isFulfilled && winnerCount > 0 && (
-                            <span className="text-xs text-yellow-500">{winnerCount} won</span>
+                            <span className="text-[10px] text-yellow-500">{winnerCount} won</span>
                           )}
                           <RequestStatusBadge status={req.status} />
                         </div>
