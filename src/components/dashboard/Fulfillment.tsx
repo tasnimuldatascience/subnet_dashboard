@@ -39,6 +39,7 @@ interface ActiveRequest {
   window_end: string | null
   status: string
   created_at: string
+  held_count?: number
 }
 
 interface ConsensusResult {
@@ -361,6 +362,9 @@ export function Fulfillment() {
                           <span className="text-[10px] text-muted-foreground">{req.num_leads} leads</span>
                           {isFulfilled && winnerCount > 0 && (
                             <span className="text-[10px] text-yellow-500">{winnerCount} won</span>
+                          )}
+                          {!isFulfilled && (req.held_count || 0) > 0 && (
+                            <span className="text-[10px] text-blue-500">{req.held_count} approved</span>
                           )}
                           <RequestStatusBadge status={req.status} />
                         </div>

@@ -35,19 +35,41 @@ async function fetchFulfillmentData() {
   const allCounts = countResult.data || []
   const allScores = scoresResult.data || []
 
-  // Fetch consensus for fulfilled requests specifically
-  const fulfilledRequestIds = activeRequests.filter(r => r.status === 'fulfilled').map(r => r.request_id)
+  // Fetch chain winners and root num_leads for ALL requests
+  const allRequestIds = activeRequests.map(r => r.request_id)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let consensusData: any[] = []
-  if (fulfilledRequestIds.length > 0) {
-    const { data: consData, error: consError } = await supabase
-      .from('fulfillment_score_consensus')
-      .select('consensus_id, request_id, miner_hotkey, lead_id, consensus_final_score, consensus_rep_score, consensus_tier2_passed, is_winner, reward_pct, computed_at, any_fabricated, consensus_email_verified, consensus_person_verified, consensus_company_verified')
-      .in('request_id', fulfilledRequestIds)
-      .order('consensus_final_score', { ascending: false })
-      .limit(500)
-    if (consError) console.error('[Fulfillment API] Error fetching consensus:', consError)
-    consensusData = consData || []
+  if (allRequestIds.length > 0) {
+    // Fetch chain winners + root num_leads + held counts for all requests in parallel
+    const [chainResults, rootLeadsResults, heldResults] = await Promise.all([
+      Promise.all(allRequestIds.map(rid =>
+        supabase.rpc('get_chain_winners', { fulfilled_id: rid })
+      )),
+      Promise.all(allRequestIds.map(rid =>
+        supabase.rpc('get_chain_root_num_leads', { fulfilled_id: rid })
+      )),
+      Promise.all(allRequestIds.map(rid =>
+        supabase.rpc('get_chain_held_count', { target_id: rid })
+      )),
+    ])
+
+    // Merge chain winners, tagged to their display request
+    for (let i = 0; i < chainResults.length; i++) {
+      const { data, error } = chainResults[i]
+      if (error) console.error(`[Fulfillment API] Chain winners error for ${allRequestIds[i]}:`, error)
+      for (const row of data || []) {
+        consensusData.push({ ...row, request_id: allRequestIds[i] })
+      }
+    }
+
+    // Override num_leads with chain root value and add held count
+    for (let i = 0; i < allRequestIds.length; i++) {
+      const req = activeRequests.find(r => r.request_id === allRequestIds[i])
+      if (req) {
+        if (rootLeadsResults[i].data != null) req.num_leads = rootLeadsResults[i].data
+        ;(req as Record<string, unknown>).held_count = heldResults[i].data || 0
+      }
+    }
   }
   const fulfilledCount = allCounts.filter(r => r.status === 'fulfilled').length
   const recycledCount = allCounts.filter(r => r.status === 'recycled').length
