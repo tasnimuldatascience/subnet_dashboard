@@ -183,7 +183,7 @@ export async function GET(request: NextRequest) {
       const supabase = getSupabase()
       const { data: scores, error: scoresError } = await supabase
         .from('fulfillment_scores')
-        .select('score_id, request_id, lead_id, miner_hotkey, final_score, failure_reason, tier1_passed, tier2_passed, rep_score, scored_at, all_fabricated, email_verified, person_verified, company_verified')
+        .select('score_id, request_id, lead_id, miner_hotkey, final_score, failure_reason, failure_detail, tier1_passed, tier2_passed, rep_score, scored_at, all_fabricated, email_verified, person_verified, company_verified')
         .eq('miner_hotkey', minerHotkey)
         .order('scored_at', { ascending: false })
         .limit(200)

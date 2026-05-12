@@ -66,6 +66,7 @@ interface MinerScore {
   miner_hotkey: string
   final_score: number
   failure_reason: string | null
+  failure_detail: string | null
   tier1_passed: boolean
   tier2_passed: boolean
   rep_score: number
@@ -199,6 +200,7 @@ export function Fulfillment() {
   const [minerSearch, setMinerSearch] = useState('')
   const [searchedMiner, setSearchedMiner] = useState<string | null>(null)
   const [expandedRequest, setExpandedRequest] = useState<string | null>(null)
+  const [expandedScore, setExpandedScore] = useState<string | null>(null)
 
   const fetchData = useCallback(async (minerHotkey?: string) => {
     try {
@@ -574,7 +576,8 @@ export function Fulfillment() {
                           score.failure_reason
                             ? 'bg-red-500/5 border-red-500/20'
                             : 'bg-green-500/5 border-green-500/20'
-                        }`}
+                        } ${score.failure_detail ? 'cursor-pointer' : ''}`}
+                        onClick={() => score.failure_detail && setExpandedScore(expandedScore === score.score_id ? null : score.score_id)}
                       >
                         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
                           <div className="flex items-center gap-2">
@@ -593,11 +596,17 @@ export function Fulfillment() {
                             {score.final_score.toFixed(2)}
                           </span>
                         </div>
+                        {expandedScore === score.score_id && score.failure_detail && (
+                          <div className="mt-2 p-2 bg-muted/50 rounded text-xs text-muted-foreground border-l-2 border-red-400">
+                            {score.failure_detail}
+                          </div>
+                        )}
                         <div className="flex flex-wrap gap-2 mt-2 text-xs text-muted-foreground">
                           {icp?.industry && <span>{icp.industry}</span>}
                           {icp?.country && <span>| {icp.country}</span>}
                           <span>| Rep: {score.rep_score.toFixed(1)}</span>
                           <span>| {formatDate(score.scored_at)}</span>
+                          {score.failure_detail && <span className="text-blue-400">| tap for details</span>}
                         </div>
                         <div className="flex flex-wrap gap-1.5 mt-2">
                           {score.tier1_passed ? (
