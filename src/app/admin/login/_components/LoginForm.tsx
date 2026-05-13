@@ -33,28 +33,15 @@ export function LoginForm() {
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
-    e.stopPropagation()
-    if (submitting) return
-    if (!username || !password) {
-      setError('Enter both username and password.')
-      return
-    }
     setSubmitting(true)
     setError(null)
-    // Echo to console too so the operator can see what's happening in
-    // devtools when something goes wrong end-to-end.
-    // eslint-disable-next-line no-console
-    console.log('[login] posting to /api/admin/session', { next })
     try {
       const res = await fetch('/api/admin/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password, next }),
         cache: 'no-store',
-        credentials: 'same-origin',
       })
-      // eslint-disable-next-line no-console
-      console.log('[login] response', res.status)
       if (res.status === 401) {
         setError('Incorrect username or password.')
         setSubmitting(false)
@@ -62,7 +49,7 @@ export function LoginForm() {
       }
       if (!res.ok) {
         const body = await res.text()
-        setError(`Sign-in failed (${res.status}): ${body.slice(0, 200)}`)
+        setError(`Sign-in failed (${res.status}): ${body.slice(0, 120)}`)
         setSubmitting(false)
         return
       }
@@ -72,12 +59,8 @@ export function LoginForm() {
       // would not re-issue the initial /admin RSC fetch with the
       // cookie set in this response cycle.
       const target = body?.next || next
-      // eslint-disable-next-line no-console
-      console.log('[login] success, navigating to', target)
       window.location.assign(target)
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error('[login] network error', err)
       setError(
         err instanceof Error
           ? `Network error: ${err.message}`
@@ -118,16 +101,6 @@ export function LoginForm() {
 
       <form
         onSubmit={onSubmit}
-        // action="#" + method="post" together are a hard guarantee
-        // that a native submit (e.g. if hydration hasn't run yet,
-        // or if onSubmit somehow throws synchronously) does NOT
-        // reload the page with form data in the URL. Without this
-        // belt-and-suspenders an early Enter keypress on the
-        // password field would do a GET to the same URL with no
-        // fields (no name= attrs) and look like the form "reset".
-        action="#"
-        method="post"
-        noValidate
         className="rounded-2xl border p-6 space-y-4"
         style={{
           borderColor: 'var(--surface-border)',
@@ -150,7 +123,6 @@ export function LoginForm() {
             <input
               ref={userRef}
               id="login-user"
-              name="username"
               type="text"
               autoComplete="username"
               autoCapitalize="off"
@@ -183,7 +155,6 @@ export function LoginForm() {
             />
             <input
               id="login-pass"
-              name="password"
               type="password"
               autoComplete="current-password"
               value={password}
@@ -213,11 +184,7 @@ export function LoginForm() {
 
         <button
           type="submit"
-          // Never disable on empty inputs — that prevents Enter-key
-          // submission and confuses operators who rely on tab+enter.
-          // The onSubmit handler validates and shows an inline error
-          // if a field is blank.
-          disabled={submitting}
+          disabled={submitting || !username || !password}
           className="w-full inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2.5 text-sm font-medium transition-all border disabled:opacity-50 disabled:cursor-not-allowed"
           style={{
             borderColor: 'rgba(201, 169, 110, 0.45)',
