@@ -11,10 +11,10 @@ async function fetchDetail(requestId: string): Promise<RequestDetailPayload | nu
   const host = h.get('x-forwarded-host') ?? h.get('host')
   const proto = h.get('x-forwarded-proto') ?? 'https'
   const base = host ? `${proto}://${host}` : ''
-  const auth = h.get('authorization')
+  const cookie = h.get('cookie')
   const res = await fetch(`${base}/api/admin/requests/${requestId}`, {
     cache: 'no-store',
-    headers: auth ? { authorization: auth } : undefined,
+    headers: cookie ? { cookie } : undefined,
   })
   if (res.status === 404) return null
   if (!res.ok) {
