@@ -11,7 +11,6 @@ import {
   MapPin,
   Building2,
   User,
-  Sparkles,
   ChevronDown,
   ChevronRight,
   Crown,
@@ -24,8 +23,6 @@ import { cn } from '@/lib/utils'
 import {
   formatDateTime,
   formatRelative,
-  formatScore,
-  formatRewardPct,
   statusLabel,
   statusTone,
   asList,
@@ -303,17 +300,13 @@ function Stat({
 // Winners tab
 // =================================================================
 //
-// Layout, top to bottom:
-//   1. WinnersTable           — Excel-style table, 18 columns,
-//                               one row per winning lead
-//   2. PerLeadIntentSignals   — for each lead, the verified
-//                               intent signals it earned credit
-//                               for, with full evidence (URL,
-//                               date, snippet, matched ICP signal)
-//
-// The table is the scannable overview ("show me everyone you
-// delivered"); the per-lead block is the evidence dive ("how do
-// I justify each one to the client").
+// Single component now — the Excel-style table contains both the
+// scannable lead columns AND the per-signal Intent Signals column
+// (last in the row, wide cell with stacked signal cards). Previously
+// the per-signal evidence rendered as a separate "Verified intent
+// signals · per lead" section beneath the table; operator feedback
+// was that having the evidence inside the row makes it easier to
+// audit a lead without scrolling back and forth.
 
 function WinnersList({ winners }: { winners: AdminWinningLead[] }) {
   if (winners.length === 0) {
@@ -331,12 +324,7 @@ function WinnersList({ winners }: { winners: AdminWinningLead[] }) {
       </div>
     )
   }
-  return (
-    <div className="space-y-8">
-      <WinnersTable winners={winners} />
-      <PerLeadIntentSignals winners={winners} />
-    </div>
-  )
+  return <WinnersTable winners={winners} />
 }
 
 // -----------------------------------------------------------------
@@ -515,6 +503,32 @@ const TABLE_COLUMNS: TableCol[] = [
     minW: 'min-w-[140px]',
     cell: (w) => dashIfEmpty(w.lead?.phone ?? null),
   },
+  {
+    // Per-signal evidence used to render in a separate card section
+    // below the table. Operator wanted it inline with the row so each
+    // winning lead is fully auditable on a single horizontal scroll.
+    // The cell stacks one signal block per credited signal, each with:
+    //   - source pill + date + score
+    //   - matched ICP signal label
+    //   - LLM-written per-signal description (or raw description as
+    //     fallback before migration 16 / before backfill runs)
+    //   - expandable raw evidence snippet
+    //   - clickable source URL
+    key: 'intent_signals',
+    label: 'Intent Signals',
+    minW: 'min-w-[440px]',
+    longForm: true,
+    cell: (w) => {
+      const credited = creditedSignals(w.consensus.intent_signal_mapping)
+      if (credited.length === 0) return dashIfEmpty(null)
+      return (
+        <IntentSignalsList
+          mapping={w.consensus.intent_signal_mapping}
+          breakdown={w.consensus.intent_breakdown}
+        />
+      )
+    },
+  },
 ]
 
 function WinnersTable({ winners }: { winners: AdminWinningLead[] }) {
@@ -626,89 +640,14 @@ function WinnersTable({ winners }: { winners: AdminWinningLead[] }) {
 // -----------------------------------------------------------------
 // PerLeadIntentSignals
 // -----------------------------------------------------------------
-// One section per winning lead, each containing the verified intent
-// signals that earned credit for that lead. Header surfaces the
-// business + contact name + final score so the operator can match
-// rows in the table above to evidence below.
-
-function PerLeadIntentSignals({ winners }: { winners: AdminWinningLead[] }) {
-  const withSignals = winners.filter(
-    (w) => creditedSignals(w.consensus.intent_signal_mapping).length > 0,
-  )
-  if (withSignals.length === 0) return null
-  return (
-    <section>
-      <div
-        className="text-[10px] uppercase tracking-[0.18em] mb-4 flex items-center gap-2"
-        style={{ color: 'var(--text-tertiary)' }}
-      >
-        <Sparkles className="h-3 w-3 text-gold" />
-        Verified intent signals · per lead
-      </div>
-      <div className="space-y-5">
-        {withSignals.map((w, idx) => (
-          <div
-            key={w.consensus.consensus_id}
-            className="rounded-xl border"
-            style={{
-              borderColor: 'var(--surface-border)',
-              background: 'var(--surface)',
-            }}
-          >
-            <header
-              className="px-5 py-3.5 border-b flex items-baseline gap-3 flex-wrap"
-              style={{ borderColor: 'var(--surface-border)' }}
-            >
-              <span
-                className="inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] tabular-nums border"
-                style={{
-                  borderColor: 'var(--surface-border-strong)',
-                  background: 'var(--surface-elevated)',
-                  color: 'var(--text-secondary)',
-                }}
-              >
-                {idx + 1}
-              </span>
-              <h3 className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-                {w.lead?.business || (
-                  <span style={{ color: 'var(--text-tertiary)' }}>(no business)</span>
-                )}
-              </h3>
-              {w.lead?.full_name && (
-                <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-                  {w.lead.full_name}
-                  {w.lead.role ? (
-                    <span style={{ color: 'var(--text-tertiary)' }}> · {w.lead.role}</span>
-                  ) : null}
-                </span>
-              )}
-              <div className="ml-auto flex items-center gap-4">
-                <span className="text-[11px] tabular-nums" style={{ color: 'var(--text-secondary)' }}>
-                  <span style={{ color: 'var(--text-tertiary)' }}>score</span>{' '}
-                  {formatScore(w.consensus.consensus_final_score)}
-                </span>
-                <span className="text-[11px] tabular-nums text-gold">
-                  <span style={{ color: 'var(--text-tertiary)' }}>reward</span>{' '}
-                  {formatRewardPct(w.consensus.reward_pct)}
-                </span>
-              </div>
-            </header>
-            <div className="p-5">
-              <IntentSignalsList
-                mapping={w.consensus.intent_signal_mapping}
-                breakdown={w.consensus.intent_breakdown}
-              />
-            </div>
-          </div>
-        ))}
-      </div>
-    </section>
-  )
-}
-
-// IntentSignalsList: replaces the older FieldGroup-wrapped
-// IntentSignalsPanel since PerLeadIntentSignals already provides
-// its own card chrome and header.
+// IntentSignalsList
+// -----------------------------------------------------------------
+// Renders the credited intent signals for a single winning lead as a
+// stack of compact cards. Used inside the "Intent Signals" column of
+// WinnersTable so the evidence ships next to the lead row instead of
+// in a separate section below the table. Returns null when no signal
+// earned credit (the calling cell substitutes a dash so the column
+// still renders consistently).
 function IntentSignalsList({
   mapping,
   breakdown,
