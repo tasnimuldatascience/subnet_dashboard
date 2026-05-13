@@ -1,27 +1,10 @@
-import { headers } from 'next/headers'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { ChevronLeft } from 'lucide-react'
 import { AdminRequestDetail, RequestDetailPayload } from './_components/AdminRequestDetail'
+import { getRequestDetail } from '@/lib/admin-data'
 
 export const dynamic = 'force-dynamic'
-
-async function fetchDetail(requestId: string): Promise<RequestDetailPayload | null> {
-  const h = await headers()
-  const host = h.get('x-forwarded-host') ?? h.get('host')
-  const proto = h.get('x-forwarded-proto') ?? 'https'
-  const base = host ? `${proto}://${host}` : ''
-  const cookie = h.get('cookie')
-  const res = await fetch(`${base}/api/admin/requests/${requestId}`, {
-    cache: 'no-store',
-    headers: cookie ? { cookie } : undefined,
-  })
-  if (res.status === 404) return null
-  if (!res.ok) {
-    throw new Error(`API returned ${res.status}: ${await res.text()}`)
-  }
-  return (await res.json()) as RequestDetailPayload
-}
 
 export default async function AdminRequestDetailPage({
   params,
@@ -32,10 +15,15 @@ export default async function AdminRequestDetailPage({
 
   let payload: RequestDetailPayload | null = null
   let error: string | null = null
+  // Call the Supabase data layer directly. See note in /admin/page.tsx.
   try {
-    payload = await fetchDetail(request_id)
+    payload = (await getRequestDetail(request_id)) as RequestDetailPayload | null
   } catch (e) {
     error = e instanceof Error ? e.message : 'Unknown error'
+    console.error(
+      `[admin] /admin/requests/${request_id} page failed to load detail:`,
+      e,
+    )
   }
   if (!payload && !error) {
     notFound()

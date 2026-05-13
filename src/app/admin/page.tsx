@@ -1,37 +1,23 @@
-import { headers } from 'next/headers'
 import { AdminRequestList, ChainSummary } from './_components/AdminRequestList'
+import { listChains } from '@/lib/admin-data'
 
 export const dynamic = 'force-dynamic'
-
-async function fetchChains(): Promise<ChainSummary[]> {
-  // Build the absolute URL so this works on Vercel, on EC2 behind
-  // nginx, or in dev. Next 15 makes headers() async, so we await it.
-  const h = await headers()
-  const host = h.get('x-forwarded-host') ?? h.get('host')
-  const proto = h.get('x-forwarded-proto') ?? 'https'
-  const base = host ? `${proto}://${host}` : ''
-  // Forward the operator's session cookie so the API call re-passes
-  // the auth gate. Without this, the server-side fetch would hit
-  // /api/admin and bounce off middleware with 401.
-  const cookie = h.get('cookie')
-  const res = await fetch(`${base}/api/admin/requests`, {
-    cache: 'no-store',
-    headers: cookie ? { cookie } : undefined,
-  })
-  if (!res.ok) {
-    throw new Error(`API returned ${res.status}: ${await res.text()}`)
-  }
-  const body = await res.json()
-  return body.chains ?? []
-}
 
 export default async function AdminLandingPage() {
   let chains: ChainSummary[] = []
   let error: string | null = null
+  // Call the Supabase data layer directly — no HTTP round-trip, no
+  // cookie forwarding, no host-resolution. Errors here surface as a
+  // styled error block, not a raw 500. The /api/admin/requests
+  // route is still available for any future client-side use.
   try {
-    chains = await fetchChains()
+    const result = await listChains()
+    chains = result.chains
   } catch (e) {
     error = e instanceof Error ? e.message : 'Unknown error loading requests'
+    // Surface to Vercel/EC2 logs so the operator can debug from
+    // their deployment logs without hitting the page repeatedly.
+    console.error('[admin] /admin page failed to load chains:', e)
   }
 
   return <AdminRequestList chains={chains} error={error} />
