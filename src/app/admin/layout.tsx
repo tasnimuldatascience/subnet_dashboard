@@ -1,7 +1,6 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { Shield } from 'lucide-react'
-import { LogoutButton } from './_components/LogoutButton'
 
 export const metadata: Metadata = {
   title: 'Admin',
@@ -11,17 +10,9 @@ export const metadata: Metadata = {
 /**
  * Admin shell. Renders a slim masthead with the brand mark, an
  * "Admin" affordance so operators always know they're on the
- * protected surface, a link back to the public dashboard, and a
- * logout button.
- *
- * The /admin/login route reuses this layout too. The masthead is
- * harmless on the login screen — same brand, no Logout button
- * shown because we only render it when an operator is signed in.
- *
- * We can't easily know "is signed in?" from a server component
- * cheaply without re-validating the cookie, so we let LogoutButton
- * suppress itself on the login route (it's a client component
- * that reads usePathname).
+ * protected surface, and a single back-to-dashboard link. The
+ * editorial dark canvas and warm gold accent match the public
+ * dashboard so the surface feels native.
  */
 export default function AdminLayout({
   children,
@@ -69,18 +60,19 @@ export default function AdminLayout({
             </Link>
           </div>
           <div className="flex items-center gap-4">
-            <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] bg-gold-soft border-gold-soft border text-gold">
+            <span
+              className="hidden sm:inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] bg-gold-soft border-gold-soft border text-gold"
+            >
               <span className="dot-gold inline-block h-1 w-1 rounded-full live-pulse" />
               Internal only
             </span>
             <Link
               href="/"
-              className="text-xs transition-colors hover:text-gold"
+              className="text-xs transition-colors"
               style={{ color: 'var(--text-secondary)' }}
             >
               Public dashboard →
             </Link>
-            <LogoutButton />
           </div>
         </div>
       </header>

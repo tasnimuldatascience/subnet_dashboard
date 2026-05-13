@@ -10,13 +10,13 @@ async function fetchChains(): Promise<ChainSummary[]> {
   const host = h.get('x-forwarded-host') ?? h.get('host')
   const proto = h.get('x-forwarded-proto') ?? 'https'
   const base = host ? `${proto}://${host}` : ''
-  // Forward the operator's session cookie so the API call re-passes
-  // the auth gate. Without this, the server-side fetch would hit
-  // /api/admin and bounce off middleware with 401.
-  const cookie = h.get('cookie')
+  // Forward the operator's Authorization header so the API call
+  // re-passes the basic-auth gate. Without this, the server-side
+  // fetch would hit /api/admin and bounce off middleware with 401.
+  const auth = h.get('authorization')
   const res = await fetch(`${base}/api/admin/requests`, {
     cache: 'no-store',
-    headers: cookie ? { cookie } : undefined,
+    headers: auth ? { authorization: auth } : undefined,
   })
   if (!res.ok) {
     throw new Error(`API returned ${res.status}: ${await res.text()}`)
