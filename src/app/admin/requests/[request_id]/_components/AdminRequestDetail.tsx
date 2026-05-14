@@ -18,6 +18,11 @@ import {
   Clock,
   RotateCw,
   Target,
+  Sparkles,
+  AlertTriangle,
+  ShieldCheck,
+  Loader2,
+  RefreshCw,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -36,6 +41,10 @@ import type {
   IcpDetails,
   IntentSignalMappingEntry,
   IntentBreakdown,
+  DeepResearchState,
+  DeepResearchLead,
+  DeepResearchSummary,
+  DeepResearchFinalStatus,
 } from '@/lib/admin-supabase'
 
 export interface RequestDetailPayload {
@@ -49,11 +58,17 @@ export interface RequestDetailPayload {
   target_num_leads: number
   delivered_count: number
   all_submissions_count: number
+  deep_research?: DeepResearchState
 }
 
-type TabKey = 'winners' | 'icp' | 'chain'
+type TabKey = 'deep_research' | 'winners' | 'icp' | 'chain'
 
+// Order matters — left-to-right tab order is the public contract.
+// Deep Research sits FIRST because the whole point is to QA before
+// delivery: an operator should see the verdict before scrolling
+// through the raw leads.
 const TABS: { key: TabKey; label: string }[] = [
+  { key: 'deep_research', label: 'Deep Research Analysis' },
   { key: 'winners', label: 'Winning leads' },
   { key: 'icp', label: 'Client ICP' },
   { key: 'chain', label: 'Chain history' },
@@ -66,11 +81,27 @@ export function AdminRequestDetail({
   requestId: string
   payload: RequestDetailPayload
 }) {
-  const [tab, setTab] = useState<TabKey>('winners')
+  // Default landing tab: Deep Research IF the chain has reached the QA
+  // pass (any non-null deep_research_status), otherwise Winning leads.
+  // This keeps the new tab in operators' face once a chain is
+  // fulfilled, without disrupting the existing flow for in-flight
+  // chains where the analysis isn't yet meaningful.
+  const initialTab: TabKey =
+    payload.deep_research?.status != null ? 'deep_research' : 'winners'
+  const [tab, setTab] = useState<TabKey>(initialTab)
 
   const { chain, icp, winners, target_num_leads, delivered_count } = payload
   const root = chain.root
   const leaf = chain.leaf
+  const deepResearch: DeepResearchState =
+    payload.deep_research ?? {
+      status: null,
+      attempts: 0,
+      error: null,
+      started_at: null,
+      generated_at: null,
+      analysis: null,
+    }
 
   const tone = statusTone(leaf.status)
   const isFulfilled = tone === 'fulfilled'
@@ -208,7 +239,7 @@ export function AdminRequestDetail({
       </section>
 
       {/* Tabs */}
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-1 flex-wrap">
         {TABS.map((t) => (
           <button
             key={t.key}
@@ -220,7 +251,13 @@ export function AdminRequestDetail({
                 : 'border-white/[0.06] hover-bg-warm text-white/55',
             )}
           >
+            {t.key === 'deep_research' && (
+              <Sparkles className="h-3 w-3 flex-shrink-0" />
+            )}
             {t.label}
+            {t.key === 'deep_research' && (
+              <DeepResearchTabBadge state={deepResearch} />
+            )}
             {t.key === 'winners' && (
               <span className="tabular-nums text-[10px] opacity-70">
                 {winners.length}
@@ -236,10 +273,763 @@ export function AdminRequestDetail({
       </div>
 
       {/* Tab body */}
+      {tab === 'deep_research' && (
+        <DeepResearchPanel
+          state={deepResearch}
+          requestId={requestId}
+          chainStatus={leaf.status}
+        />
+      )}
       {tab === 'winners' && <WinnersList winners={winners} />}
       {tab === 'icp' && <IcpPanel icp={icp} />}
       {tab === 'chain' && <ChainPanel cycles={chain.cycles} />}
     </div>
+  )
+}
+
+// =================================================================
+// Deep Research Analysis tab
+// =================================================================
+//
+// Renders the gateway's Sonar Deep Research QA pass for the chain.
+// Four possible states (driven by ``state.status``):
+//
+//   null              -> chain not yet fulfilled; show coachmark
+//   pending / in_progress -> show spinner + status text
+//   completed         -> show summary card + per-lead table
+//   failed            -> show error + retry button
+//
+// The "Re-run analysis" button POSTs to
+// /api/admin/requests/[id]/deep-research/rerun which resets the row
+// to 'pending'. The gateway sweep picks it up on its next tick
+// (~30s). We auto-refresh the page after a short delay so the
+// operator sees the new state without manual reload.
+
+function DeepResearchTabBadge({ state }: { state: DeepResearchState }) {
+  if (state.status === 'completed' && state.analysis) {
+    const ready = state.analysis.summary?.client_ready ?? 0
+    const total = state.analysis.summary?.total_reviewed ?? 0
+    return (
+      <span className="tabular-nums text-[10px] opacity-70">
+        {ready}/{total}
+      </span>
+    )
+  }
+  if (state.status === 'pending' || state.status === 'in_progress') {
+    return <Loader2 className="h-3 w-3 animate-spin opacity-70" />
+  }
+  if (state.status === 'failed') {
+    return (
+      <AlertTriangle
+        className="h-3 w-3"
+        style={{ color: 'var(--burgundy)' }}
+      />
+    )
+  }
+  return null
+}
+
+function DeepResearchPanel({
+  state,
+  requestId,
+  chainStatus,
+}: {
+  state: DeepResearchState
+  requestId: string
+  chainStatus: string
+}) {
+  const [rerunInFlight, setRerunInFlight] = useState(false)
+  const [rerunError, setRerunError] = useState<string | null>(null)
+
+  async function triggerRerun() {
+    setRerunInFlight(true)
+    setRerunError(null)
+    try {
+      const res = await fetch(
+        `/api/admin/requests/${requestId}/deep-research/rerun`,
+        { method: 'POST' },
+      )
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        setRerunError(body.error || `Server returned ${res.status}`)
+        setRerunInFlight(false)
+        return
+      }
+      // Give the gateway sweep one tick (~30s) to claim the row,
+      // then hard-reload so the page picks up the new state. We
+      // could poll the detail endpoint but a single reload is
+      // simpler and matches operator expectations.
+      setTimeout(() => {
+        window.location.reload()
+      }, 1500)
+    } catch (e) {
+      setRerunError(e instanceof Error ? e.message : 'Unknown error')
+      setRerunInFlight(false)
+    }
+  }
+
+  // State A: chain not yet fulfilled — coachmark.
+  if (state.status == null) {
+    return (
+      <div
+        className="rounded-xl border p-10 text-center space-y-3"
+        style={{
+          borderColor: 'var(--surface-border)',
+          background: 'var(--surface)',
+        }}
+      >
+        <Sparkles
+          className="h-6 w-6 mx-auto"
+          style={{ color: 'var(--text-tertiary)' }}
+        />
+        <div className="space-y-1">
+          <div
+            className="text-sm font-medium"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            Analysis runs automatically once the chain is fulfilled
+          </div>
+          <div
+            className="text-xs max-w-md mx-auto"
+            style={{ color: 'var(--text-tertiary)' }}
+          >
+            Once every winning lead is in, Perplexity Sonar Deep Research
+            verifies each row against the live web and flags anything
+            inaccurate, stale, off-ICP, or unsafe to deliver.
+          </div>
+          <div
+            className="text-[11px] mt-2"
+            style={{ color: 'var(--text-tertiary)' }}
+          >
+            Current chain status:{' '}
+            <span style={{ color: 'var(--text-secondary)' }}>
+              {chainStatus}
+            </span>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // State B: in flight (pending / in_progress).
+  if (state.status === 'pending' || state.status === 'in_progress') {
+    const label =
+      state.status === 'in_progress'
+        ? 'Running deep research now…'
+        : 'Queued for the next gateway tick…'
+    return (
+      <div
+        className="rounded-xl border p-10 text-center space-y-3"
+        style={{
+          borderColor: 'var(--surface-border)',
+          background: 'var(--surface)',
+        }}
+      >
+        <Loader2
+          className="h-6 w-6 mx-auto animate-spin"
+          style={{ color: 'var(--brand)' }}
+        />
+        <div className="space-y-1">
+          <div
+            className="text-sm font-medium"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            {label}
+          </div>
+          <div
+            className="text-xs max-w-md mx-auto"
+            style={{ color: 'var(--text-tertiary)' }}
+          >
+            Sonar Deep Research takes 30 to 90 seconds. The page will
+            update once results are in — refresh shortly.
+          </div>
+          {state.attempts > 1 && (
+            <div
+              className="text-[11px] mt-2"
+              style={{ color: 'var(--text-tertiary)' }}
+            >
+              Attempt {state.attempts} of 3
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // State C: failed — retry button.
+  if (state.status === 'failed') {
+    return (
+      <div
+        className="rounded-xl border p-8 space-y-4"
+        style={{
+          background: 'rgba(168, 116, 111, 0.08)',
+          borderColor: 'rgba(168, 116, 111, 0.30)',
+        }}
+      >
+        <div className="flex items-start gap-3">
+          <AlertTriangle
+            className="h-5 w-5 flex-shrink-0 mt-0.5"
+            style={{ color: 'var(--burgundy)' }}
+          />
+          <div className="flex-1 min-w-0">
+            <div
+              className="text-sm font-medium mb-1"
+              style={{ color: 'var(--text-primary)' }}
+            >
+              Deep research analysis failed after 3 attempts
+            </div>
+            {state.error && (
+              <div
+                className="text-xs font-mono leading-relaxed"
+                style={{ color: 'var(--text-secondary)' }}
+              >
+                {state.error}
+              </div>
+            )}
+            {rerunError && (
+              <div
+                className="text-xs mt-2"
+                style={{ color: 'var(--burgundy)' }}
+              >
+                Re-run failed: {rerunError}
+              </div>
+            )}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={triggerRerun}
+          disabled={rerunInFlight}
+          className="inline-flex items-center gap-2 rounded-md px-3.5 py-2 text-xs font-medium border transition-colors disabled:opacity-50"
+          style={{
+            borderColor: 'rgba(201, 169, 110, 0.35)',
+            background: 'var(--brand-soft)',
+            color: 'var(--brand)',
+          }}
+        >
+          {rerunInFlight ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Queuing…
+            </>
+          ) : (
+            <>
+              <RefreshCw className="h-3.5 w-3.5" />
+              Re-run analysis
+            </>
+          )}
+        </button>
+      </div>
+    )
+  }
+
+  // State D: completed — render the summary + per-lead table.
+  const analysis = state.analysis
+  if (!analysis) {
+    // Shouldn't happen — completed without analysis means a write
+    // race we don't expect. Show a defensive empty state.
+    return (
+      <div
+        className="rounded-xl border p-10 text-center"
+        style={{
+          borderColor: 'var(--surface-border)',
+          background: 'var(--surface)',
+        }}
+      >
+        <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+          Analysis marked complete but no payload present. Try re-running.
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      <DeepResearchSummaryCard
+        summary={analysis.summary}
+        generatedAt={state.generated_at}
+        model={analysis.model}
+        onRerun={triggerRerun}
+        rerunInFlight={rerunInFlight}
+        rerunError={rerunError}
+      />
+      <DeepResearchLeadsTable leads={analysis.leads} />
+    </div>
+  )
+}
+
+function DeepResearchSummaryCard({
+  summary,
+  generatedAt,
+  model,
+  onRerun,
+  rerunInFlight,
+  rerunError,
+}: {
+  summary: DeepResearchSummary
+  generatedAt: string | null | undefined
+  model?: string
+  onRerun: () => void
+  rerunInFlight: boolean
+  rerunError: string | null
+}) {
+  return (
+    <section
+      className="rounded-xl border p-5 sm:p-6 space-y-5"
+      style={{
+        borderColor: 'var(--surface-border)',
+        background: 'var(--surface)',
+      }}
+    >
+      <header className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <div
+            className="text-[10px] uppercase tracking-[0.14em] mb-1 flex items-center gap-1.5"
+            style={{ color: 'var(--text-tertiary)' }}
+          >
+            <Sparkles className="h-3 w-3" />
+            QA Summary
+          </div>
+          <h2
+            className="text-base font-medium"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            Recommended delivery decision
+          </h2>
+        </div>
+        <button
+          type="button"
+          onClick={onRerun}
+          disabled={rerunInFlight}
+          className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[11px] font-medium border transition-colors disabled:opacity-50"
+          style={{
+            borderColor: 'var(--surface-border)',
+            background: 'var(--surface-elevated)',
+            color: 'var(--text-secondary)',
+          }}
+          title="Reset and re-run the deep research analysis"
+        >
+          {rerunInFlight ? (
+            <>
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Queuing…
+            </>
+          ) : (
+            <>
+              <RefreshCw className="h-3 w-3" />
+              Re-run
+            </>
+          )}
+        </button>
+      </header>
+
+      {rerunError && (
+        <div
+          className="text-xs rounded-md border px-3 py-2"
+          style={{
+            background: 'rgba(168, 116, 111, 0.10)',
+            borderColor: 'rgba(168, 116, 111, 0.30)',
+            color: 'var(--burgundy)',
+          }}
+        >
+          Re-run failed: {rerunError}
+        </div>
+      )}
+
+      {summary.recommended_delivery_decision && (
+        <p
+          className="text-sm leading-relaxed"
+          style={{ color: 'var(--text-primary)' }}
+        >
+          {summary.recommended_delivery_decision}
+        </p>
+      )}
+
+      {/* Status grid */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        <SummaryTile
+          label="Total reviewed"
+          value={summary.total_reviewed}
+        />
+        <SummaryTile
+          label="Client ready"
+          value={summary.client_ready}
+          tone="ready"
+        />
+        <SummaryTile
+          label="Needs edit"
+          value={summary.needs_edit}
+          tone="edit"
+        />
+        <SummaryTile
+          label="Needs re-research"
+          value={summary.needs_re_research}
+          tone="reresearch"
+        />
+        <SummaryTile
+          label="Remove"
+          value={summary.remove}
+          tone="remove"
+        />
+      </div>
+
+      {summary.top_issues.length > 0 && (
+        <div>
+          <div
+            className="text-[10px] uppercase tracking-[0.14em] mb-2 flex items-center gap-1.5"
+            style={{ color: 'var(--text-tertiary)' }}
+          >
+            <AlertTriangle className="h-3 w-3" />
+            Top issues across the chain
+          </div>
+          <ul className="space-y-1.5 text-sm">
+            {summary.top_issues.map((issue, i) => (
+              <li
+                key={i}
+                className="flex items-start gap-2"
+                style={{ color: 'var(--text-primary)' }}
+              >
+                <span
+                  className="inline-block w-1 h-1 rounded-full mt-2 flex-shrink-0"
+                  style={{ background: 'var(--text-tertiary)' }}
+                />
+                <span>{issue}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Footer: provenance */}
+      <div
+        className="flex items-center gap-4 text-[11px] flex-wrap pt-1"
+        style={{ color: 'var(--text-tertiary)' }}
+      >
+        {model && (
+          <span className="inline-flex items-center gap-1 font-mono">
+            {model}
+          </span>
+        )}
+        {generatedAt && (
+          <span className="inline-flex items-center gap-1">
+            <Clock className="h-3 w-3" />
+            Generated {formatRelative(generatedAt)}
+          </span>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function SummaryTile({
+  label,
+  value,
+  tone,
+}: {
+  label: string
+  value: number
+  tone?: 'ready' | 'edit' | 'reresearch' | 'remove'
+}) {
+  const accent =
+    tone === 'ready'
+      ? { color: 'var(--brand)', border: 'rgba(201, 169, 110, 0.35)' }
+      : tone === 'edit'
+      ? { color: 'var(--amber-warm)', border: 'rgba(200, 156, 100, 0.35)' }
+      : tone === 'reresearch'
+      ? { color: 'var(--amber-warm)', border: 'rgba(200, 156, 100, 0.35)' }
+      : tone === 'remove'
+      ? { color: 'var(--burgundy)', border: 'rgba(168, 116, 111, 0.35)' }
+      : {
+          color: 'var(--text-primary)',
+          border: 'var(--surface-border-strong)',
+        }
+  return (
+    <div
+      className="rounded-xl border px-4 py-3"
+      style={{
+        borderColor: accent.border,
+        background: 'var(--surface-elevated)',
+      }}
+    >
+      <div
+        className="text-[10px] uppercase tracking-[0.14em] mb-1.5"
+        style={{ color: 'var(--text-tertiary)' }}
+      >
+        {label}
+      </div>
+      <div
+        className="tabular-nums text-xl font-medium leading-none"
+        style={{ color: accent.color }}
+      >
+        {value}
+      </div>
+    </div>
+  )
+}
+
+function DeepResearchLeadsTable({ leads }: { leads: DeepResearchLead[] }) {
+  if (leads.length === 0) {
+    return (
+      <div
+        className="rounded-xl border p-10 text-center"
+        style={{
+          borderColor: 'var(--surface-border)',
+          background: 'var(--surface)',
+        }}
+      >
+        <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+          No per-lead verdicts produced.
+        </div>
+      </div>
+    )
+  }
+  return (
+    <section
+      className="rounded-xl border overflow-hidden"
+      style={{
+        borderColor: 'var(--surface-border)',
+        background: 'var(--surface)',
+      }}
+    >
+      <header
+        className="flex items-center justify-between gap-4 border-b px-5 py-3.5"
+        style={{ borderColor: 'var(--surface-border)' }}
+      >
+        <div className="flex items-baseline gap-2">
+          <h2
+            className="text-sm font-medium"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            Per-lead verdicts
+          </h2>
+          <span
+            className="tabular-nums text-xs"
+            style={{ color: 'var(--text-tertiary)' }}
+          >
+            {leads.length}
+          </span>
+        </div>
+      </header>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm border-collapse">
+          <thead>
+            <tr style={{ background: 'var(--surface-elevated)' }}>
+              <DeepResearchTH width="44px">#</DeepResearchTH>
+              <DeepResearchTH minWidth="180px">Company</DeepResearchTH>
+              <DeepResearchTH minWidth="160px">Contact</DeepResearchTH>
+              <DeepResearchTH minWidth="110px">ICP Fit</DeepResearchTH>
+              <DeepResearchTH minWidth="110px">Intent Fit</DeepResearchTH>
+              <DeepResearchTH minWidth="110px">Data Confidence</DeepResearchTH>
+              <DeepResearchTH minWidth="140px">Final Status</DeepResearchTH>
+              <DeepResearchTH minWidth="320px">Reasoning</DeepResearchTH>
+              <DeepResearchTH minWidth="280px">Data Issues</DeepResearchTH>
+              <DeepResearchTH minWidth="240px">Recommended Fix</DeepResearchTH>
+            </tr>
+          </thead>
+          <tbody>
+            {leads.map((lead, idx) => (
+              <tr
+                key={`${lead.company}-${idx}`}
+                className="hover-bg-warm transition-colors"
+              >
+                <td
+                  className="px-3 py-3 border-b tabular-nums text-xs align-top"
+                  style={{
+                    borderColor: 'var(--surface-border)',
+                    color: 'var(--text-tertiary)',
+                  }}
+                >
+                  {idx + 1}
+                </td>
+                <td
+                  className="px-3 py-3 border-b align-top text-sm"
+                  style={{
+                    borderColor: 'var(--surface-border)',
+                    color: 'var(--text-primary)',
+                  }}
+                >
+                  {lead.company || <Dash />}
+                </td>
+                <td
+                  className="px-3 py-3 border-b align-top text-sm"
+                  style={{
+                    borderColor: 'var(--surface-border)',
+                    color: 'var(--text-primary)',
+                  }}
+                >
+                  {lead.contact || <Dash />}
+                </td>
+                <td
+                  className="px-3 py-3 border-b align-top"
+                  style={{ borderColor: 'var(--surface-border)' }}
+                >
+                  <FitBadge value={lead.icp_fit} />
+                </td>
+                <td
+                  className="px-3 py-3 border-b align-top"
+                  style={{ borderColor: 'var(--surface-border)' }}
+                >
+                  <FitBadge value={lead.intent_fit} />
+                </td>
+                <td
+                  className="px-3 py-3 border-b align-top"
+                  style={{ borderColor: 'var(--surface-border)' }}
+                >
+                  <ConfidenceBadge value={lead.data_confidence} />
+                </td>
+                <td
+                  className="px-3 py-3 border-b align-top"
+                  style={{ borderColor: 'var(--surface-border)' }}
+                >
+                  <FinalStatusBadge value={lead.final_status} />
+                </td>
+                <td
+                  className="px-3 py-3 border-b align-top text-[12px] leading-relaxed"
+                  style={{
+                    borderColor: 'var(--surface-border)',
+                    color: 'var(--text-primary)',
+                    maxWidth: '420px',
+                  }}
+                >
+                  {lead.reasoning || <Dash />}
+                </td>
+                <td
+                  className="px-3 py-3 border-b align-top text-[12px] leading-relaxed"
+                  style={{
+                    borderColor: 'var(--surface-border)',
+                    color: 'var(--text-primary)',
+                    maxWidth: '360px',
+                  }}
+                >
+                  {lead.data_issues_found || <Dash />}
+                </td>
+                <td
+                  className="px-3 py-3 border-b align-top text-[12px] leading-relaxed"
+                  style={{
+                    borderColor: 'var(--surface-border)',
+                    color: 'var(--text-primary)',
+                    maxWidth: '320px',
+                  }}
+                >
+                  {lead.recommended_fix || <Dash />}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  )
+}
+
+function DeepResearchTH({
+  children,
+  minWidth,
+  width,
+}: {
+  children: React.ReactNode
+  minWidth?: string
+  width?: string
+}) {
+  return (
+    <th
+      scope="col"
+      className="px-3 py-2.5 text-left text-[10px] uppercase tracking-[0.14em] font-medium border-b whitespace-nowrap"
+      style={{
+        background: 'var(--surface-elevated)',
+        borderColor: 'var(--surface-border)',
+        color: 'var(--text-tertiary)',
+        minWidth,
+        width,
+      }}
+    >
+      {children}
+    </th>
+  )
+}
+
+function Dash() {
+  return <span style={{ color: 'var(--text-tertiary)' }}>—</span>
+}
+
+function FitBadge({
+  value,
+}: {
+  value: 'Strong' | 'Borderline' | 'Poor' | null
+}) {
+  if (!value) return <Dash />
+  const cls =
+    value === 'Strong'
+      ? 'bg-gold-soft border-gold-soft text-gold'
+      : value === 'Borderline'
+      ? 'bg-amber-warm-soft border-amber-warm-soft text-amber-warm'
+      : 'bg-burgundy-soft border-burgundy-soft text-burgundy'
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.10em] font-medium',
+        cls,
+      )}
+    >
+      {value}
+    </span>
+  )
+}
+
+function ConfidenceBadge({
+  value,
+}: {
+  value: 'High' | 'Medium' | 'Low' | null
+}) {
+  if (!value) return <Dash />
+  const cls =
+    value === 'High'
+      ? 'bg-gold-soft border-gold-soft text-gold'
+      : value === 'Medium'
+      ? 'bg-amber-warm-soft border-amber-warm-soft text-amber-warm'
+      : 'bg-burgundy-soft border-burgundy-soft text-burgundy'
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.10em] font-medium',
+        cls,
+      )}
+    >
+      {value}
+    </span>
+  )
+}
+
+function FinalStatusBadge({
+  value,
+}: {
+  value: DeepResearchFinalStatus | null
+}) {
+  if (!value) return <Dash />
+  const cls =
+    value === 'Client Ready'
+      ? 'bg-gold-soft border-gold-soft text-gold'
+      : value === 'Needs Edit'
+      ? 'bg-amber-warm-soft border-amber-warm-soft text-amber-warm'
+      : value === 'Needs Re-Research'
+      ? 'bg-amber-warm-soft border-amber-warm-soft text-amber-warm'
+      : 'bg-burgundy-soft border-burgundy-soft text-burgundy'
+  const icon =
+    value === 'Client Ready' ? (
+      <ShieldCheck className="h-3 w-3" />
+    ) : value === 'Remove' ? (
+      <AlertTriangle className="h-3 w-3" />
+    ) : null
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.10em] font-medium whitespace-nowrap',
+        cls,
+      )}
+    >
+      {icon}
+      {value}
+    </span>
   )
 }
 

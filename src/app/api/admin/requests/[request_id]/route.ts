@@ -24,10 +24,26 @@ import {
   AdminConsensusRow,
   AdminWinningLead,
   LeadDataEntry,
+  DeepResearchState,
+  DeepResearchAnalysisPayload,
+  DeepResearchStatus,
 } from '@/lib/admin-supabase'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+
+// Subset of fulfillment_requests columns we need to load the
+// deep research state for the chain's leaf row. Kept as a narrow
+// shape so we don't accidentally over-fetch the JSONB analysis on
+// every list-page render (the list endpoint doesn't read these).
+interface DeepResearchRow {
+  deep_research_status: DeepResearchStatus
+  deep_research_attempts: number | null
+  deep_research_error: string | null
+  deep_research_started_at: string | null
+  deep_research_generated_at: string | null
+  deep_research_analysis: DeepResearchAnalysisPayload | null
+}
 
 async function walkChain(
   supabase: ReturnType<typeof getAdminSupabase>,
@@ -199,6 +215,49 @@ export async function GET(
     .select('submission_id', { count: 'exact', head: true })
     .in('request_id', chainIds)
 
+  // Pull the deep research state from the LEAF row. The gateway
+  // writes the QA analysis here when the chain flips to fulfilled,
+  // and the dashboard renders the column under the "Deep Research
+  // Analysis" tab. Failure here is non-fatal — we just surface a
+  // null state and the UI shows "not yet run".
+  let deepResearch: DeepResearchState = {
+    status: null,
+    attempts: 0,
+    error: null,
+    started_at: null,
+    generated_at: null,
+    analysis: null,
+  }
+  try {
+    const { data: drData, error: drErr } = await supabase
+      .from('fulfillment_requests')
+      .select(
+        'deep_research_status, deep_research_attempts, deep_research_error, ' +
+          'deep_research_started_at, deep_research_generated_at, deep_research_analysis',
+      )
+      .eq('request_id', leaf.request_id)
+      .limit(1)
+      .maybeSingle()
+    if (drErr) {
+      // Most common cause: the migration hasn't been applied yet to
+      // this environment. Don't 500 the whole detail page — log and
+      // proceed with the null state so other tabs still render.
+      console.warn('[admin] deep_research fetch failed', drErr.message)
+    } else if (drData) {
+      const row = drData as unknown as DeepResearchRow
+      deepResearch = {
+        status: row.deep_research_status ?? null,
+        attempts: row.deep_research_attempts ?? 0,
+        error: row.deep_research_error ?? null,
+        started_at: row.deep_research_started_at ?? null,
+        generated_at: row.deep_research_generated_at ?? null,
+        analysis: row.deep_research_analysis ?? null,
+      }
+    }
+  } catch (e) {
+    console.warn('[admin] deep_research fetch threw', e)
+  }
+
   return NextResponse.json(
     {
       chain: { root, leaf, cycles },
@@ -207,6 +266,7 @@ export async function GET(
       target_num_leads: root.num_leads ?? leaf.num_leads,
       delivered_count: winningLeads.length,
       all_submissions_count: allSubsCount ?? 0,
+      deep_research: deepResearch,
     },
     { headers: { 'Cache-Control': 'no-store' } },
   )

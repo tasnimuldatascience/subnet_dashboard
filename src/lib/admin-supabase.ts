@@ -85,6 +85,76 @@ export interface AdminFulfillmentRequest {
   is_chain_leaf?: boolean
 }
 
+// =================================================================
+// Deep Research Analysis
+// =================================================================
+//
+// Generated once per fulfilled chain by the gateway's Sonar Deep
+// Research QA pass. Stored on the LEAF row of the chain (the row
+// whose status='fulfilled'). The detail endpoint pulls from the leaf
+// and forwards both the analysis JSON and the lifecycle status, so
+// the dashboard can render four distinct states:
+//
+//   1. Not yet fulfilled       -> tab shows empty-state coachmark
+//   2. Pending / in_progress    -> tab shows spinner + status text
+//   3. Completed                -> tab shows summary card + per-lead table
+//   4. Failed                   -> tab shows error + "Re-run" button
+//
+// All fields are optional/nullable because the column was added in
+// migration 18 and historical rows pre-date this feature.
+export type DeepResearchStatus =
+  | 'pending'
+  | 'in_progress'
+  | 'completed'
+  | 'failed'
+  | null
+
+export type DeepResearchFinalStatus =
+  | 'Client Ready'
+  | 'Needs Edit'
+  | 'Needs Re-Research'
+  | 'Remove'
+
+export interface DeepResearchLead {
+  company: string
+  contact: string | null
+  icp_fit: 'Strong' | 'Borderline' | 'Poor' | null
+  intent_fit: 'Strong' | 'Borderline' | 'Poor' | null
+  data_confidence: 'High' | 'Medium' | 'Low' | null
+  final_status: DeepResearchFinalStatus | null
+  reasoning: string
+  data_issues_found: string
+  recommended_fix: string
+}
+
+export interface DeepResearchSummary {
+  total_reviewed: number
+  client_ready: number
+  needs_edit: number
+  needs_re_research: number
+  remove: number
+  top_issues: string[]
+  recommended_delivery_decision: string
+}
+
+export interface DeepResearchAnalysisPayload {
+  summary: DeepResearchSummary
+  leads: DeepResearchLead[]
+  model?: string
+  raw_response?: string
+  generated_at?: string
+  icp_snapshot?: IcpDetails | null
+}
+
+export interface DeepResearchState {
+  status: DeepResearchStatus
+  attempts: number
+  error: string | null
+  started_at: string | null
+  generated_at: string | null
+  analysis: DeepResearchAnalysisPayload | null
+}
+
 export interface IntentSignalMappingEntry {
   url?: string
   date?: string | null
