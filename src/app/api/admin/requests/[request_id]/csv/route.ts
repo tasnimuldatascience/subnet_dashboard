@@ -1,19 +1,37 @@
 /**
  * GET /api/admin/requests/[request_id]/csv
  *
- * Streams every winning lead in the chain as a CSV. Mirrors the same
- * data shape the operator sees in the UI: business, contact info,
- * role, location, scoring outcomes, intent signal context.
+ * Streams every winning lead in the chain as a CSV.  The column set
+ * mirrors the admin dashboard "Winning leads" table 1:1 — the operator
+ * sends this file to the client, so we deliberately exclude every
+ * internal / operational column (consensus_final_score,
+ * intent_signal_score, rep_score, reward_pct, miner_hotkey,
+ * computed_at, lead_id).  Those still exist in Supabase for ops; they
+ * just don't belong in a client-facing artifact.
+ *
+ * Intent signals are exploded into per-signal columns (one set of
+ * columns per credited signal) instead of being collapsed into a
+ * single JSON-ish cell.  The column count is sized to the lead with
+ * the most credited signals in this export, and leads with fewer
+ * signals leave their trailing signal columns blank.  Each signal
+ * gets seven columns matching the cards in the dashboard's "Intent
+ * Signals" cell: Source, Date, Matched ICP Signal, Description, URL,
+ * Snippet, Score.
  *
  * The CSV uses field-level quoting on every column so commas / line
- * breaks / quotes inside business descriptions don't corrupt the
- * output. We do NOT use a streaming response because the row count
- * is bounded by `num_leads` (single digits in practice), so the
- * payload is small and the synchronous path is simpler.
+ * breaks / quotes inside business descriptions or snippets don't
+ * corrupt the output.  We do NOT use a streaming response because
+ * the row count is bounded by `num_leads` (single digits in
+ * practice), so the payload is small and the synchronous path is
+ * simpler.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getAdminSupabase } from '@/lib/admin-supabase'
+import type {
+  IntentSignalMappingEntry,
+  IntentBreakdown,
+} from '@/lib/admin-supabase'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -33,8 +51,6 @@ interface LeadDataLite {
   email?: string
   phone?: string | null
   role?: string
-  role_type?: string
-  seniority?: string
   linkedin_url?: string
   company_website?: string
   company_linkedin?: string
@@ -44,16 +60,42 @@ interface LeadDataLite {
   city?: string
   state?: string
   country?: string
-  company_hq_city?: string
   company_hq_state?: string
   company_hq_country?: string
   description?: string
-  intent_signals?: Array<{ url?: string; description?: string }>
 }
 
 interface LeadDataEntry {
   lead_id: string
   data?: LeadDataLite
+}
+
+// Mirror of admin-format.ts::creditedSignals — kept inline so this
+// route has no dependency on the React-side helpers.
+function creditedSignals(
+  mapping: IntentSignalMappingEntry[] | null | undefined,
+): IntentSignalMappingEntry[] {
+  if (!Array.isArray(mapping)) return []
+  return mapping.filter(
+    (s) => (s.after_decay_score ?? s.raw_score ?? 0) > 0,
+  )
+}
+
+// Mirror the dashboard's "use LLM breakdown text when present, fall
+// back to raw description" resolution.  Keep the lookup identical to
+// IntentSignalsList in AdminRequestDetail.tsx (index into credited[]).
+function resolveSignalDescription(
+  credited: IntentSignalMappingEntry[],
+  breakdown: IntentBreakdown | null,
+  i: number,
+): string {
+  const byIdx = new Map<number, string>()
+  for (const b of breakdown?.per_signal ?? []) {
+    if (typeof b.source_index === 'number' && b.details) {
+      byIdx.set(b.source_index, b.details)
+    }
+  }
+  return byIdx.get(i) || credited[i]?.description || ''
 }
 
 export async function GET(
@@ -78,7 +120,6 @@ export async function GET(
   // We reuse the simple in-place walk rather than depending on
   // the JSON endpoint so this route stays standalone.
   const collected = new Set<string>([request_id])
-  // Walk back
   let head = request_id
   for (let i = 0; i < 50; i++) {
     const { data: pred } = await supabase
@@ -91,7 +132,6 @@ export async function GET(
     collected.add(pred.request_id)
     head = pred.request_id
   }
-  // Walk forward
   let tail = request_id
   for (let i = 0; i < 50; i++) {
     const { data: cur } = await supabase
@@ -119,12 +159,14 @@ export async function GET(
     return new NextResponse('request not found', { status: 404 })
   }
 
+  // consensus_final_score is still selected (for stable sort order
+  // only); it is NOT emitted as a column.
   const { data: winnersData, error: winnersErr } = await supabase
     .from('fulfillment_score_consensus')
     .select(
-      'consensus_id, request_id, submission_id, lead_id, miner_hotkey, ' +
-        'consensus_final_score, consensus_intent_signal_final, consensus_rep_score, ' +
-        'reward_pct, intent_details, computed_at',
+      'consensus_id, request_id, submission_id, lead_id, ' +
+        'consensus_final_score, intent_details, intent_breakdown, ' +
+        'intent_signal_mapping',
     )
     .in('request_id', chainIds)
     .eq('is_winner', true)
@@ -134,21 +176,15 @@ export async function GET(
     return new NextResponse(`supabase error: ${winnersErr.message}`, { status: 502 })
   }
 
-  // Explicit shape so the typeguard around winnersErr above narrows
-  // winnersData correctly. The `.select(...)` column list above
-  // determines what fields are present.
   interface WinnerRow {
     consensus_id: string
     request_id: string
     submission_id: string
     lead_id: string
-    miner_hotkey: string
     consensus_final_score: number | null
-    consensus_intent_signal_final: number | null
-    consensus_rep_score: number | null
-    reward_pct: number | null
     intent_details: string | null
-    computed_at: string
+    intent_breakdown: IntentBreakdown | null
+    intent_signal_mapping: IntentSignalMappingEntry[] | null
   }
   const winnerRows = (winnersData || []) as unknown as WinnerRow[]
 
@@ -175,64 +211,116 @@ export async function GET(
     }
   }
 
-  const columns = [
-    'business',
-    'full_name',
-    'role',
-    'email',
-    'phone',
-    'linkedin_url',
-    'company_website',
-    'company_linkedin',
-    'industry',
-    'sub_industry',
-    'employee_count',
-    'company_hq_city',
-    'company_hq_state',
-    'company_hq_country',
-    'description',
-    'final_score',
-    'intent_signal_score',
-    'rep_score',
-    'reward_pct',
-    'miner_hotkey',
-    'intent_details',
-    'computed_at',
-    'lead_id',
+  // First pass: figure out how many per-signal column blocks we
+  // need.  This is the max credited-signal count across every
+  // winning lead in the export.  Leads with fewer signals leave
+  // trailing blocks blank.
+  let maxSignals = 0
+  const creditedByConsensus = new Map<string, IntentSignalMappingEntry[]>()
+  for (const w of winners) {
+    const credited = creditedSignals(w.intent_signal_mapping)
+    creditedByConsensus.set(w.consensus_id, credited)
+    if (credited.length > maxSignals) maxSignals = credited.length
+  }
+
+  // Base lead columns mirror the dashboard table in
+  // src/app/admin/requests/[request_id]/_components/AdminRequestDetail.tsx
+  // (TABLE_COLUMNS).  Keep the order identical so the CSV reads
+  // left-to-right exactly like the UI.
+  const baseColumns: string[] = [
+    'Name',
+    'Email',
+    'Role',
+    'Company',
+    'LinkedIn',
+    'Website',
+    'Company LinkedIn',
+    'Industry',
+    'Sub Industry',
+    'City',
+    'State',
+    'Country',
+    'HQ State',
+    'HQ Country',
+    'Employee Count',
+    'Description',
+    'Intent Details',
+    'Phone',
   ]
 
-  const lines: string[] = [columns.join(',')]
+  // Per-signal column block.  Seven columns per credited signal,
+  // matching the fields rendered in IntentSignalsList.
+  const signalSubColumns = [
+    'Source',
+    'Date',
+    'Matched ICP Signal',
+    'Description',
+    'URL',
+    'Snippet',
+    'Score',
+  ]
+  const signalColumns: string[] = []
+  for (let i = 1; i <= maxSignals; i++) {
+    for (const sub of signalSubColumns) {
+      signalColumns.push(`Intent Signal ${i} — ${sub}`)
+    }
+  }
+
+  const header = [...baseColumns, ...signalColumns]
+  const lines: string[] = [header.map(csvCell).join(',')]
+
   for (const w of winners) {
     const entry = (leadDataBySub.get(w.submission_id) || []).find(
       (e) => e.lead_id === w.lead_id,
     )
     const ld = entry?.data || {}
-    const row = [
-      ld.business,
+
+    const baseRow: unknown[] = [
       ld.full_name,
-      ld.role,
       ld.email,
-      ld.phone ?? '',
+      ld.role,
+      ld.business,
       ld.linkedin_url,
       ld.company_website,
       ld.company_linkedin,
       ld.industry,
       ld.sub_industry,
-      ld.employee_count,
-      ld.company_hq_city,
+      ld.city,
+      ld.state,
+      ld.country,
       ld.company_hq_state,
       ld.company_hq_country,
+      ld.employee_count,
       ld.description,
-      w.consensus_final_score,
-      w.consensus_intent_signal_final,
-      w.consensus_rep_score,
-      w.reward_pct,
-      w.miner_hotkey,
       w.intent_details,
-      w.computed_at,
-      w.lead_id,
-    ].map(csvCell)
-    lines.push(row.join(','))
+      ld.phone ?? '',
+    ]
+
+    const credited = creditedByConsensus.get(w.consensus_id) || []
+    const signalRow: unknown[] = []
+    for (let i = 0; i < maxSignals; i++) {
+      const s = credited[i]
+      if (!s) {
+        // Lead has fewer signals than this column block; emit
+        // seven blank cells so column alignment stays sane.
+        for (let j = 0; j < signalSubColumns.length; j++) signalRow.push('')
+        continue
+      }
+      const desc = resolveSignalDescription(credited, w.intent_breakdown, i)
+      signalRow.push(
+        s.source ?? '',
+        s.date ?? '',
+        s.matched_icp_signal ?? '',
+        desc,
+        s.url ?? '',
+        s.snippet ?? '',
+        typeof s.after_decay_score === 'number'
+          ? s.after_decay_score.toFixed(2)
+          : '',
+      )
+    }
+
+    lines.push([...baseRow, ...signalRow].map(csvCell).join(','))
   }
 
   const labelSlug = (rootRow.internal_label || rootRow.company || 'request')
