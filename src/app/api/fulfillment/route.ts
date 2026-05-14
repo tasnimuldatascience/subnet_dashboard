@@ -114,12 +114,42 @@ async function fetchFulfillmentData() {
 
     // Build a set of (request_id, lead_id) for chain-canonical winners; used to
     // override is_winner when the off-chain consensus disagrees with the chain.
+    // Also build a lead_id -> visible request_id map so we can pull in
+    // consensus rows that live under earlier/later cycles of the same chain
+    // (recycled fulfillment requests share a chain but use different
+    // request_ids, so a per-rid query alone misses them).
     const chainWinnerKeys = new Set<string>()
+    const leadIdToVisibleRid = new Map<string, string>()
     for (let i = 0; i < chainWinnersResults.length; i++) {
       const { data, error } = chainWinnersResults[i]
       if (error) console.error(`[Fulfillment API] Chain winners error for ${allRequestIds[i]}:`, error)
       for (const row of (data || []) as Array<{ lead_id?: string }>) {
-        if (row.lead_id) chainWinnerKeys.add(`${allRequestIds[i]}|${row.lead_id}`)
+        if (!row.lead_id) continue
+        chainWinnerKeys.add(`${allRequestIds[i]}|${row.lead_id}`)
+        // First-claim wins. A lead_id should only attach to one visible
+        // request in this response.
+        if (!leadIdToVisibleRid.has(row.lead_id)) {
+          leadIdToVisibleRid.set(row.lead_id, allRequestIds[i])
+        }
+      }
+    }
+
+    // Pull chain-canonical winners' consensus rows even when their actual
+    // request_id is from another cycle in the chain. Without this the
+    // dialog only shows leads scored under the visible request_id, which
+    // for a recycled chain can be far fewer than the chain's num_leads.
+    let chainCanonicalRows: Array<Record<string, unknown>> = []
+    const allChainLeadIds = Array.from(leadIdToVisibleRid.keys())
+    if (allChainLeadIds.length > 0) {
+      const { data: chainData, error: chainErr } = await supabase
+        .from('fulfillment_score_consensus')
+        .select('*')
+        .in('lead_id', allChainLeadIds)
+        .eq('is_winner', true)
+      if (chainErr) {
+        console.error('[Fulfillment API] chain canonical consensus error:', chainErr)
+      } else {
+        chainCanonicalRows = (chainData || []) as Array<Record<string, unknown>>
       }
     }
 
@@ -127,7 +157,25 @@ async function fetchFulfillmentData() {
     // overridden by the chain-canonical set when chain data is available.
     // Normalize column names so the client receives a stable shape regardless
     // of whether the table uses `consensus_*` or un-prefixed column names.
-    const rawConsensus = scoreConsensusResult.data || []
+    const rawConsensusBase = scoreConsensusResult.data || []
+    // Merge in chain-canonical winners that aren't already represented under
+    // the visible request_id, rewriting their request_id to the visible rid
+    // so they show up in the dialog. Dedup by (visibleRid, lead_id).
+    const seenKeys = new Set<string>(
+      rawConsensusBase.map((r) => `${r.request_id}|${r.lead_id}`),
+    )
+    const supplemental: Array<Record<string, unknown>> = []
+    for (const row of chainCanonicalRows) {
+      const leadId = (row.lead_id as string | undefined) ?? ''
+      if (!leadId) continue
+      const visibleRid = leadIdToVisibleRid.get(leadId)
+      if (!visibleRid) continue
+      const key = `${visibleRid}|${leadId}`
+      if (seenKeys.has(key)) continue
+      seenKeys.add(key)
+      supplemental.push({ ...row, request_id: visibleRid })
+    }
+    const rawConsensus = [...rawConsensusBase, ...supplemental]
     const pick = (row: Record<string, unknown>, ...keys: string[]): unknown => {
       for (const k of keys) {
         const v = row[k]

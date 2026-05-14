@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Overview,
@@ -102,6 +102,29 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
     if (!isValidTab(value)) return
     activateTab(value)
   }, [activateTab])
+
+  // -------------------------------------------------------------------
+  // Single, page-level "Synced X ago" indicator. Each tab calls
+  // `handleSync()` after a successful fetch so the masthead reflects
+  // the freshest data across whichever tab last polled. The brief pulse
+  // animation gives a subtle live-data confirmation on every refresh.
+  // -------------------------------------------------------------------
+  const [lastSync, setLastSync] = useState<number | null>(null)
+  const [syncPulse, setSyncPulse] = useState(false)
+  const syncPulseTimerRef = useRef<number | null>(null)
+  const handleSync = useCallback(() => {
+    setLastSync(Date.now())
+    setSyncPulse(true)
+    if (syncPulseTimerRef.current) {
+      window.clearTimeout(syncPulseTimerRef.current)
+    }
+    syncPulseTimerRef.current = window.setTimeout(() => setSyncPulse(false), 900)
+  }, [])
+  useEffect(() => {
+    return () => {
+      if (syncPulseTimerRef.current) window.clearTimeout(syncPulseTimerRef.current)
+    }
+  }, [])
 
   // -------------------------------------------------------------------
   // Polling: every 60s, paused when the tab isn't visible so we
@@ -299,18 +322,21 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
       {/* Main Content */}
       <div className="max-w-[1500px] mx-auto px-5 py-4 md:py-6 overflow-auto">
         <header className="relative mb-6 md:mb-8 pb-4 md:pb-5 border-b border-[var(--surface-border)]">
-          <h1 className="text-xl sm:text-2xl md:text-[26px] leading-none tracking-[-0.018em] text-[color:var(--text-primary)]">
-            <a
-              href="https://leadpoet.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-semibold hover:opacity-80 transition-opacity"
-              aria-label="Leadpoet, open marketing site in a new tab"
-            >
-              Leadpoet
-            </a>
-            <span className="ml-2 font-light text-[color:var(--text-secondary)]">Subnet Dashboard</span>
-          </h1>
+          <div className="flex items-center justify-between gap-4">
+            <h1 className="text-xl sm:text-2xl md:text-[26px] leading-none tracking-[-0.018em] text-[color:var(--text-primary)]">
+              <a
+                href="https://leadpoet.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-semibold hover:opacity-80 transition-opacity"
+                aria-label="Leadpoet, open marketing site in a new tab"
+              >
+                Leadpoet
+              </a>
+              <span className="ml-2 font-light text-[color:var(--text-secondary)]">Subnet Dashboard</span>
+            </h1>
+            <SyncedIndicator lastSync={lastSync} pulse={syncPulse} />
+          </div>
           {/* Subtle gold underscore: editorial masthead accent. */}
           <span
             aria-hidden
@@ -386,7 +412,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
               className="data-[state=active]:animate-in data-[state=active]:fade-in-0 data-[state=active]:duration-300"
             >
               <ErrorBoundary label="Fulfillment">
-                <Fulfillment />
+                <Fulfillment onSync={handleSync} />
               </ErrorBoundary>
             </TabsContent>
           )}
@@ -398,7 +424,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
               className="data-[state=active]:animate-in data-[state=active]:fade-in-0 data-[state=active]:duration-300"
             >
               <ErrorBoundary label="ModelCompetition">
-                <ModelCompetition />
+                <ModelCompetition onSync={handleSync} />
               </ErrorBoundary>
             </TabsContent>
           )}
@@ -499,8 +525,9 @@ function DashboardTabTrigger({
         'h-10 px-2.5 text-xs font-medium whitespace-nowrap transition-all',
         // Resting state
         'text-slate-400 hover:text-slate-100 hover:bg-slate-800/40',
-        // Focus
-        'focus:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--brand)]',
+        // Focus: subtle neutral ring so it doesn't clash with the gold
+        // active state (shift/tab focus used to render a gold-on-gold halo).
+        'focus:outline-none focus-visible:ring-1 focus-visible:ring-slate-500/50',
         // Active state: gold accent
         'data-[state=active]:bg-slate-900/70 data-[state=active]:text-gold',
         'data-[state=active]:border-[rgba(201,169,110,0.30)]',
@@ -511,4 +538,56 @@ function DashboardTabTrigger({
       <span className="hidden md:inline">{label}</span>
     </TabsTrigger>
   )
+}
+
+/* ============================================================
+ * SyncedIndicator. Page-level "Synced X ago" pill, anchored to
+ * the masthead top-right. Each tab calls the parent's onSync
+ * after a successful fetch so this stays accurate across tabs.
+ * ============================================================ */
+function SyncedIndicator({
+  lastSync,
+  pulse,
+}: {
+  lastSync: number | null
+  pulse: boolean
+}) {
+  // Re-render once a minute so the relative time stays accurate
+  // without each tab having to push updates.
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const id = window.setInterval(() => setTick((n) => n + 1), 60_000)
+    return () => window.clearInterval(id)
+  }, [])
+
+  const label = formatRelativeShort(lastSync)
+  return (
+    <div
+      className="hidden sm:flex items-center gap-2 text-[10px] font-mono text-slate-500 shrink-0"
+      title="Auto-syncs every 60s"
+    >
+      <span
+        className={cn(
+          'inline-block w-1.5 h-1.5 rounded-full dot-gold',
+          pulse ? 'live-pulse' : 'opacity-70'
+        )}
+        aria-hidden
+      />
+      <span>
+        Synced <span className="text-slate-300">{label}</span>
+      </span>
+    </div>
+  )
+}
+
+function formatRelativeShort(ts: number | null): string {
+  if (ts === null) return '—'
+  const diff = Math.max(0, Math.floor((Date.now() - ts) / 1000))
+  if (diff < 30) return 'just now'
+  if (diff < 60) return `${diff}s ago`
+  const m = Math.floor(diff / 60)
+  if (m < 60) return `${m}m ago`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h ago`
+  return `${Math.floor(h / 24)}d ago`
 }

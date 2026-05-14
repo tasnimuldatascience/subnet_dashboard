@@ -331,7 +331,7 @@ function CopyButton({ text }: { text: string }) {
   )
 }
 
-export function Fulfillment() {
+export function Fulfillment({ onSync }: { onSync?: () => void } = {}) {
   const [data, setData] = useState<FulfillmentData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -376,6 +376,7 @@ export function Fulfillment() {
         setLastSync(Date.now())
         setSyncPulse(true)
         window.setTimeout(() => setSyncPulse(false), 900)
+        onSync?.()
         return
       }
       if (!res.ok) throw new Error('Failed to fetch')
@@ -391,6 +392,7 @@ export function Fulfillment() {
         setLastSync(Date.now())
         setSyncPulse(true)
         window.setTimeout(() => setSyncPulse(false), 900)
+        onSync?.()
       } else {
         setError(json.error || 'Unknown error')
       }
@@ -399,7 +401,7 @@ export function Fulfillment() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [onSync])
 
   useEffect(() => {
     fetchData()
@@ -656,10 +658,13 @@ export function Fulfillment() {
   }, [])
 
   if (loading && !data) {
+    // Match the real layout's heights so the skeleton doesn't pop when
+    // content fills in: action bar (h-9 + container) and cosmos
+    // (h-[72vh] min-h-[600px]).
     return (
       <div className="space-y-4">
-        <Skeleton className="h-12 w-full" />
-        <Skeleton className="h-[680px] w-full" />
+        <Skeleton className="h-9 w-full" />
+        <Skeleton className="h-[72vh] min-h-[600px] w-full" />
       </div>
     )
   }
@@ -793,19 +798,6 @@ export function Fulfillment() {
           >
             <span>{panelsVisible ? 'Hide' : 'Show'}</span>
           </button>
-          {lastSync !== null && (
-            <div className="flex items-center gap-2 text-[10px] font-mono text-slate-500" title="Auto-syncs every 60s">
-              <span
-                className={cn(
-                  'inline-block w-1.5 h-1.5 rounded-full dot-gold',
-                  syncPulse ? 'live-pulse' : 'opacity-70'
-                )}
-              />
-              <span>
-                Synced <span className="text-slate-300">{formatRelative(new Date(lastSync).toISOString())}</span>
-              </span>
-            </div>
-          )}
         </div>
       </div>
 
@@ -838,7 +830,6 @@ export function Fulfillment() {
       <RequestHistoryDialog
         open={historyOpen}
         requests={data.activeRequests}
-        consensus={data.allConsensus}
         onSelectRequest={(req) => {
           setHistoryOpen(false)
           setDialogRequest(req)
@@ -1042,13 +1033,11 @@ function RejectionPanel({
 function RequestHistoryDialog({
   open,
   requests,
-  consensus,
   onSelectRequest,
   onOpenChange,
 }: {
   open: boolean
   requests: ActiveRequest[]
-  consensus: ConsensusResult[]
   onSelectRequest: (req: ActiveRequest) => void
   onOpenChange: (open: boolean) => void
 }) {
@@ -1061,16 +1050,6 @@ function RequestHistoryDialog({
       setScope('all')
     }
   }, [open])
-
-  // Per-request winner counts (only meaningful for fulfilled requests)
-  const winnersByRequest = useMemo(() => {
-    const m = new Map<string, number>()
-    for (const c of consensus) {
-      if (!c.is_winner) continue
-      m.set(c.request_id, (m.get(c.request_id) || 0) + 1)
-    }
-    return m
-  }, [consensus])
 
   const counts = useMemo(() => {
     const all = requests.length
@@ -1172,7 +1151,6 @@ function RequestHistoryDialog({
                   key={req.request_id}
                   index={idx + 1}
                   request={req}
-                  winners={winnersByRequest.get(req.request_id) || 0}
                   onSelect={() => onSelectRequest(req)}
                 />
               ))}
@@ -1229,12 +1207,10 @@ function HistoryTab({
 function HistoryRow({
   index,
   request,
-  winners,
   onSelect,
 }: {
   index: number
   request: ActiveRequest
-  winners: number
   onSelect: () => void
 }) {
   const isFulfilled = request.status === 'fulfilled'
@@ -1278,14 +1254,8 @@ function HistoryRow({
           <span>{request.num_leads}</span>
           <span className="text-slate-500 text-[10px]"> leads</span>
         </div>
-        {isFulfilled ? (
-          winners > 0 && (
-            <div className="text-[10px] text-gold tabular-nums">{winners} won</div>
-          )
-        ) : (
-          heldCount > 0 && (
-            <div className="text-[10px] text-gold tabular-nums">{heldCount} approved</div>
-          )
+        {!isFulfilled && heldCount > 0 && (
+          <div className="text-[10px] text-gold tabular-nums">{heldCount} approved</div>
         )}
       </div>
       <div className="flex justify-center">
@@ -1318,9 +1288,9 @@ function StatusPill({
 }) {
   const label = readableStatus(status)
   const cls = isFulfilled
-    ? 'bg-cream-soft text-cream border-cream-soft'
+    ? 'bg-gold-soft text-gold border-gold-soft'
     : isPending
-      ? 'bg-amber-warm-soft text-amber-warm border-amber-warm-soft'
+      ? 'bg-cream-soft text-cream border-cream-soft'
       : 'bg-slate-700/40 text-slate-300 border-slate-600/40'
   return (
     <span className={cn('inline-flex items-center gap-1 text-[10px] rounded px-1.5 py-0.5 border font-medium', cls)}>
@@ -1416,7 +1386,7 @@ function RequestDetailDialog({
                   <span className="text-slate-200 tabular-nums">{leads.length}</span>
                 </span>
                 <span>
-                  <span className="text-slate-500">Won</span>{' '}
+                  <span className="text-slate-500">Fulfilled</span>{' '}
                   <span className="text-gold tabular-nums">{winners}</span>
                 </span>
               </>

@@ -1196,7 +1196,7 @@ function SubmissionDetailDialog({
   )
 }
 
-export function ModelCompetition() {
+export function ModelCompetition({ onSync }: { onSync?: () => void } = {}) {
   const [data, setData] = useState<ModelCompetitionData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -1204,10 +1204,8 @@ export function ModelCompetition() {
   const [isDetailOpen, setIsDetailOpen] = useState(false)
   const [selectedSubmission, setSelectedSubmission] = useState<Submission | null>(null)
   const [isSubmissionDetailOpen, setIsSubmissionDetailOpen] = useState(false)
-  const [lastSync, setLastSync] = useState<number | null>(null)
-  const [syncPulse, setSyncPulse] = useState(false)
 
-  // Fetch data + track sync state for the live indicator chip.
+  // Fetch data + bubble sync events to the page-level indicator.
   const fetchData = useCallback(async () => {
     try {
       const res = await fetch(`/api/model-competition?t=${Date.now()}`)
@@ -1216,10 +1214,7 @@ export function ModelCompetition() {
       if (json.success) {
         setData(json.data)
         setError(null)
-        setLastSync(Date.now())
-        setSyncPulse(true)
-        // 900ms matches the Fulfillment sync chip pulse, so both tabs feel the same.
-        window.setTimeout(() => setSyncPulse(false), 900)
+        onSync?.()
       } else {
         setError(json.error || 'Unknown error')
       }
@@ -1229,7 +1224,7 @@ export function ModelCompetition() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [onSync])
 
   // Initial fetch + polling every 60 seconds. Server also refreshes the
   // upstream cache on the same cadence, so 60s here keeps the two in sync.
@@ -1308,46 +1303,18 @@ export function ModelCompetition() {
 
   return (
     <div className="space-y-5">
-      {/* ════════════════════════════════════════════════════════════
-          Top bar: title + live sync chip.
-          ════════════════════════════════════════════════════════════ */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="text-[10px] uppercase tracking-[0.16em] text-slate-500 font-medium">
-          Model competition · {data.stats.uniqueMiners} miner{data.stats.uniqueMiners === 1 ? '' : 's'} competing today
+      {error && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={fetchData}
+            className="text-[10px] font-mono text-burgundy hover:text-slate-200 transition-colors"
+            title={error}
+          >
+            Refresh failed. Retry
+          </button>
         </div>
-        {lastSync !== null && (
-          <div className="flex items-center gap-3">
-            {error && (
-              <button
-                type="button"
-                onClick={fetchData}
-                className="text-[10px] font-mono text-burgundy hover:text-slate-200 transition-colors"
-                title={error}
-              >
-                Refresh failed. Retry
-              </button>
-            )}
-            <div
-              className="flex items-center gap-2 text-[10px] font-mono text-slate-500"
-              title="Auto-syncs every 60s"
-            >
-              <span
-                className={cn(
-                  'inline-block w-1.5 h-1.5 rounded-full dot-gold',
-                  syncPulse ? 'live-pulse' : 'opacity-70'
-                )}
-                aria-hidden
-              />
-              <span>
-                Synced{' '}
-                <span className="text-slate-300">
-                  {getRelativeTime(new Date(lastSync).toISOString())}
-                </span>
-              </span>
-            </div>
-          </div>
-        )}
-      </div>
+      )}
 
       {/* ════════════════════════════════════════════════════════════
           HERO: dominant champion block (or vacant throne).
@@ -1379,34 +1346,9 @@ export function ModelCompetition() {
       )}
 
       {/* ════════════════════════════════════════════════════════════
-          KPI strip: three editorial stat tiles.
-          ════════════════════════════════════════════════════════════ */}
-      <div className="grid gap-3 grid-cols-3">
-        <KpiTile
-          label="Submissions today"
-          value={data.stats.totalSubmissions}
-          subline={data.stats.totalSubmissions === 0 ? 'awaiting first entry' : 'across all miners'}
-        />
-        <KpiTile
-          label="Evaluated"
-          value={data.stats.statusCounts.evaluated}
-          subline={
-            data.stats.statusCounts.evaluating > 0
-              ? `${data.stats.statusCounts.evaluating} evaluating · ${data.stats.statusCounts.submitted} pending`
-              : `${data.stats.statusCounts.submitted} pending`
-          }
-          tone="gold"
-        />
-        <KpiTile
-          label="Miners competing"
-          value={data.stats.uniqueMiners}
-          subline="today"
-        />
-      </div>
-
-      {/* ════════════════════════════════════════════════════════════
-          Challengers. Per-row "Evaluating" badge already communicates
-          live activity, so no separate floating panel is needed.
+          Challengers. The board's own header shows miner count and the
+          per-row "Evaluating" badge communicates live activity, so the
+          previous KPI strip was redundant and has been removed.
           ════════════════════════════════════════════════════════════ */}
       <ChallengersBoard
         challengers={challengers}
@@ -1476,16 +1418,15 @@ export function ModelCompetition() {
  * Skeleton. Matches Fulfillment shimmer aesthetic.
  * ============================================================ */
 function ModelCompetitionSkeleton() {
+  // Mirror the real layout's section count + heights so content doesn't pop
+  // when it fills in: Champion hero, Champion lineage strip, Today's
+  // challengers list, Past champions list.
   return (
     <div className="space-y-5">
-      <div className="h-3 w-48 shimmer rounded" />
-      <div className="rounded-2xl border border-slate-800/70 bg-slate-900/30 h-[260px] shimmer" />
-      <div className="grid grid-cols-3 gap-3">
-        {[...Array(3)].map((_, i) => (
-          <div key={i} className="rounded-xl border border-slate-800/70 bg-slate-900/30 h-20 shimmer" />
-        ))}
-      </div>
-      <div className="rounded-xl border border-slate-800/70 bg-slate-900/30 h-[360px] shimmer" />
+      <div className="rounded-2xl border border-slate-800/70 bg-slate-900/30 h-[180px] shimmer" />
+      <div className="rounded-xl border border-slate-800/70 bg-slate-900/30 h-[140px] shimmer" />
+      <div className="rounded-xl border border-slate-800/70 bg-slate-900/30 h-[280px] shimmer" />
+      <div className="rounded-xl border border-slate-800/70 bg-slate-900/30 h-[420px] shimmer" />
     </div>
   )
 }
@@ -1869,35 +1810,6 @@ function ChampionLineageStrip({
         </div>
       </div>
     </section>
-  )
-}
-
-/* ============================================================
- * KpiTile. Compact stat. Matches the StatBlock typography &
- * border treatment from Fulfillment for a cohesive feel.
- * ============================================================ */
-function KpiTile({
-  label,
-  value,
-  subline,
-  tone = 'slate',
-}: {
-  label: string
-  value: number
-  subline: string
-  tone?: 'slate' | 'gold'
-}) {
-  const valueColor = tone === 'gold' ? 'text-gold' : 'text-slate-100'
-  return (
-    <div className="rounded-xl border border-slate-800/70 bg-slate-900/30 px-4 py-3">
-      <div className="text-[9px] text-slate-500 uppercase tracking-[0.1em] font-medium">
-        {label}
-      </div>
-      <div className={cn('text-xl sm:text-2xl font-semibold tabular-nums leading-tight mt-0.5', valueColor)}>
-        <CountUp value={value} />
-      </div>
-      <p className="text-[10px] text-slate-500 mt-1">{subline}</p>
-    </div>
   )
 }
 

@@ -485,9 +485,31 @@ export function FulfillmentCosmos({
   const dragStart = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null)
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  // Transient focus pin: holds the just-clicked node's id for a short
+  // window so the cosmos doesn't visually "flash" during the click -> dialog
+  // open transition (mouseleave clears hoveredId; without a pin, focusId
+  // would briefly become null and every edge would snap to the default
+  // bright state). Auto-clears on a timer so closing the dialog doesn't
+  // leave a stale highlight on the node the user opened.
+  const [pinnedFocusId, setPinnedFocusId] = useState<string | null>(null)
+  const pinnedFocusTimerRef = useRef<number | null>(null)
   const [computing, setComputing] = useState(true)
   const [layout, setLayout] = useState<LayoutResult | null>(null)
   const [filterKey, setFilterKey] = useState(0)
+  // viewFitted gates the visibility of the SVG group. Without this guard,
+  // there is a single render between `setLayout` and the auto-fit effect
+  // where the nodes briefly paint at the default (0,0) scale=1 transform
+  // (so the cosmos "snaps" in the upper-left corner before centering).
+  // Holding the group hidden until auto-fit has run gives a clean cross-
+  // fade from the loading overlay straight into the final position.
+  const [viewFitted, setViewFitted] = useState(false)
+  // Track the structural signature of the last computed layout. Auto-refresh
+  // polling produces new array refs even when the underlying nodes/edges
+  // haven't changed; without this guard the cosmos would re-key its <g>
+  // root and replay the fade-in animation every poll cycle, causing a
+  // visible flash during user interactions like opening a dialog.
+  const lastSigRef = useRef<string>('')
+  const hasLayoutRef = useRef(false)
 
   useEffect(() => {
     const update = () => {
@@ -502,14 +524,38 @@ export function FulfillmentCosmos({
   }, [])
 
   useEffect(() => {
-    setComputing(true)
+    // Build a stable structural signature so identity-only changes
+    // (same data, new array refs from polling) don't trigger a recompute.
+    const reqSig = requests
+      .map((r) => `${r.request_id}:${r.status}`)
+      .sort()
+      .join('|')
+    const leadSig = leads
+      .map(
+        (l) =>
+          `${l.request_id}:${l.miner_hotkey}:${l.lead_id}:${l.is_winner ? 1 : 0}`
+      )
+      .sort()
+      .join('|')
+    const sig = `${reqSig}#${leadSig}`
+    if (sig === lastSigRef.current) return
+    lastSigRef.current = sig
+
+    // Only show the "Mapping cosmos" overlay on the very first compute.
+    // Subsequent recomputes (filter changes, real data changes) keep the
+    // current layout visible while we calculate the new one in the
+    // background, then swap with a fade-in.
+    if (!hasLayoutRef.current) setComputing(true)
+    // The new layout will need re-fitting before it is safe to show, so we
+    // hide the SVG group again until the auto-fit effect runs.
+    setViewFitted(false)
     setFilterKey((k) => k + 1)
     let cancelled = false
     const id = window.setTimeout(() => {
       if (cancelled) return
       const result = computeLayout(requests, leads)
+      hasLayoutRef.current = true
       setLayout(result)
-      setComputing(false)
     }, 10)
     return () => {
       cancelled = true
@@ -543,6 +589,11 @@ export function FulfillmentCosmos({
       tx: size.w / 2 - cx * scale,
       ty: size.h / 2 - cy * scale,
     })
+    // The view is now anchored on the new layout. Reveal the SVG group and
+    // dismiss the loading overlay together so the cosmos cross-fades from
+    // the loader to its final position with no intermediate flash.
+    setViewFitted(true)
+    setComputing(false)
   }, [layout, size.w, size.h])
 
   // Attach wheel via DOM addEventListener so we can opt out of passive (default in React 18+)
@@ -598,7 +649,15 @@ export function FulfillmentCosmos({
     dragStart.current = null
   }, [])
 
-  const focusId = hoveredId || selectedId
+  const focusId = hoveredId || pinnedFocusId || selectedId
+
+  useEffect(() => {
+    return () => {
+      if (pinnedFocusTimerRef.current) {
+        window.clearTimeout(pinnedFocusTimerRef.current)
+      }
+    }
+  }, [])
 
   const highlightedEdgeIdx = useMemo(() => {
     if (!layout || !focusId) return null
@@ -683,7 +742,13 @@ export function FulfillmentCosmos({
         <g
           key={filterKey}
           transform={`translate(${view.tx} ${view.ty}) scale(${view.scale})`}
-          className="cosmos-fade-in"
+          style={{
+            // Cross-fade in once the auto-fit has anchored the view, so the
+            // graph never paints at the default (0,0) corner first.
+            opacity: viewFitted ? 1 : 0,
+            transition: 'opacity 280ms ease-out',
+            pointerEvents: viewFitted ? 'auto' : 'none',
+          }}
         >
           {/* Industry clustering is preserved in the layout math (anchor pull
               keeps same-industry requests near each other) but we don't render
@@ -775,15 +840,33 @@ export function FulfillmentCosmos({
               const shouldShowLabel =
                 isRequest && (isFocused || (forceLabelIds?.has(node.id) ?? false))
 
+              const pinFocus = () => {
+                setPinnedFocusId(node.id)
+                if (pinnedFocusTimerRef.current) {
+                  window.clearTimeout(pinnedFocusTimerRef.current)
+                }
+                pinnedFocusTimerRef.current = window.setTimeout(() => {
+                  setPinnedFocusId(null)
+                  pinnedFocusTimerRef.current = null
+                }, 350)
+              }
+
               const activate = () => {
                 if (isRequest && node.request && onRequestActivate) {
+                  // Briefly pin focus so the cosmos doesn't snap back to its
+                  // default state while the dialog is opening; auto-clears
+                  // shortly after so closing the dialog leaves no stale
+                  // highlight.
+                  pinFocus()
                   onRequestActivate(node.request)
                   return
                 }
                 if (!isRequest && node.hotkey && onMinerActivate) {
+                  pinFocus()
                   onMinerActivate(node.hotkey)
                   return
                 }
+                // No callback: behave like a toggle selection.
                 setSelectedId(selectedId === node.id ? null : node.id)
               }
               const accessibleLabel = isRequest
@@ -795,7 +878,12 @@ export function FulfillmentCosmos({
                   key={node.id}
                   data-node-id={node.id}
                   className={isPending ? 'pending-breath' : undefined}
-                  style={{ cursor: 'pointer', opacity, transition: 'opacity 200ms ease-out' }}
+                  style={{
+                    cursor: 'pointer',
+                    opacity,
+                    outline: 'none',
+                    transition: 'opacity 200ms ease-out',
+                  }}
                   role="button"
                   tabIndex={0}
                   aria-label={accessibleLabel}
@@ -805,12 +893,18 @@ export function FulfillmentCosmos({
                   onBlur={() => setHoveredId(null)}
                   onClick={(e) => {
                     e.stopPropagation()
+                    // Blur the trigger so Radix's dialog focus-restore on close
+                    // doesn't return focus here and re-trigger onFocus, which
+                    // would leave the node highlighted until the user clicks
+                    // empty space.
+                    ;(e.currentTarget as unknown as { blur?: () => void }).blur?.()
                     activate()
                   }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault()
                       e.stopPropagation()
+                      ;(e.currentTarget as unknown as { blur?: () => void }).blur?.()
                       activate()
                     }
                   }}

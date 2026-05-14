@@ -197,11 +197,13 @@ export function FulfillmentMobile({
   // At-a-glance stat strip values (always from full data, not filtered)
   const stats = useMemo(() => {
     const fulfilledLeads = allConsensus.filter((c) => c.is_winner).length
-    const totalLeads = allConsensus.length
-    const total = scoreTotals.passed + scoreTotals.failed
-    const passRate = total > 0 ? Math.round((scoreTotals.passed / total) * 100) : 0
-    return { fulfilledLeads, totalLeads, passRate }
-  }, [allConsensus, scoreTotals])
+    // Count unique miners that have shown up in any consensus row in the
+    // current snapshot. This reflects "miners actively contributing".
+    const miners = new Set(
+      allConsensus.map((c) => c.miner_hotkey).filter((h): h is string => Boolean(h)),
+    ).size
+    return { fulfilledLeads, miners }
+  }, [allConsensus])
 
   // Filtered + sorted request list
   const filteredRequests = useMemo(() => {
@@ -317,11 +319,10 @@ export function FulfillmentMobile({
       <div className="px-4 py-4 space-y-4 safe-bottom">
         {/* At-a-glance stat strip */}
         <section className="mobile-section">
-          <div className="grid grid-cols-4 divide-x divide-slate-800/60">
+          <div className="grid grid-cols-3 divide-x divide-slate-800/60">
             <StatCell label="Done" value={counts.completed} tone="default" />
-            <StatCell label="Leads" value={stats.totalLeads} tone="default" />
+            <StatCell label="Miners" value={stats.miners} tone="default" />
             <StatCell label="Fulfilled" value={stats.fulfilledLeads} tone="gold" />
-            <StatCell label="Pass" value={`${stats.passRate}%`} tone="default" />
           </div>
         </section>
 

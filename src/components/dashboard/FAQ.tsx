@@ -186,7 +186,7 @@ export function FAQ() {
           ))}
         </div>
 
-        <aside className="hidden lg:block">
+        <aside>
           <Sidebar />
         </aside>
       </div>
