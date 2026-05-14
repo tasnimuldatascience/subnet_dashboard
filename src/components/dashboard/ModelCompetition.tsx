@@ -1237,9 +1237,23 @@ export function ModelCompetition({ onSync }: { onSync?: () => void } = {}) {
   }, [fetchData])
 
   // ---------- Derived data ----------
+  // A history row is the *real* current champion only when its
+  // dethroned_at is genuinely null. The cache layer marks any
+  // history row that is undethroned BUT does not match
+  // qualification_models.is_champion=true as 'stale' — that's a
+  // stranded-row signal, not a "still reigning" signal. We must NOT
+  // surface stale rows in the Current Champion slot, otherwise an
+  // orphaned history entry from a long-since-superseded model can
+  // masquerade as the reigning champion (real bug we hit: a Mar 26
+  // 23.84 row showed as "current" months after higher-scoring
+  // champions had come and gone, because its dethroned_at was never
+  // written). When there is no genuine reigning champion the UI
+  // falls through to its "throne empty" state, which is correct.
   const currentChampion = useMemo(
     () =>
-      data?.championHistory.find((c) => !c.dethronedAt || c.dethronedAt === 'stale') ?? null,
+      data?.championHistory.find(
+        (c) => !c.dethronedAt && c.dethronedAt !== 'stale',
+      ) ?? null,
     [data]
   )
   const pastChampions = useMemo(
