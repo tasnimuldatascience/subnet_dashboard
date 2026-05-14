@@ -345,34 +345,53 @@ function DeepResearchPanel({
     setRerunInFlight(true)
     setRerunError(null)
     try {
+      // The rerun route now runs the full ~90s analysis inline before
+      // returning, so this fetch is held open until either the LLM
+      // produces a verdict or hits the worker's internal 3-min cap.
+      // When the response comes back the page reloads to render the
+      // fresh state. Browser shows the button in a loading state the
+      // entire time.
       const res = await fetch(
         `/api/admin/requests/${requestId}/deep-research/rerun`,
         { method: 'POST' },
       )
+      const body = await res.json().catch(() => ({}))
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
         setRerunError(body.error || `Server returned ${res.status}`)
         setRerunInFlight(false)
         return
       }
-      // Give the gateway sweep one tick (~30s) to claim the row,
-      // then hard-reload so the page picks up the new state. We
-      // could poll the detail endpoint but a single reload is
-      // simpler and matches operator expectations.
-      setTimeout(() => {
-        window.location.reload()
-      }, 1500)
+      // If the worker came back with a non-ok status (failed parse,
+      // OpenRouter error) we surface it inline rather than reloading
+      // into a "failed" card — saves the operator one round-trip.
+      if (body.ok === false && body.error) {
+        setRerunError(body.error)
+        // Still reload after a short delay so the failure state is
+        // reflected in the rest of the UI (status badge, etc).
+        setTimeout(() => window.location.reload(), 2000)
+        return
+      }
+      window.location.reload()
     } catch (e) {
       setRerunError(e instanceof Error ? e.message : 'Unknown error')
       setRerunInFlight(false)
     }
   }
 
-  // State A: chain not yet fulfilled — coachmark.
+  // State A: no analysis state yet. Splits into two sub-cases:
+  //   A1. Chain not fulfilled         -> pure coachmark, nothing to do
+  //   A2. Chain IS fulfilled but null -> migration just applied OR the
+  //       chain pre-dated the auto-trigger OR the auto-trigger failed
+  //       silently. Show a "Run analysis now" button so the operator
+  //       can manually kick off the QA pass without needing to touch
+  //       Supabase. Hits the same POST /rerun endpoint as the failed
+  //       state's retry button (which requires status='fulfilled', so
+  //       this is safe by construction).
   if (state.status == null) {
+    const canManuallyTrigger = chainStatus === 'fulfilled'
     return (
       <div
-        className="rounded-xl border p-10 text-center space-y-3"
+        className="rounded-xl border p-10 text-center space-y-4"
         style={{
           borderColor: 'var(--surface-border)',
           background: 'var(--surface)',
@@ -387,15 +406,17 @@ function DeepResearchPanel({
             className="text-sm font-medium"
             style={{ color: 'var(--text-primary)' }}
           >
-            Analysis runs automatically once the chain is fulfilled
+            {canManuallyTrigger
+              ? 'No deep research analysis on file yet'
+              : 'Analysis runs automatically once the chain is fulfilled'}
           </div>
           <div
             className="text-xs max-w-md mx-auto"
             style={{ color: 'var(--text-tertiary)' }}
           >
-            Once every winning lead is in, Perplexity Sonar Deep Research
-            verifies each row against the live web and flags anything
-            inaccurate, stale, off-ICP, or unsafe to deliver.
+            {canManuallyTrigger
+              ? 'This chain finished before the auto-trigger was wired in, or the trigger has not run yet. Click below to run Perplexity Sonar Deep Research now and verify every winning lead against the live web.'
+              : 'Once every winning lead is in, Perplexity Sonar Deep Research verifies each row against the live web and flags anything inaccurate, stale, off-ICP, or unsafe to deliver.'}
           </div>
           <div
             className="text-[11px] mt-2"
@@ -407,6 +428,41 @@ function DeepResearchPanel({
             </span>
           </div>
         </div>
+        {canManuallyTrigger && (
+          <div className="space-y-2">
+            <button
+              type="button"
+              onClick={triggerRerun}
+              disabled={rerunInFlight}
+              className="inline-flex items-center gap-2 rounded-md px-4 py-2 text-xs font-medium border transition-colors disabled:opacity-50"
+              style={{
+                borderColor: 'rgba(201, 169, 110, 0.35)',
+                background: 'var(--brand-soft)',
+                color: 'var(--brand)',
+              }}
+            >
+              {rerunInFlight ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Queuing…
+                </>
+              ) : (
+                <>
+                  <Sparkles className="h-3.5 w-3.5" />
+                  Run analysis now
+                </>
+              )}
+            </button>
+            {rerunError && (
+              <div
+                className="text-xs"
+                style={{ color: 'var(--burgundy)' }}
+              >
+                {rerunError}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     )
   }

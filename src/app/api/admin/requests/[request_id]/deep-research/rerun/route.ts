@@ -1,30 +1,33 @@
 /**
  * POST /api/admin/requests/[request_id]/deep-research/rerun
  *
- * Resets the deep research state on the chain LEAF so the next
- * gateway lifecycle tick re-runs the Perplexity Sonar Deep Research
- * QA pass. Useful when:
+ * Resets the deep research state on the chain LEAF and immediately
+ * fires the worker so the operator sees results within ~90s without
+ * having to wait for the background sweep tick. Useful when:
  *   - The first run failed (LLM timeout, rate limit, parse error)
  *   - The lead data changed since the last analysis
  *   - The operator wants a fresh second opinion
  *
- * Idempotent: clobbers any prior status, attempts, error, and analysis
- * back to (pending, 0, null, null). The gateway sweep will then claim
- * the row on its next tick.
+ * Returns the post-call state in the response so the dashboard can
+ * decide whether to show success / failure / try-again without an
+ * extra round-trip.
  *
- * Requires that the LEAF row already has status='fulfilled' — we
+ * Requires the LEAF row to already have status='fulfilled' — we
  * don't allow forcing a QA pass on an unfulfilled chain because the
  * leads aren't final yet.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getAdminSupabase, AdminFulfillmentRequest } from '@/lib/admin-supabase'
+import { runForRequest } from '@/lib/deep-research/worker'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+// Same rationale as the sweep route: Deep Research takes ~90s and we
+// want the rerun's HTTP response to carry the final result rather
+// than just a queued ack.
+export const maxDuration = 300
 
-// Walk forward from any chain row to the leaf so the caller can pass
-// any request_id in the chain and we still target the correct row.
 async function findLeafRequest(
   supabase: ReturnType<typeof getAdminSupabase>,
   startId: string,
@@ -52,10 +55,7 @@ export async function POST(
 ) {
   const { request_id } = await ctx.params
   if (!request_id || !/^[0-9a-f-]{36}$/i.test(request_id)) {
-    return NextResponse.json(
-      { error: 'invalid request_id' },
-      { status: 400 },
-    )
+    return NextResponse.json({ error: 'invalid request_id' }, { status: 400 })
   }
 
   let supabase
@@ -68,10 +68,7 @@ export async function POST(
 
   const leaf = await findLeafRequest(supabase, request_id)
   if (!leaf) {
-    return NextResponse.json(
-      { error: 'request not found' },
-      { status: 404 },
-    )
+    return NextResponse.json({ error: 'request not found' }, { status: 404 })
   }
   if (leaf.status !== 'fulfilled') {
     return NextResponse.json(
@@ -84,11 +81,10 @@ export async function POST(
     )
   }
 
-  // Reset to pending so the gateway sweep picks it up on next tick.
-  // We also clear analysis + error so the dashboard immediately stops
-  // showing the prior (stale or failed) state. The gateway will write
-  // fresh values when the new run completes.
-  const { error: updateErr } = await supabase
+  // Reset the state machine so the worker's claim transition succeeds.
+  // We null analysis + error so the dashboard immediately stops showing
+  // the prior (stale or failed) state.
+  const { error: resetErr } = await supabase
     .from('fulfillment_requests')
     .update({
       deep_research_status: 'pending',
@@ -98,21 +94,24 @@ export async function POST(
       deep_research_analysis: null,
     })
     .eq('request_id', leaf.request_id)
-
-  if (updateErr) {
+  if (resetErr) {
     return NextResponse.json(
-      { error: `Supabase error: ${updateErr.message}` },
+      { error: `Supabase error: ${resetErr.message}` },
       { status: 502 },
     )
   }
 
+  // Fire the worker inline. The HTTP response holds the call open for
+  // up to 5 minutes (maxDuration above), so the operator's "Re-run"
+  // button completes with the actual result, not just a queued ack.
+  const result = await runForRequest(supabase, leaf.request_id)
+
   return NextResponse.json(
     {
-      ok: true,
+      ok: result.ok,
       leaf_request_id: leaf.request_id,
-      message:
-        'Deep research analysis queued. The gateway sweep runs every ' +
-        '30 seconds — refresh in 1-2 minutes for results.',
+      run_status: result.status,
+      error: result.error,
     },
     { headers: { 'Cache-Control': 'no-store' } },
   )
