@@ -85,30 +85,45 @@ function StatusPill({ status }: { status: string }) {
   )
 }
 
-function ProgressBar({ delivered, target }: { delivered: number; target: number }) {
-  const pct = Math.max(0, Math.min(1, target > 0 ? delivered / target : 0))
+function ApprovalProgress({ approved, target }: { approved: number; target: number }) {
+  const pct = Math.max(0, Math.min(1, target > 0 ? approved / target : 0))
   const widthPct = `${pct * 100}%`
   const tone = pct >= 1 ? 'gold' : pct >= 0.5 ? 'cream' : 'amber'
   const fillColor =
     tone === 'gold' ? 'var(--brand)' : tone === 'cream' ? '#e8e1d4' : '#cf9d61'
+  const remaining = Math.max(0, target - approved)
+
   return (
-    <div className="flex items-center gap-2 min-w-[120px]">
-      <div
-        className="h-1 flex-1 rounded-full overflow-hidden"
-        style={{ background: 'rgba(245, 240, 232, 0.06)' }}
-      >
-        <div
-          className="h-full rounded-full transition-all duration-500"
-          style={{ width: widthPct, background: fillColor }}
-        />
+    <div className="min-w-[170px] space-y-1.5">
+      <div className="flex items-baseline justify-between gap-3">
+        <span
+          className="text-[10px] uppercase tracking-[0.14em]"
+          style={{ color: 'var(--text-tertiary)' }}
+        >
+          Approved
+        </span>
+        <span className="tabular-nums text-sm font-medium text-gold">
+          {approved}
+          <span className="text-[11px] font-normal" style={{ color: 'var(--text-tertiary)' }}>
+            {' '}
+            / {target}
+          </span>
+        </span>
       </div>
-      <span
-        className="text-[11px] tabular-nums whitespace-nowrap"
-        style={{ color: 'var(--text-secondary)' }}
-      >
-        {delivered}
-        <span style={{ color: 'var(--text-tertiary)' }}> / {target}</span>
-      </span>
+      <div className="flex items-center gap-2">
+        <div
+          className="h-1.5 flex-1 rounded-full overflow-hidden"
+          style={{ background: 'rgba(245, 240, 232, 0.06)' }}
+        >
+          <div
+            className="h-full rounded-full transition-all duration-500"
+            style={{ width: widthPct, background: fillColor }}
+          />
+        </div>
+        <span className="whitespace-nowrap text-[10px] tabular-nums text-slate-500">
+          {remaining === 0 ? 'complete' : `${remaining} left`}
+        </span>
+      </div>
     </div>
   )
 }
@@ -332,9 +347,8 @@ export function AdminRequestList({
 
 function ChainRow({ chain }: { chain: ChainSummary }) {
   return (
-    <Link
-      href={`/admin/requests/${chain.request_id}`}
-      className="card-lift block rounded-xl border px-5 py-4 transition-colors group"
+    <div
+      className="card-lift rounded-xl border px-5 py-4 transition-colors group"
       style={{
         borderColor: 'var(--surface-border)',
         background: 'var(--surface)',
@@ -342,7 +356,7 @@ function ChainRow({ chain }: { chain: ChainSummary }) {
     >
       <div className="flex items-center gap-5 flex-wrap sm:flex-nowrap">
         {/* Label + meta */}
-        <div className="min-w-0 flex-1">
+        <Link href={`/admin/requests/${chain.request_id}`} className="min-w-0 flex-1">
           <div className="flex items-center gap-2 mb-1">
             <h3
               className="font-medium truncate"
@@ -391,11 +405,11 @@ function ChainRow({ chain }: { chain: ChainSummary }) {
               </span>
             )}
           </div>
-        </div>
+        </Link>
 
-        {/* Progress */}
-        <ProgressBar
-          delivered={chain.delivered_count}
+        {/* Approved lead count */}
+        <ApprovalProgress
+          approved={chain.delivered_count}
           target={chain.target_num_leads}
         />
 
@@ -404,15 +418,35 @@ function ChainRow({ chain }: { chain: ChainSummary }) {
           <StatusPill status={chain.status} />
         </div>
 
-        <ChevronRight
-          className="h-4 w-4 flex-shrink-0 transition-transform group-hover:translate-x-0.5"
-          style={{ color: 'var(--text-tertiary)' }}
-        />
+        <Link
+          href={`/admin/requests/new?reuse=${chain.request_id}`}
+          className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[11px] font-medium transition-colors hover:border-gold-soft hover:text-gold"
+          style={{
+            borderColor: 'var(--surface-border)',
+            color: 'var(--text-secondary)',
+            background: 'var(--surface-elevated)',
+          }}
+          title="Create a new editable request from this ICP"
+        >
+          <RotateCw className="h-3 w-3" />
+          Reuse
+        </Link>
+
+        <Link
+          href={`/admin/requests/${chain.request_id}`}
+          className="inline-flex"
+          aria-label="Open request detail"
+        >
+          <ChevronRight
+            className="h-4 w-4 flex-shrink-0 transition-transform group-hover:translate-x-0.5"
+            style={{ color: 'var(--text-tertiary)' }}
+          />
+        </Link>
       </div>
       <div className="sm:hidden mt-3">
         <StatusPill status={chain.status} />
       </div>
-    </Link>
+    </div>
   )
 }
 

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import {
   Download,
   Copy,
@@ -177,6 +178,18 @@ export function AdminRequestDetail({
             </div>
 
             <div className="flex gap-2 items-center">
+              <Link
+                href={`/admin/requests/new?reuse=${requestId}`}
+                className="inline-flex items-center gap-2 rounded-md px-3.5 py-2 text-xs font-medium transition-colors border"
+                style={{
+                  borderColor: 'rgba(201, 169, 110, 0.35)',
+                  background: 'var(--brand-soft)',
+                  color: 'var(--brand)',
+                }}
+              >
+                <RotateCw className="h-3.5 w-3.5" />
+                Reuse request
+              </Link>
               <CopyButton text={requestId} label="Copy request ID" />
               <a
                 href={`/api/admin/requests/${requestId}/csv`}
@@ -1636,6 +1649,11 @@ function IcpPanel({ icp }: { icp: IcpDetails | null }) {
       </div>
     )
   }
+  const requiredCompanyAttributes = asList(icp.required_attributes?.company)
+  const requiredContactAttributes = asList(icp.required_attributes?.contact)
+  const hasRequiredAttributes =
+    requiredCompanyAttributes.length > 0 || requiredContactAttributes.length > 0
+
   return (
     <div className="space-y-3">
       {icp.prompt && (
@@ -1712,6 +1730,20 @@ function IcpPanel({ icp }: { icp: IcpDetails | null }) {
           ))}
         </ul>
       </FieldGroup>
+      {hasRequiredAttributes && (
+        <FieldGroup title="Required attributes">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <AttributeList
+              title="Company"
+              values={requiredCompanyAttributes}
+            />
+            <AttributeList
+              title="Contact"
+              values={requiredContactAttributes}
+            />
+          </div>
+        </FieldGroup>
+      )}
       {(icp.excluded_companies ?? []).length > 0 && (
         <FieldGroup title="Excluded companies">
           <div className="flex flex-wrap gap-1.5">
@@ -1730,6 +1762,44 @@ function IcpPanel({ icp }: { icp: IcpDetails | null }) {
             ))}
           </div>
         </FieldGroup>
+      )}
+    </div>
+  )
+}
+
+function AttributeList({
+  title,
+  values,
+}: {
+  title: string
+  values: string[]
+}) {
+  return (
+    <div>
+      <div
+        className="mb-2 text-[11px] uppercase tracking-[0.10em]"
+        style={{ color: 'var(--text-tertiary)' }}
+      >
+        {title}
+      </div>
+      {values.length === 0 ? (
+        <Dash />
+      ) : (
+        <ul className="space-y-1.5 text-sm">
+          {values.map((value, i) => (
+            <li
+              key={`${title}-${i}-${value}`}
+              className="flex gap-2 items-start"
+              style={{ color: 'var(--text-primary)' }}
+            >
+              <span
+                className="mt-2 inline-block h-1 w-1 flex-shrink-0 rounded-full"
+                style={{ background: 'var(--text-tertiary)' }}
+              />
+              <span>{value}</span>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   )

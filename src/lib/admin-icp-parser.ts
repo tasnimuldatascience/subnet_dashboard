@@ -29,7 +29,7 @@ import {
   type RoleType,
   type EmployeeBucket,
 } from './admin-icp-constants'
-import type { IntentSignalSpec } from './admin-supabase'
+import type { IntentSignalSpec, RequiredAttributes } from './admin-supabase'
 
 /**
  * Coerce any value the dashboard might receive from the gateway,
@@ -78,6 +78,17 @@ export function normalizeIntentSignals(
   return out
 }
 
+export function normalizeRequiredAttributes(value: unknown): RequiredAttributes {
+  const empty: RequiredAttributes = { company: [], contact: [] }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return empty
+
+  const obj = value as Record<string, unknown>
+  return {
+    company: stringListValue(obj.company),
+    contact: stringListValue(obj.contact),
+  }
+}
+
 export interface ParsedIcpDraft {
   prompt: string
   industry: string[]
@@ -92,6 +103,7 @@ export interface ParsedIcpDraft {
   // from the heuristic parser / AI parse / Supabase get normalized
   // into this shape via ``normalizeIntentSignals``.
   intent_signals: IntentSignalSpec[]
+  required_attributes: RequiredAttributes
   product_service: string
   num_leads: number
   internal_label: string
@@ -113,6 +125,7 @@ export function emptyDraft(): ParsedIcpDraft {
     target_seniority: '',
     employee_count: [],
     intent_signals: [],
+    required_attributes: { company: [], contact: [] },
     product_service: '',
     num_leads: 10,
     internal_label: '',
@@ -140,6 +153,25 @@ function splitList(value: string): string[] {
     .split(/[,;]/)
     .map((s) => s.trim())
     .filter(Boolean)
+}
+
+function splitAttributeList(value: string): string[] {
+  return value
+    .split(/\r?\n|;/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
+function stringListValue(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return dedupeKeepCase(
+      value
+        .map((item) => (typeof item === 'string' ? item.trim() : ''))
+        .filter(Boolean),
+    )
+  }
+  if (typeof value === 'string') return dedupeKeepCase(splitAttributeList(value))
+  return []
 }
 
 function dedupeKeepCase<T extends string>(arr: T[]): T[] {
@@ -467,6 +499,73 @@ function detectIntentSignals(text: string): IntentSignalSpec[] {
 }
 
 // =================================================================
+// Required attributes
+// =================================================================
+
+function collectSectionItems(text: string, headerPattern: RegExp): string[] {
+  const lines = text.split(/\r?\n/)
+  const items: string[] = []
+  let inSection = false
+
+  for (const raw of lines) {
+    const stripped = raw.trim()
+    if (headerPattern.test(stripped)) {
+      inSection = true
+      const inline = stripped.replace(headerPattern, '').replace(/^[:=\-–]\s*/, '').trim()
+      if (inline) items.push(...splitAttributeList(inline))
+      continue
+    }
+    if (!inSection) continue
+    if (stripped.length === 0) {
+      inSection = false
+      continue
+    }
+    if (/^(\w[\w\s/&-]+)\s*:/.test(stripped) && !/^[-*•·]/.test(raw)) {
+      inSection = false
+      continue
+    }
+    const cleaned = clean(stripped)
+    if (cleaned.length > 0 && cleaned.length < 220) items.push(cleaned)
+  }
+
+  return dedupeKeepCase(items)
+}
+
+function detectRequiredAttributes(text: string): RequiredAttributes {
+  const company = [
+    fieldByLabel(text, [
+      'required company attributes',
+      'company required attributes',
+      'company attributes',
+      'company criteria',
+      'required company criteria',
+      'required_attributes.company',
+    ]),
+    ...collectSectionItems(
+      text,
+      /^(required\s+)?company\s+(attributes?|criteria)\s*[:=]?/i,
+    ),
+  ].flatMap((value) => (value ? splitAttributeList(value) : []))
+
+  const contact = [
+    fieldByLabel(text, [
+      'required contact attributes',
+      'contact required attributes',
+      'contact attributes',
+      'contact criteria',
+      'required contact criteria',
+      'required_attributes.contact',
+    ]),
+    ...collectSectionItems(
+      text,
+      /^(required\s+)?contact\s+(attributes?|criteria)\s*[:=]?/i,
+    ),
+  ].flatMap((value) => (value ? splitAttributeList(value) : []))
+
+  return normalizeRequiredAttributes({ company, contact })
+}
+
+// =================================================================
 // Top-level parser
 // =================================================================
 
@@ -564,6 +663,7 @@ export function parseFreeFormIcp(rawText: string): ParsedIcpDraft {
   if (draft.intent_signals.length === 0) {
     draft.intent_signals = detectIntentSignals(text)
   }
+  draft.required_attributes = detectRequiredAttributes(text)
 
   const numLeads = detectNumLeads(text)
   if (numLeads !== null) draft.num_leads = numLeads

@@ -65,6 +65,11 @@ export interface IntentSignalSpec {
   required: boolean
 }
 
+export interface RequiredAttributes {
+  company: string[]
+  contact: string[]
+}
+
 export interface IcpDetails {
   prompt?: string
   industry?: string | string[]
@@ -81,6 +86,9 @@ export interface IcpDetails {
   // ``normalizeIntentSignals`` (admin-icp-parser.ts) before rendering
   // UI that depends on the ``required`` flag.
   intent_signals?: Array<string | IntentSignalSpec>
+  // Buyer-defined fail-closed attributes verified by the gateway's
+  // Tier 2c Sonar pass before intent scoring.
+  required_attributes?: Partial<RequiredAttributes>
   product_service?: string
   excluded_companies?: string[]
   num_leads?: number

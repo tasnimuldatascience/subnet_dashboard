@@ -21,9 +21,10 @@ import {
   emptyDraft,
   parseFreeFormIcp,
   normalizeIntentSignals,
+  normalizeRequiredAttributes,
   type ParsedIcpDraft,
 } from '@/lib/admin-icp-parser'
-import type { IntentSignalSpec } from '@/lib/admin-supabase'
+import type { IntentSignalSpec, RequiredAttributes } from '@/lib/admin-supabase'
 
 type SubmitState =
   | { status: 'idle' }
@@ -82,6 +83,10 @@ function normalizeDraft(draft: ParsedIcpDraft): ParsedIcpDraft {
     intent_signals: draft.intent_signals
       .map((spec) => ({ ...spec, text: spec.text.trim() }))
       .filter((spec) => spec.text.length > 0),
+    required_attributes: {
+      company: draft.required_attributes.company.map((s) => s.trim()).filter(Boolean),
+      contact: draft.required_attributes.contact.map((s) => s.trim()).filter(Boolean),
+    },
     excluded_companies: draft.excluded_companies.map((s) => s.trim()).filter(Boolean),
     num_leads: Math.max(1, Math.floor(Number(draft.num_leads) || 10)),
   }
@@ -146,6 +151,14 @@ function companyMentionWarnings(draft: ParsedIcpDraft): string[] {
       // intent_signals is now an array of structured specs; the
       // company-name leak check only operates on the user-visible text.
       values: draft.intent_signals.map((s) => s.text),
+    },
+    {
+      label: 'Required company attributes',
+      values: draft.required_attributes.company,
+    },
+    {
+      label: 'Required contact attributes',
+      values: draft.required_attributes.contact,
     },
     { label: 'Excluded companies', values: draft.excluded_companies },
   ]
@@ -445,9 +458,17 @@ function IntentSignalEditor({
   )
 }
 
-export function NewRequestBuilder() {
+export function NewRequestBuilder({
+  initialDraft,
+  reuseSource,
+  reuseError,
+}: {
+  initialDraft?: ParsedIcpDraft
+  reuseSource?: { requestId: string; label: string | null }
+  reuseError?: string
+}) {
   const [rawIcp, setRawIcp] = useState('')
-  const [draft, setDraft] = useState<ParsedIcpDraft>(() => emptyDraft())
+  const [draft, setDraft] = useState<ParsedIcpDraft>(() => initialDraft ?? emptyDraft())
   const [submitState, setSubmitState] = useState<SubmitState>({ status: 'idle' })
   const [parseState, setParseState] = useState<ParseState>({ status: 'idle' })
   const [resetKey, setResetKey] = useState(0)
@@ -459,6 +480,16 @@ export function NewRequestBuilder() {
 
   function update<K extends keyof ParsedIcpDraft>(key: K, value: ParsedIcpDraft[K]) {
     setDraft((prev) => ({ ...prev, [key]: value }))
+  }
+
+  function updateRequiredAttributes(scope: keyof RequiredAttributes, value: string[]) {
+    setDraft((prev) => ({
+      ...prev,
+      required_attributes: {
+        ...prev.required_attributes,
+        [scope]: value,
+      },
+    }))
   }
 
   function clearForm() {
@@ -505,12 +536,14 @@ export function NewRequestBuilder() {
       // any legacy stray keys.
       const rawDraft = body.draft as ParsedIcpDraft & {
         intent_signals?: unknown
+        required_attributes?: unknown
       }
       const base = emptyDraft()
       const coercedDraft: ParsedIcpDraft = {
         ...base,
         ...rawDraft,
         intent_signals: normalizeIntentSignals(rawDraft.intent_signals),
+        required_attributes: normalizeRequiredAttributes(rawDraft.required_attributes),
         expand_target_roles:
           typeof rawDraft.expand_target_roles === 'boolean'
             ? rawDraft.expand_target_roles
@@ -577,6 +610,23 @@ export function NewRequestBuilder() {
             Paste an ICP, generate a structured draft, review every field, then submit to the
             fulfillment gateway. Client company and internal label stay operator-only.
           </p>
+          {reuseSource && (
+            <div className="mt-3 rounded-lg border border-gold-soft bg-gold-soft px-3 py-2 text-xs text-gold">
+              Reusing criteria from{' '}
+              <Link
+                href={`/admin/requests/${reuseSource.requestId}`}
+                className="font-medium underline decoration-gold/40 underline-offset-2 hover:text-gold-bright"
+              >
+                {reuseSource.label || reuseSource.requestId.slice(0, 8)}
+              </Link>
+              . Review and edit before submitting. Excluded companies are left blank so the gateway refreshes prior delivered-company exclusions.
+            </div>
+          )}
+          {reuseError && (
+            <div className="mt-3 rounded-lg border border-burgundy-soft bg-burgundy-soft px-3 py-2 text-xs text-burgundy">
+              {reuseError}
+            </div>
+          )}
         </div>
         <div className="rounded-lg border border-slate-800/70 bg-slate-950/50 px-3 py-2 text-[11px] text-slate-500">
           Gateway submit is proxied server-side with <span className="font-mono text-slate-300">SUPABASE_SECRET_KEY</span>.
@@ -777,6 +827,29 @@ export function NewRequestBuilder() {
             onChange={(v) => update('intent_signals', v)}
             hint="Use concrete observable events miners can verify in page content. Toggle 'Required' to force the lead to satisfy this verified signal (or scoring fails)."
           />
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <ArrayField
+              label="Required company attributes"
+              value={draft.required_attributes.company}
+              onChange={(v) => updateRequiredAttributes('company', v)}
+              placeholder="Is an importer or exporter&#10;Operates in manufacturing, retail, or wholesale"
+              hint="Fail-closed company-level gates verified by the gateway before intent scoring."
+              splitMode="newline"
+              rows={4}
+              resetKey={resetKey}
+            />
+            <ArrayField
+              label="Required contact attributes"
+              value={draft.required_attributes.contact}
+              onChange={(v) => updateRequiredAttributes('contact', v)}
+              placeholder="Is a W-2 employee&#10;Earns between $200,000 and $600,000"
+              hint="Fail-closed contact-level gates verified against person/profile evidence."
+              splitMode="newline"
+              rows={4}
+              resetKey={resetKey}
+            />
+          </div>
 
           <ArrayField
             label="Excluded companies"

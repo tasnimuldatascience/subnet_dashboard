@@ -1,9 +1,8 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { Shield } from 'lucide-react'
 
 export const metadata: Metadata = {
-  title: 'Admin',
+  title: 'Leadpoet Admin Portal',
   robots: { index: false, follow: false },
 }
 
@@ -34,27 +33,18 @@ export default function AdminLayout({
               href="/admin"
               className="flex items-center gap-2.5 group min-w-0"
             >
-              <div
-                className="flex h-7 w-7 items-center justify-center rounded-md flex-shrink-0"
-                style={{
-                  background: 'var(--brand-soft)',
-                  border: '1px solid rgba(201, 169, 110, 0.30)',
-                }}
-              >
-                <Shield className="h-3.5 w-3.5 text-gold" />
-              </div>
               <div className="flex flex-col leading-tight min-w-0">
                 <span
                   className="text-[11px] uppercase tracking-[0.14em]"
                   style={{ color: 'var(--text-tertiary)' }}
                 >
-                  Leadpoet
+                  Internal tools
                 </span>
                 <span
                   className="text-sm font-medium truncate"
                   style={{ color: 'var(--text-primary)' }}
                 >
-                  Fulfillment Admin
+                  Leadpoet Admin Portal
                 </span>
               </div>
             </Link>

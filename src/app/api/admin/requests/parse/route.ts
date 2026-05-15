@@ -11,6 +11,7 @@ import {
 import {
   emptyDraft,
   normalizeIntentSignals,
+  normalizeRequiredAttributes,
   type ParsedIcpDraft,
 } from '@/lib/admin-icp-parser'
 
@@ -87,6 +88,7 @@ function sanitizeDraft(input: MaybeDraft, rawText: string): ParsedIcpDraft {
     // ``normalizeIntentSignals`` accepts both legacy ``string[]`` and
     // structured shapes; stray legacy keys like ``is_scored`` drop out.
     intent_signals: normalizeIntentSignals(input.intent_signals).slice(0, 15),
+    required_attributes: normalizeRequiredAttributes(input.required_attributes),
     product_service: stringValue(input.product_service),
     num_leads: numberValue(input.num_leads, fallback.num_leads),
     internal_label: stringValue(input.internal_label),
@@ -142,6 +144,7 @@ Schema:
   "target_seniority": string,
   "employee_count": string[],
   "intent_signals": string[],
+  "required_attributes": {"company": string[], "contact": string[]},
   "product_service": string,
   "num_leads": number,
   "internal_label": string,
@@ -165,6 +168,7 @@ ${VALID_ROLE_TYPES.map((v) => `  - ${v}`).join('\n')}
 ${EMPLOYEE_COUNT_BUCKETS.map((v) => `  - ${v}`).join('\n')}
 - "country" must be country names, e.g. "United States", "France". Empty array means any country.
 - "intent_signals" must be a list of plain strings — each one a concrete observable event miners can verify from web content. Avoid vague signals like "has budget" or "high intent". Do NOT infer required-vs-optional; the operator will toggle "Required" per signal in the admin UI after reviewing your draft.
+- "required_attributes" is optional fail-closed criteria. Use "company" for company-level gates (for example, "Is an importer or exporter"). Use "contact" for person-level gates (for example, "Is a W-2 employee"). Only include attributes explicitly stated by the operator; otherwise return {"company":[],"contact":[]}.
 - "product_service" describes what the client sells, not just the buyer pain.
 - "num_leads" defaults to 10 if unspecified.
 - "excluded_companies" is optional; include only explicitly named excluded prospect companies.

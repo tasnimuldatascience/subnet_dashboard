@@ -16,6 +16,7 @@ type FulfillmentPayload = {
   country?: unknown
   geography?: unknown
   intent_signals?: unknown
+  required_attributes?: unknown
   product_service?: unknown
   num_leads?: unknown
   internal_label?: unknown
@@ -57,6 +58,18 @@ function isIntentSignalsArray(value: unknown): boolean {
   })
 }
 
+function isRequiredAttributes(value: unknown): boolean {
+  if (value === undefined) return true
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const obj = value as Record<string, unknown>
+  const allowed = new Set(['company', 'contact'])
+  if (Object.keys(obj).some((key) => !allowed.has(key))) return false
+  return (
+    (obj.company === undefined || isStringArray(obj.company)) &&
+    (obj.contact === undefined || isStringArray(obj.contact))
+  )
+}
+
 function validatePayload(body: FulfillmentPayload): string[] {
   const errors: string[] = []
 
@@ -90,6 +103,12 @@ function validatePayload(body: FulfillmentPayload): string[] {
   ) {
     errors.push(
       'intent_signals must be a list of strings, or of objects with a "text" field (optionally "required").',
+    )
+  }
+
+  if (!isRequiredAttributes(body.required_attributes)) {
+    errors.push(
+      'required_attributes must be an object with optional "company" and "contact" string lists.',
     )
   }
 

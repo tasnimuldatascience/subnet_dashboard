@@ -22,7 +22,9 @@ import { NextRequest, NextResponse } from 'next/server'
  *   ADMIN_PASS         (24+ char random string)
  *
  * If either env var is missing, the admin surface returns 503 with
- * a clear error instead of silently allowing access.
+ * a clear error instead of silently allowing access. Local development
+ * on loopback hosts is exempt so embedded browsers that suppress the
+ * native Basic Auth prompt can still load the admin UI.
  *
  * Runtime: this runs in the Edge runtime (Next's default for
  * middleware) so we cannot use node:crypto or Buffer. Constant-time
@@ -53,6 +55,13 @@ function misconfigured(): NextResponse {
     'Admin surface is misconfigured: ADMIN_USER and ADMIN_PASS env vars are not set on the server.',
     { status: 503, headers: { 'Cache-Control': 'no-store' } },
   )
+}
+
+function isLoopbackDev(req: NextRequest): boolean {
+  if (process.env.NODE_ENV !== 'development') return false
+
+  const hostname = req.nextUrl.hostname
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1'
 }
 
 /**
@@ -99,6 +108,10 @@ function decodeBase64(b64: string): string | null {
 }
 
 export function middleware(req: NextRequest): NextResponse {
+  if (isLoopbackDev(req)) {
+    return NextResponse.next()
+  }
+
   const expectedUser = process.env.ADMIN_USER
   const expectedPass = process.env.ADMIN_PASS
   if (!expectedUser || !expectedPass) {
