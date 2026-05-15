@@ -506,9 +506,15 @@ export function NewRequestBuilder() {
       const rawDraft = body.draft as ParsedIcpDraft & {
         intent_signals?: unknown
       }
+      const base = emptyDraft()
       const coercedDraft: ParsedIcpDraft = {
+        ...base,
         ...rawDraft,
         intent_signals: normalizeIntentSignals(rawDraft.intent_signals),
+        expand_target_roles:
+          typeof rawDraft.expand_target_roles === 'boolean'
+            ? rawDraft.expand_target_roles
+            : base.expand_target_roles,
       }
       setDraft(coercedDraft)
       setParseState({ status: 'success', model: body.model })
@@ -729,10 +735,27 @@ export function NewRequestBuilder() {
             value={draft.target_roles}
             onChange={(v) => update('target_roles', v)}
             placeholder="CTO&#10;VP Engineering&#10;Head of Engineering"
-            hint="Seed with 5-15 specific titles. Gateway expands variants."
+            hint="Seed with specific titles. When enabled below, gateway expands variants."
             rows={4}
             resetKey={resetKey}
           />
+
+          <div className="rounded-lg border border-slate-800/70 bg-slate-950/40 px-3 py-2">
+            <label className="inline-flex items-start gap-2 text-[11px] text-slate-300">
+              <input
+                type="checkbox"
+                checked={draft.expand_target_roles}
+                onChange={(e) => update('expand_target_roles', e.target.checked)}
+                className="mt-0.5 h-3.5 w-3.5 accent-gold"
+              />
+              <span>
+                <span className="font-medium text-slate-200">Expand target roles on gateway</span>
+                <span className="mt-1 block text-[10px] text-slate-500 leading-relaxed">
+                  Off sends your list verbatim (no synonym expansion). Miners only see stored titles.
+                </span>
+              </span>
+            </label>
+          </div>
 
           <MultiCheckboxField<RoleType>
             label="Role types"

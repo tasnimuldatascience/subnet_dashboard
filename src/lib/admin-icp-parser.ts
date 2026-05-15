@@ -96,6 +96,8 @@ export interface ParsedIcpDraft {
   num_leads: number
   internal_label: string
   company: string
+  /** When false, gateway stores target_roles verbatim (no LLM expansion). */
+  expand_target_roles: boolean
   excluded_companies: string[]
 }
 
@@ -115,6 +117,7 @@ export function emptyDraft(): ParsedIcpDraft {
     num_leads: 10,
     internal_label: '',
     company: '',
+    expand_target_roles: true,
     excluded_companies: [],
   }
 }

@@ -21,6 +21,7 @@ type FulfillmentPayload = {
   internal_label?: unknown
   company?: unknown
   excluded_companies?: unknown
+  expand_target_roles?: unknown
 }
 
 function isNonEmptyString(value: unknown): value is string {
@@ -98,6 +99,10 @@ function validatePayload(body: FulfillmentPayload): string[] {
 
   if (body.excluded_companies !== undefined && !isStringArray(body.excluded_companies)) {
     errors.push('excluded_companies must be a list')
+  }
+
+  if (body.expand_target_roles !== undefined && typeof body.expand_target_roles !== 'boolean') {
+    errors.push('expand_target_roles must be a boolean')
   }
 
   return errors

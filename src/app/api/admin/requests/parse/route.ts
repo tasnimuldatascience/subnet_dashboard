@@ -60,6 +60,18 @@ function employeeBuckets(value: unknown): EmployeeBucket[] {
   return stringArray(value).filter((item): item is EmployeeBucket => allowed.has(item))
 }
 
+function booleanExpandTargetRoles(value: unknown, fallback: boolean): boolean {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number' && (value === 0 || value === 1)) return value === 1
+  if (typeof value === 'string') {
+    const s = value.trim().toLowerCase()
+    if (s === 'false' || s === '0' || s === 'no' || s === 'off') return false
+    if (s === 'true' || s === '1' || s === 'yes' || s === 'on') return true
+    if (!s.length) return fallback
+  }
+  return fallback
+}
+
 function sanitizeDraft(input: MaybeDraft, rawText: string): ParsedIcpDraft {
   const fallback = emptyDraft()
   return {
@@ -79,6 +91,10 @@ function sanitizeDraft(input: MaybeDraft, rawText: string): ParsedIcpDraft {
     num_leads: numberValue(input.num_leads, fallback.num_leads),
     internal_label: stringValue(input.internal_label),
     company: stringValue(input.company),
+    expand_target_roles: booleanExpandTargetRoles(
+      input.expand_target_roles,
+      fallback.expand_target_roles,
+    ),
     excluded_companies: stringArray(input.excluded_companies).slice(0, 100),
   }
 }
