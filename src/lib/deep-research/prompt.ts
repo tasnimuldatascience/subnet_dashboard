@@ -83,9 +83,8 @@ Requested Intent Signals:
 {intent_signals_block}
 
 Notes on the Requested Intent Signals list above:
-- A signal tagged [REQUIRED] is a hard requirement: the operator pre-committed to failing any lead that doesn't show verified evidence of it. Treat any missing or unverifiable required signal as a Remove-worthy issue.
-- A signal tagged [BINARY] is a yes/no fact-check (e.g. "ships to Asia") that does not contribute to the lead's numeric intent score. Required+Binary signals must be true; their evidence quality is checked but they have no per-signal score to weigh.
-- Untagged signals are scored, optional contributors — weak evidence reduces confidence but is not, on its own, disqualifying.
+- A signal tagged [REQUIRED] is a hard requirement: leads without verified evidence must fail upstream. Treat missing or dubious required evidence accordingly in your QA verdict.
+- Lines without [REQUIRED] are optional weighted signals — weak proof lowers confidence but is not disqualifying on its own.
 
 Lead Data ({num_leads} winning leads, numbered for reference):
 {leads_block}
@@ -147,25 +146,9 @@ function formatIntentSignalsBlock(icp: IcpDetails | null | undefined): string {
     return '(no specific intent signals requested)'
   }
 
-  // ``intent_signals`` can now be either:
-  //   - ``string[]`` (legacy free-text signals); or
-  //   - ``IntentSignalSpec[]`` with ``{text, required, is_scored}``.
-  //
-  // For the deep-research QA pass we want the LLM to know which
-  // signals were hard requirements (the buyer pre-committed to
-  // failing the lead if missing) and which were binary yes/no gates,
-  // because the LLM's verdict differs for each:
-  //   - "Required + Scored": lead MUST show evidence; weakness here
-  //     means the lead should never have been accepted.
-  //   - "Required + Binary": lead must show evidence but evidence
-  //     quality is irrelevant to the score; only correctness of the
-  //     binary claim matters.
-  //   - "Optional + Scored" (default): contributes to score; weak
-  //     evidence reduces score but doesn't disqualify the lead on its
-  //     own.
-  // The LLM's prompt template already treats the buyer's requested
-  // signals as ground truth; surfacing the flags here lets it reason
-  // about severity of any missing or fabricated evidence.
+  // ``intent_signals`` can be either ``string[]`` (legacy) or
+  // structured rows with ``{text, required}``. Tag [REQUIRED] so the
+  // QA model applies stricter scrutiny to contractual gates.
   const lines: string[] = []
   let idx = 0
   for (const entry of signals as unknown[]) {
@@ -183,12 +166,7 @@ function formatIntentSignalsBlock(icp: IcpDetails | null | undefined): string {
       if (!text) continue
       idx += 1
       const required = obj.required === true
-      const isScored = obj.is_scored !== false // default true
-      const tags: string[] = []
-      if (required) tags.push('REQUIRED')
-      if (!isScored) tags.push('BINARY')
-      const suffix = tags.length > 0 ? ` [${tags.join(', ')}]` : ''
-      lines.push(`${idx}. ${text}${suffix}`)
+      lines.push(`${idx}. ${text}${required ? ' [REQUIRED]' : ''}`)
     }
   }
   return lines.length > 0

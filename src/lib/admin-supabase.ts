@@ -52,19 +52,17 @@ export function getAdminSupabase(): SupabaseClient {
 // IntentSignalSpec — structured buyer-side intent signal.
 //
 // Mirrors gateway/fulfillment/models.py::IntentSignalSpec exactly.
-// `required=true`  -> lead MUST satisfy this signal or it fails.
-// `is_scored=false` -> binary yes/no; doesn't contribute to the
-//                     numeric intent score (still subject to the
-//                     required gate if `required=true`).
+// `required=true` -> lead MUST satisfy this signal with verified evidence
+// or it fails scoring. Every signal contributes to the numeric intent
+// score once matched and verified.
 //
-// Default flags (required=false, is_scored=true) reproduce the
-// pre-feature legacy behaviour, so any code path that hands the
-// gateway a bare string array still works.
+// Legacy rows may temporarily carry stale ``is_scored`` JSON keys —
+// coerce via ``normalizeIntentSignals`` before rendering so the runtime
+// view is canonical (text + required only).
 // =================================================================
 export interface IntentSignalSpec {
   text: string
   required: boolean
-  is_scored: boolean
 }
 
 export interface IcpDetails {
@@ -79,9 +77,9 @@ export interface IcpDetails {
   employee_count?: string | string[]
   // Legacy rows in Supabase stored ``intent_signals`` as ``string[]``.
   // New requests store structured ``IntentSignalSpec[]``. Both shapes
-  // can be present at read time; producers must coerce via
+  // can be present at read time; producers coerce via
   // ``normalizeIntentSignals`` (admin-icp-parser.ts) before rendering
-  // UI that depends on the required / is_scored flags.
+  // UI that depends on the ``required`` flag.
   intent_signals?: Array<string | IntentSignalSpec>
   product_service?: string
   excluded_companies?: string[]
@@ -198,7 +196,6 @@ export interface IntentSignalMappingEntry {
   // (``matched_icp_signal_idx`` is -1) or when the spec list was
   // empty. Legacy rows pre-dating the flag rollout will be undefined.
   matched_icp_signal_required?: boolean | null
-  matched_icp_signal_is_scored?: boolean | null
 }
 
 export interface IntentBreakdownEntry {

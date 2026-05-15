@@ -35,7 +35,7 @@ function isStringArray(value: unknown): value is string[] {
  * intent_signals is allowed to be either:
  *  - a legacy ``string[]`` (still accepted by the gateway validator
  *    which coerces each entry to default flags), OR
- *  - an array of ``{text: string, required?: boolean, is_scored?: boolean}``
+ *  - an array of ``{text: string, required?: boolean}``
  *    objects produced by the new admin UI.
  *
  * Mixed arrays are allowed for forward-compat as the operator
@@ -88,7 +88,7 @@ function validatePayload(body: FulfillmentPayload): string[] {
     !isIntentSignalsArray(body.intent_signals)
   ) {
     errors.push(
-      'intent_signals must be a list of strings, or of objects with a "text" field (optionally "required" and "is_scored").',
+      'intent_signals must be a list of strings, or of objects with a "text" field (optionally "required").',
     )
   }
 

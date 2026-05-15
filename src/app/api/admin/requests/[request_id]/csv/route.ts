@@ -248,21 +248,15 @@ export async function GET(
     'Phone',
   ]
 
-  // Per-signal column block.  Nine columns per credited signal,
-  // matching the fields rendered in IntentSignalsList plus two
-  // flag columns that expose the buyer-side IntentSignalSpec the
-  // miner signal was matched to:
-  //   - "Required" — "yes"/"no"/"" (blank when no spec matched)
-  //   - "Scored"   — "yes"/"no"/""
-  // This lets the operator filter winning leads in a spreadsheet by
-  // which signals were hard requirements vs. binary gates without
-  // having to cross-reference the original request.
+  // Per-signal column block.  Eight columns per credited signal,
+  // matching the fields rendered in IntentSignalsList plus a
+  // "Required" column that exposes whether the matched buyer spec was
+  // flagged required ("yes"/"no"/"", blank when no spec matched).
   const signalSubColumns = [
     'Source',
     'Date',
     'Matched ICP Signal',
     'Required',
-    'Scored',
     'Description',
     'URL',
     'Snippet',
@@ -317,21 +311,12 @@ export async function GET(
         continue
       }
       const desc = resolveSignalDescription(credited, w.intent_breakdown, i)
-      // ``matched_icp_signal_required`` / ``matched_icp_signal_is_scored``
-      // are tri-state on the wire: true / false / null|undefined. Map
-      // the boolean values to "yes" / "no" strings and treat the
-      // null/undefined cases (legacy rows, or unmatched signals) as
-      // a blank cell rather than literal "null", which would be
-      // ambiguous to non-technical readers of the CSV.
+      // ``matched_icp_signal_required`` is tri-state on the wire:
+      // true / false / null|undefined. Map booleans to "yes" / "no" and
+      // leave blanks for legacy rows without the field.
       const requiredFlag =
         typeof s.matched_icp_signal_required === 'boolean'
           ? s.matched_icp_signal_required
-            ? 'yes'
-            : 'no'
-          : ''
-      const scoredFlag =
-        typeof s.matched_icp_signal_is_scored === 'boolean'
-          ? s.matched_icp_signal_is_scored
             ? 'yes'
             : 'no'
           : ''
@@ -340,7 +325,6 @@ export async function GET(
         s.date ?? '',
         s.matched_icp_signal ?? '',
         requiredFlag,
-        scoredFlag,
         desc,
         s.url ?? '',
         s.snippet ?? '',

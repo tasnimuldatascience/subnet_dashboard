@@ -72,13 +72,8 @@ function sanitizeDraft(input: MaybeDraft, rawText: string): ParsedIcpDraft {
     target_role_types: roleTypes(input.target_role_types),
     target_seniority: stringValue(input.target_seniority),
     employee_count: employeeBuckets(input.employee_count),
-    // ``intent_signals`` may arrive from the model in either shape:
-    //   string[]                 — back-compat with older prompts.
-    //   {text, required, is_scored}[]  — new structured shape.
-    // ``normalizeIntentSignals`` accepts both and applies safe defaults
-    // (``required=false, is_scored=true``) when flags are missing or
-    // not boolean. Capped to 15 entries to match the prompt's hard
-    // limit and protect against runaway LLM output.
+    // ``normalizeIntentSignals`` accepts both legacy ``string[]`` and
+    // structured shapes; stray legacy keys like ``is_scored`` drop out.
     intent_signals: normalizeIntentSignals(input.intent_signals).slice(0, 15),
     product_service: stringValue(input.product_service),
     num_leads: numberValue(input.num_leads, fallback.num_leads),
@@ -153,7 +148,7 @@ ${VALID_ROLE_TYPES.map((v) => `  - ${v}`).join('\n')}
 - "employee_count" must use ONLY these canonical buckets:
 ${EMPLOYEE_COUNT_BUCKETS.map((v) => `  - ${v}`).join('\n')}
 - "country" must be country names, e.g. "United States", "France". Empty array means any country.
-- "intent_signals" must be a list of plain strings — each one a concrete observable event miners can verify from web content. Avoid vague signals like "has budget" or "high intent". Do NOT mark any signal as required or binary; the operator will toggle "Required" / "Scored" per-signal in the admin UI after reviewing your draft.
+- "intent_signals" must be a list of plain strings — each one a concrete observable event miners can verify from web content. Avoid vague signals like "has budget" or "high intent". Do NOT infer required-vs-optional; the operator will toggle "Required" per signal in the admin UI after reviewing your draft.
 - "product_service" describes what the client sells, not just the buyer pain.
 - "num_leads" defaults to 10 if unspecified.
 - "excluded_companies" is optional; include only explicitly named excluded prospect companies.

@@ -39,8 +39,7 @@ import type { IntentSignalSpec } from './admin-supabase'
  * Accepts:
  *  - ``string[]``: legacy admin drafts and historical ``icp_details``
  *    rows in Supabase. Each entry coerces to
- *    ``{text, required:false, is_scored:true}`` (the same defaults
- *    the gateway's Pydantic validator applies).
+ *    ``{text, required:false}`` (matching the gateway default).
  *  - Mixed array of ``string`` and ``IntentSignalSpec``: tolerated so
  *    in-progress UI state can be partially upgraded.
  *  - ``IntentSignalSpec[]``: passed through.
@@ -58,7 +57,7 @@ export function normalizeIntentSignals(
     if (typeof entry === 'string') {
       const t = entry.trim()
       if (!t) continue
-      out.push({ text: t, required: false, is_scored: true })
+      out.push({ text: t, required: false })
       continue
     }
     if (entry && typeof entry === 'object') {
@@ -73,7 +72,6 @@ export function normalizeIntentSignals(
       out.push({
         text: t,
         required: typeof obj.required === 'boolean' ? obj.required : false,
-        is_scored: typeof obj.is_scored === 'boolean' ? obj.is_scored : true,
       })
     }
   }
@@ -459,8 +457,8 @@ function detectIntentSignals(text: string): IntentSignalSpec[] {
     }
   }
 
-  // The heuristic parser has no way to infer required / is_scored from
-  // free-form text, so every entry gets the safe defaults. Operators
+  // The heuristic parser has no way to infer ``required`` from
+  // free-form text, so every entry defaults to optional. Operators
   // toggle these per signal in the new request UI before submitting.
   return normalizeIntentSignals(dedupeKeepCase(signals).slice(0, 10))
 }

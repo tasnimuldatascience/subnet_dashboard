@@ -77,8 +77,7 @@ function normalizeDraft(draft: ParsedIcpDraft): ParsedIcpDraft {
     sub_industry: draft.sub_industry.map((s) => s.trim()).filter(Boolean),
     target_roles: draft.target_roles.map((s) => s.trim()).filter(Boolean),
     country: draft.country.map((s) => s.trim()).filter(Boolean),
-    // Intent signals are now structured objects (text + required +
-    // is_scored). Trim the text only; drop entries whose text is
+    // Intent signals are structured objects (text + optional required).
     // empty after trim so a stray blank row doesn't reach the gateway.
     intent_signals: draft.intent_signals
       .map((spec) => ({ ...spec, text: spec.text.trim() }))
@@ -350,15 +349,10 @@ function MultiCheckboxField<T extends string>({
 //
 // Each row exposes:
 //   - The signal phrase (single-line text input).
-//   - "Required" toggle  → lead must satisfy this signal or fail
-//     (failure_reason: missing_required_intent_signal).
-//   - "Scored" toggle    → if off, the signal is binary yes/no and
-//     does NOT contribute to the lead's intent_signal_final, even
-//     when matched. The required gate still applies.
+//   - "Required" toggle  → lead must satisfy this verified signal or
+//     fail scoring (missing_required_intent_signal).
 //
-// Defaults to required=false, is_scored=true so a freshly added row
-// behaves like a legacy free-text signal until the operator opts in
-// to a stricter gate.
+// Defaults to required=false — same as legacy plain-string signals.
 // =================================================================
 function IntentSignalEditor({
   value,
@@ -376,7 +370,7 @@ function IntentSignalEditor({
     onChange(value.filter((_, i) => i !== idx))
   }
   function addRow() {
-    onChange([...value, { text: '', required: false, is_scored: true }])
+    onChange([...value, { text: '', required: false }])
   }
 
   return (
@@ -430,33 +424,11 @@ function IntentSignalEditor({
                     (must pass)
                   </span>
                 </label>
-                <label className="inline-flex items-center gap-1.5 text-[11px] text-slate-300">
-                  <input
-                    type="checkbox"
-                    checked={spec.is_scored}
-                    onChange={(e) =>
-                      updateRow(idx, { is_scored: e.target.checked })
-                    }
-                    className="h-3.5 w-3.5 accent-gold"
-                  />
-                  Scored
-                  <span
-                    className="text-[10px] text-slate-500"
-                    title="When off, this signal is binary yes/no and does not contribute to the intent score."
-                  >
-                    (contributes to score)
-                  </span>
-                </label>
-                {spec.required && !spec.is_scored && (
+                {spec.required ? (
                   <span className="rounded-full border border-gold-soft bg-gold-soft px-2 py-0.5 text-[10px] uppercase tracking-wider text-gold">
-                    Binary gate
+                    Mandatory
                   </span>
-                )}
-                {spec.required && spec.is_scored && (
-                  <span className="rounded-full border border-gold-soft bg-gold-soft px-2 py-0.5 text-[10px] uppercase tracking-wider text-gold">
-                    Mandatory + scored
-                  </span>
-                )}
+                ) : null}
               </div>
             </div>
           ))
@@ -528,8 +500,9 @@ export function NewRequestBuilder() {
       // The AI parse route may still return `intent_signals` as a
       // plain ``string[]`` for backward compatibility (the gateway
       // accepts both shapes). Normalize defensively so the form's
-      // per-row editor always sees structured specs with defaulted
-      // required / is_scored flags.
+      // per-row editor always sees canonical ``IntentSignalSpec[]``
+      // ({text, required}) with ``normalizeIntentSignals`` dropping
+      // any legacy stray keys.
       const rawDraft = body.draft as ParsedIcpDraft & {
         intent_signals?: unknown
       }
@@ -779,7 +752,7 @@ export function NewRequestBuilder() {
           <IntentSignalEditor
             value={draft.intent_signals}
             onChange={(v) => update('intent_signals', v)}
-            hint="Use concrete observable events miners can verify in page content. Toggle 'Required' to force the lead to satisfy this signal (or it fails). Toggle 'Scored' off to make it binary yes/no — it won't contribute to the intent score."
+            hint="Use concrete observable events miners can verify in page content. Toggle 'Required' to force the lead to satisfy this verified signal (or scoring fails)."
           />
 
           <ArrayField

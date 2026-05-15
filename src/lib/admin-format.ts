@@ -115,8 +115,8 @@ export function asList(v: string | string[] | null | undefined): string[] {
  * Return the buyer's intent signal *texts* as a flat string array.
  *
  * Tolerates both legacy ``string[]`` rows and the new structured
- * ``IntentSignalSpec[]`` shape. Callers that need the required /
- * is_scored flags should consume ``icp.intent_signals`` directly or
+ * ``IntentSignalSpec[]`` shape. Callers that need the ``required``
+ * flag should consume ``icp.intent_signals`` directly or
  * via ``normalizeIntentSignals`` from ``./admin-icp-parser``.
  */
 export function icpSignals(icp: IcpDetails | null | undefined): string[] {

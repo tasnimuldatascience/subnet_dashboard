@@ -1553,15 +1553,9 @@ function IntentSignalsList({
               <div className="text-xs italic flex items-center gap-2 flex-wrap" style={{ color: 'var(--text-secondary)' }}>
                 <span>Matches ICP signal: &ldquo;{matched}&rdquo;</span>
                 {/*
-                  Surface the buyer-side spec flags next to the matched
-                  text so the operator can see at a glance whether this
-                  evidence was satisfying a hard requirement and/or a
-                  pure binary gate. Legacy rows with no flags simply
-                  omit the chips. The chips intentionally repeat
-                  themselves rather than encoding state into colour
-                  alone — operators sort the winning leads visually,
-                  and a Required+Binary combination is materially
-                  different from a default scored signal.
+                  Highlight when this evidence satisfies a buyer-required
+                  spec. Legacy rows with no ``matched_icp_signal_required``
+                  simply omit the chip.
                 */}
                 {s.matched_icp_signal_required ? (
                   <span
@@ -1573,18 +1567,6 @@ function IntentSignalsList({
                     title="Buyer marked this signal as Required; the lead would have failed without it."
                   >
                     Required
-                  </span>
-                ) : null}
-                {s.matched_icp_signal_is_scored === false ? (
-                  <span
-                    className="rounded-full border px-1.5 py-0.5 text-[10px] uppercase tracking-wider not-italic"
-                    style={{
-                      borderColor: 'var(--surface-border-strong)',
-                      color: 'var(--text-tertiary)',
-                    }}
-                    title="Binary signal — verified pass/fail but did not contribute to the intent score."
-                  >
-                    Binary
                   </span>
                 ) : null}
               </div>
