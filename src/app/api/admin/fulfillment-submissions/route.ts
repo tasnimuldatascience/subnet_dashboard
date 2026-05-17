@@ -7,9 +7,11 @@ export const dynamic = 'force-dynamic'
 const SUBMISSION_BATCH_SIZE = 100
 const MAX_SUBMISSIONS = 2000
 const CONSENSUS_BATCH_SIZE = 1000
-const MAX_CHART_CONSENSUS_ROWS = 50000
+const SCORE_BATCH_SIZE = 1000
+const MAX_SCORE_ROWS = 10000
 const DEFAULT_PAGE_SIZE = 50
 const MAX_PAGE_SIZE = 100
+const DATASET_CACHE_TTL_MS = 60_000
 
 type FulfillmentSubmissionRow = {
   submission_id: string
@@ -54,6 +56,12 @@ type RejectionDailyRow = {
   count: number
 }
 
+type MinerDailyRow = {
+  date: string
+  minerHotkey: string
+  count: number
+}
+
 type ChartConsensusRow = {
   request_id: string
   lead_id: string
@@ -68,6 +76,8 @@ type RequestRow = {
   internal_label: string | null
   company: string | null
   created_at: string | null
+  icp_details: Record<string, unknown> | null
+  required_attributes: Record<string, unknown> | null
 }
 
 type RequestOption = {
@@ -86,6 +96,20 @@ type TransparencyCommitRow = {
 }
 
 type SubmittedLeadStatus = 'committed' | 'pending' | 'approved' | 'denied'
+
+type FulfillmentAnalyticsDataset = {
+  submissions: FulfillmentSubmissionRow[]
+  commitAtBySubmission: Map<string, string>
+  consensusByLead: Map<string, ConsensusRow>
+  requestById: Map<string, RequestRow>
+  requestOptions: RequestOption[]
+  chartConsensusRows: ChartConsensusRow[]
+  scoreByLead: Map<string, ScoreRow>
+  loadedAt: number
+}
+
+let cachedDataset: FulfillmentAnalyticsDataset | null = null
+let pendingDatasetLoad: Promise<FulfillmentAnalyticsDataset> | null = null
 
 function dateKey(value: string | null | undefined): string {
   if (!value) return 'Unknown'
@@ -125,6 +149,25 @@ function inDateRange(value: string | null, from: string | null, to: string | nul
 function csvEscape(value: unknown): string {
   const text = value === null || value === undefined ? '' : String(value)
   return `"${text.replace(/"/g, '""')}"`
+}
+
+function rejectionReason(row: Pick<ScoreRow, 'failure_reason' | 'failure_detail'> | undefined): string {
+  const reason = row?.failure_reason?.trim()
+  if (reason) return reason
+
+  const detail = row?.failure_detail?.toLowerCase() ?? ''
+  if (detail.includes('email verification failed')) {
+    const match = detail.match(/\(([^)]+)\)/)
+    return match?.[1] ? `email_${match[1]}` : 'email_verification_failed'
+  }
+  if (detail.includes('intent')) return 'insufficient_intent'
+  if (detail.includes('geography') || detail.includes('location')) return 'geography_mismatch'
+  if (detail.includes('role type')) return 'role_type_mismatch'
+  if (detail.includes('role')) return 'role_mismatch'
+  if (detail.includes('industry')) return 'industry_mismatch'
+  if (detail.includes('country')) return 'country_mismatch'
+
+  return 'unknown_rejection'
 }
 
 function csvResponse(filename: string, headers: string[], rows: unknown[][]): NextResponse {
@@ -224,7 +267,7 @@ async function fetchRequestRows(
   for (const group of chunks(requestIds, 100)) {
     const { data, error } = await supabase
       .from('fulfillment_requests')
-      .select('request_id, internal_label, company, created_at')
+      .select('request_id, internal_label, company, created_at, icp_details, required_attributes')
       .in('request_id', group)
 
     if (error) {
@@ -241,15 +284,29 @@ async function fetchScoreRows(
 ): Promise<{ data: ScoreRow[]; error: { message: string } | null }> {
   const all: ScoreRow[] = []
   for (const group of chunks(requestIds, 100)) {
-    const { data, error } = await supabase
-      .from('fulfillment_scores')
-      .select('request_id, lead_id, miner_hotkey, failure_reason, failure_detail, final_score, scored_at')
-      .in('request_id', group)
+    for (
+      let offset = 0;
+      offset < MAX_SCORE_ROWS && all.length < MAX_SCORE_ROWS;
+      offset += SCORE_BATCH_SIZE
+    ) {
+      const remaining = MAX_SCORE_ROWS - all.length
+      const batchSize = Math.min(SCORE_BATCH_SIZE, remaining)
+      const { data, error } = await supabase
+        .from('fulfillment_scores')
+        .select('request_id, lead_id, miner_hotkey, failure_reason, failure_detail, final_score, scored_at')
+        .in('request_id', group)
+        .order('scored_at', { ascending: false })
+        .range(offset, offset + batchSize - 1)
 
-    if (error) {
-      return { data: all, error: { message: error.message || 'score batch failed' } }
+      if (error) {
+        return { data: all, error: { message: error.message || 'score batch failed' } }
+      }
+
+      const batch = (data ?? []) as ScoreRow[]
+      all.push(...batch)
+      if (batch.length < batchSize) break
     }
-    all.push(...((data ?? []) as ScoreRow[]))
+    if (all.length >= MAX_SCORE_ROWS) break
   }
   return { data: all, error: null }
 }
@@ -258,11 +315,7 @@ async function fetchChartConsensusRows(
   supabase: ReturnType<typeof getAdminSupabase>,
 ): Promise<{ data: ChartConsensusRow[]; error: { message: string } | null }> {
   const all: ChartConsensusRow[] = []
-  for (
-    let offset = 0;
-    offset < MAX_CHART_CONSENSUS_ROWS;
-    offset += CONSENSUS_BATCH_SIZE
-  ) {
+  for (let offset = 0; ; offset += CONSENSUS_BATCH_SIZE) {
     const { data, error } = await supabase
       .from('fulfillment_score_consensus')
       .select('request_id, lead_id, consensus_final_score, is_winner, is_chain_held, computed_at')
@@ -281,12 +334,136 @@ async function fetchChartConsensusRows(
   return { data: all, error: null }
 }
 
+async function loadAnalyticsDataset(
+  supabase: ReturnType<typeof getAdminSupabase>,
+  forceRefresh = false,
+): Promise<FulfillmentAnalyticsDataset> {
+  const now = Date.now()
+  if (
+    !forceRefresh &&
+    cachedDataset &&
+    now - cachedDataset.loadedAt < DATASET_CACHE_TTL_MS
+  ) {
+    return cachedDataset
+  }
+  if (!forceRefresh && pendingDatasetLoad) return pendingDatasetLoad
+
+  pendingDatasetLoad = (async () => {
+    const { data: submissionsData, error: submissionsErr } = await fetchSubmissions(supabase)
+    if (submissionsErr) {
+      throw new Error(`Supabase submissions error: ${submissionsErr.message}`)
+    }
+
+    const submissions = (submissionsData ?? []) as FulfillmentSubmissionRow[]
+    const submissionIds = submissions.map((s) => s.submission_id)
+    const requestIds = Array.from(new Set(submissions.map((s) => s.request_id)))
+
+    const commitAtBySubmission = new Map<string, string>()
+    if (submissionIds.length > 0) {
+      const { data: commitData } = await supabase
+        .from('transparency_log')
+        .select('ts, payload')
+        .eq('event_type', 'FULFILLMENT_COMMIT')
+        .order('ts', { ascending: false })
+        .limit(MAX_SUBMISSIONS * 2)
+
+      for (const row of (commitData ?? []) as TransparencyCommitRow[]) {
+        const submissionId = row.payload?.submission_id
+        if (!submissionId || !submissionIds.includes(submissionId)) continue
+        commitAtBySubmission.set(
+          submissionId,
+          row.payload?.submission_timestamp ?? row.ts,
+        )
+      }
+    }
+
+    const consensusByLead = new Map<string, ConsensusRow>()
+    if (submissionIds.length > 0) {
+      const { data: consensusData, error: consensusErr } =
+        await fetchConsensusRows(supabase, submissionIds)
+      if (consensusErr) {
+        throw new Error(`Supabase consensus error: ${consensusErr.message}`)
+      }
+      for (const row of consensusData) {
+        consensusByLead.set(`${row.submission_id}:${row.lead_id}`, row)
+      }
+    }
+
+    const requestById = new Map<string, RequestRow>()
+    if (requestIds.length > 0) {
+      const { data: requestData, error: requestErr } =
+        await fetchRequestRows(supabase, requestIds)
+      if (requestErr) {
+        throw new Error(`Supabase request error: ${requestErr.message}`)
+      }
+      for (const row of requestData) {
+        requestById.set(row.request_id, row)
+      }
+    }
+    const requestOptions: RequestOption[] = Array.from(requestById.values())
+      .map((request) => ({
+        requestId: request.request_id,
+        label: request.internal_label || request.request_id.slice(0, 8),
+        company: request.company,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label))
+
+    const { data: chartConsensusRows, error: chartConsensusErr } =
+      await fetchChartConsensusRows(supabase)
+    if (chartConsensusErr) {
+      throw new Error(`Supabase chart consensus error: ${chartConsensusErr.message}`)
+    }
+
+    const scoreByLead = new Map<string, ScoreRow>()
+    const scoreRequestIds = Array.from(
+      new Set([...requestIds, ...chartConsensusRows.map((row) => row.request_id)]),
+    )
+    if (scoreRequestIds.length > 0) {
+      const { data: scoreData, error: scoreErr } = await fetchScoreRows(supabase, scoreRequestIds)
+      if (scoreErr) {
+        throw new Error(`Supabase score error: ${scoreErr.message}`)
+      }
+      for (const row of scoreData) {
+        const key = `${row.request_id}:${row.lead_id}`
+        const prev = scoreByLead.get(key)
+        if (!prev) {
+          scoreByLead.set(key, row)
+          continue
+        }
+        const prevHasDetail = Boolean(prev.failure_detail || prev.failure_reason)
+        const rowHasDetail = Boolean(row.failure_detail || row.failure_reason)
+        if (!prevHasDetail && rowHasDetail) scoreByLead.set(key, row)
+      }
+    }
+
+    const dataset: FulfillmentAnalyticsDataset = {
+      submissions,
+      commitAtBySubmission,
+      consensusByLead,
+      requestById,
+      requestOptions,
+      chartConsensusRows,
+      scoreByLead,
+      loadedAt: Date.now(),
+    }
+    cachedDataset = dataset
+    return dataset
+  })()
+
+  try {
+    return await pendingDatasetLoad
+  } finally {
+    pendingDatasetLoad = null
+  }
+}
+
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams
   const page = numberParam(searchParams.get('page'), 1, 10_000)
   const pageSize = numberParam(searchParams.get('pageSize'), DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE)
   const statusFilter = searchParams.get('status') ?? 'all'
   const query = (searchParams.get('q') ?? '').trim().toLowerCase()
+  const rejectReasonFilter = (searchParams.get('rejectReason') ?? '').trim().toLowerCase()
   const requestFilter = searchParams.get('requestId') ?? 'all'
   const dateFrom = normalizeDateBound(searchParams.get('from'))
   const dateTo = normalizeDateBound(searchParams.get('to'), true)
@@ -301,112 +478,26 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: msg }, { status: 503 })
   }
 
-  const { data: submissionsData, error: submissionsErr } = await fetchSubmissions(supabase)
-
-  if (submissionsErr) {
+  let dataset: FulfillmentAnalyticsDataset
+  try {
+    dataset = await loadAnalyticsDataset(supabase, searchParams.get('refresh') === '1')
+  } catch (e) {
+    const message = e instanceof Error ? e.message : 'Failed to load fulfillment analytics dataset'
     return NextResponse.json(
-      { error: `Supabase submissions error: ${submissionsErr.message}`, details: submissionsErr },
+      { error: message },
       { status: 502 },
     )
   }
 
-  const submissions = (submissionsData ?? []) as FulfillmentSubmissionRow[]
-  const submissionIds = submissions.map((s) => s.submission_id)
-  const requestIds = Array.from(new Set(submissions.map((s) => s.request_id)))
-
-  const commitAtBySubmission = new Map<string, string>()
-  if (submissionIds.length > 0) {
-    const { data: commitData } = await supabase
-      .from('transparency_log')
-      .select('ts, payload')
-      .eq('event_type', 'FULFILLMENT_COMMIT')
-      .order('ts', { ascending: false })
-      .limit(MAX_SUBMISSIONS * 2)
-
-    for (const row of (commitData ?? []) as TransparencyCommitRow[]) {
-      const submissionId = row.payload?.submission_id
-      if (!submissionId || !submissionIds.includes(submissionId)) continue
-      commitAtBySubmission.set(
-        submissionId,
-        row.payload?.submission_timestamp ?? row.ts,
-      )
-    }
-  }
-
-  const consensusByLead = new Map<string, ConsensusRow>()
-  if (submissionIds.length > 0) {
-    const { data: consensusData, error: consensusErr } =
-      await fetchConsensusRows(supabase, submissionIds)
-
-    if (consensusErr) {
-      return NextResponse.json(
-        { error: `Supabase consensus error: ${consensusErr.message}`, details: consensusErr },
-        { status: 502 },
-      )
-    }
-
-    for (const row of consensusData) {
-      consensusByLead.set(`${row.submission_id}:${row.lead_id}`, row)
-    }
-  }
-
-  const requestById = new Map<string, RequestRow>()
-  if (requestIds.length > 0) {
-    const { data: requestData, error: requestErr } =
-      await fetchRequestRows(supabase, requestIds)
-
-    if (requestErr) {
-      return NextResponse.json(
-        { error: `Supabase request error: ${requestErr.message}`, details: requestErr },
-        { status: 502 },
-      )
-    }
-
-    for (const row of requestData) {
-      requestById.set(row.request_id, row)
-    }
-  }
-  const requestOptions: RequestOption[] = Array.from(requestById.values())
-    .map((request) => ({
-      requestId: request.request_id,
-      label: request.internal_label || request.request_id.slice(0, 8),
-      company: request.company,
-    }))
-    .sort((a, b) => a.label.localeCompare(b.label))
-
-  const { data: chartConsensusRows, error: chartConsensusErr } =
-    await fetchChartConsensusRows(supabase)
-  if (chartConsensusErr) {
-    return NextResponse.json(
-      { error: `Supabase chart consensus error: ${chartConsensusErr.message}`, details: chartConsensusErr },
-      { status: 502 },
-    )
-  }
-
-  const scoreByLead = new Map<string, ScoreRow>()
-  const scoreRequestIds = Array.from(
-    new Set([...requestIds, ...chartConsensusRows.map((row) => row.request_id)]),
-  )
-  if (scoreRequestIds.length > 0) {
-    const { data: scoreData, error: scoreErr } = await fetchScoreRows(supabase, scoreRequestIds)
-    if (scoreErr) {
-      return NextResponse.json(
-        { error: `Supabase score error: ${scoreErr.message}`, details: scoreErr },
-        { status: 502 },
-      )
-    }
-    for (const row of scoreData) {
-      const key = `${row.request_id}:${row.lead_id}`
-      const prev = scoreByLead.get(key)
-      if (!prev) {
-        scoreByLead.set(key, row)
-        continue
-      }
-      const prevHasDetail = Boolean(prev.failure_detail || prev.failure_reason)
-      const rowHasDetail = Boolean(row.failure_detail || row.failure_reason)
-      if (!prevHasDetail && rowHasDetail) scoreByLead.set(key, row)
-    }
-  }
+  const {
+    submissions,
+    commitAtBySubmission,
+    consensusByLead,
+    requestById,
+    requestOptions,
+    chartConsensusRows,
+    scoreByLead,
+  } = dataset
 
   const leads = submissions.flatMap((submission) => {
     const leadEntries =
@@ -425,6 +516,15 @@ export async function GET(request: NextRequest) {
         const consensus = consensusByLead.get(`${submission.submission_id}:${leadId}`)
         const scoreRow = scoreByLead.get(`${submission.request_id}:${leadId}`)
         const request = requestById.get(submission.request_id)
+        const requestIcp = request?.icp_details
+          ? {
+              ...request.icp_details,
+              required_attributes:
+                (request.icp_details.required_attributes as unknown) ??
+                request.required_attributes ??
+                null,
+            }
+          : null
         const submittedAt =
           submission.revealed_at ??
           commitAtBySubmission.get(submission.submission_id) ??
@@ -460,8 +560,9 @@ export async function GET(request: NextRequest) {
           tier2Passed: consensus?.consensus_tier2_passed ?? null,
           intentDetails: consensus?.intent_details ?? null,
           consensusAt: consensus?.computed_at ?? null,
-          rejectionReason: scoreRow?.failure_reason ?? null,
+          rejectionReason: status === 'denied' ? rejectionReason(scoreRow) : null,
           rejectionDetail: scoreRow?.failure_detail ?? null,
+          requestIcp,
           leadData: data,
         }
       })
@@ -547,7 +648,7 @@ export async function GET(request: NextRequest) {
   for (const row of deniedConsensusRows) {
     const date = dateKey(row.computed_at)
     const scoreRow = scoreByLead.get(`${row.request_id}:${row.lead_id}`)
-    const reason = scoreRow?.failure_reason || 'unknown_rejection'
+    const reason = rejectionReason(scoreRow)
     const key = `${date}|||${reason}`
     const bucket = rejectionMap.get(key) ?? { date, reason, count: 0 }
     bucket.count += 1
@@ -559,12 +660,34 @@ export async function GET(request: NextRequest) {
   const rejectTypes = Array.from(
     deniedConsensusRows.reduce((map, row) => {
       const scoreRow = scoreByLead.get(`${row.request_id}:${row.lead_id}`)
-      const reason = scoreRow?.failure_reason || 'unknown_rejection'
+      const reason = rejectionReason(scoreRow)
       map.set(reason, (map.get(reason) ?? 0) + 1)
       return map
     }, new Map<string, number>()),
   )
     .map(([reason, count]) => ({ reason, count }))
+    .sort((a, b) => b.count - a.count)
+
+  const minerMap = new Map<string, MinerDailyRow>()
+  for (const lead of baseFilteredLeads) {
+    const date = dateKey(lead.activityAt)
+    const minerHotkey = lead.minerHotkey || 'unknown_hotkey'
+    const key = `${date}|||${minerHotkey}`
+    const bucket = minerMap.get(key) ?? { date, minerHotkey, count: 0 }
+    bucket.count += 1
+    minerMap.set(key, bucket)
+  }
+  const minerDaily = Array.from(minerMap.values()).sort((a, b) =>
+    a.date === b.date ? a.minerHotkey.localeCompare(b.minerHotkey) : a.date < b.date ? -1 : 1,
+  )
+  const minerHotkeys = Array.from(
+    baseFilteredLeads.reduce((map, lead) => {
+      const hotkey = lead.minerHotkey || 'unknown_hotkey'
+      map.set(hotkey, (map.get(hotkey) ?? 0) + 1)
+      return map
+    }, new Map<string, number>()),
+  )
+    .map(([hotkey, count]) => ({ hotkey, count }))
     .sort((a, b) => b.count - a.count)
 
   const filteredLeads = baseFilteredLeads.filter((lead) => {
@@ -573,6 +696,12 @@ export async function GET(request: NextRequest) {
       statusFilter !== 'all' &&
       statusFilter !== 'fulfilled' &&
       lead.status !== statusFilter
+    ) {
+      return false
+    }
+    if (
+      rejectReasonFilter &&
+      !(lead.rejectionReason ?? '').toLowerCase().includes(rejectReasonFilter)
     ) {
       return false
     }
@@ -588,6 +717,8 @@ export async function GET(request: NextRequest) {
       lead.leadId,
       lead.submissionId,
       lead.requestId,
+      lead.rejectionReason,
+      lead.rejectionDetail,
     ]
       .filter(Boolean)
       .join(' ')
@@ -622,6 +753,14 @@ export async function GET(request: NextRequest) {
     )
   }
 
+  if (exportKind === 'miner-submissions-by-day') {
+    return csvResponse(
+      'miner-submissions-by-day.csv',
+      ['date', 'miner_hotkey', 'count'],
+      minerDaily.map((row) => [row.date, row.minerHotkey, row.count]),
+    )
+  }
+
   if (wantsCsv) {
     const headers = [
       'status',
@@ -648,6 +787,7 @@ export async function GET(request: NextRequest) {
       'intent_details',
       'rejection_reason',
       'rejection_detail',
+      'request_icp',
       'raw_lead_data',
     ]
     const rows = filteredLeads.map((lead) => [
@@ -675,6 +815,7 @@ export async function GET(request: NextRequest) {
       lead.intentDetails,
       lead.rejectionReason,
       lead.rejectionDetail,
+      JSON.stringify(lead.requestIcp),
       JSON.stringify(lead.leadData),
     ])
     return csvResponse('submitted-leads.csv', headers, rows)
@@ -686,6 +827,8 @@ export async function GET(request: NextRequest) {
       daily,
       rejectionDaily,
       rejectTypes,
+      minerDaily,
+      minerHotkeys,
       requestOptions,
       stats: {
         submissions: submissions.length,

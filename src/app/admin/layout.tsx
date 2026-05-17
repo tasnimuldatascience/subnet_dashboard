@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
+import { AdminRefreshButton } from './_components/AdminRefreshButton'
 
 export const metadata: Metadata = {
   title: 'Leadpoet Admin Portal',
@@ -50,6 +51,7 @@ export default function AdminLayout({
             </Link>
           </div>
           <div className="flex items-center gap-4">
+            <AdminRefreshButton />
             <span
               className="hidden sm:inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] bg-gold-soft border-gold-soft border text-gold"
             >

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Bar,
   BarChart,
@@ -23,6 +23,7 @@ type SubmittedLeadStatus =
   | 'pending'
   | 'fulfilled'
 type ChartRange = '24h' | '7d' | '30d' | 'all'
+type VisualMode = 'chart' | 'table'
 
 export interface AdminSubmittedLead {
   leadId: string
@@ -50,6 +51,7 @@ export interface AdminSubmittedLead {
   consensusAt: string | null
   rejectionReason: string | null
   rejectionDetail: string | null
+  requestIcp: Record<string, unknown> | null
   leadData: Record<string, unknown>
 }
 
@@ -63,6 +65,12 @@ export interface SubmittedLeadDailyBucket {
   fulfilled: number
 }
 
+export interface MinerDailyBucket {
+  date: string
+  minerHotkey: string
+  count: number
+}
+
 export interface RejectionDailyBucket {
   date: string
   reason: string
@@ -74,6 +82,8 @@ export interface AdminSubmittedLeadsPayload {
   daily: SubmittedLeadDailyBucket[]
   rejectionDaily: RejectionDailyBucket[]
   rejectTypes: Array<{ reason: string; count: number }>
+  minerDaily: MinerDailyBucket[]
+  minerHotkeys: Array<{ hotkey: string; count: number }>
   requestOptions: Array<{
     requestId: string
     label: string
@@ -98,10 +108,10 @@ export interface AdminSubmittedLeadsPayload {
 
 const FILTERS: Array<{ key: SubmittedLeadStatus; label: string }> = [
   { key: 'all', label: 'All' },
-  { key: 'committed', label: 'Committed' },
+  { key: 'committed', label: 'Never revealed' },
   { key: 'approved', label: 'Approved' },
   { key: 'denied', label: 'Denied' },
-  { key: 'pending', label: 'Pending validator' },
+  { key: 'pending', label: 'Awaiting validation' },
   { key: 'fulfilled', label: 'Fulfilled' },
 ]
 
@@ -118,6 +128,18 @@ function dash(value: string | null | undefined): string {
 
 function score(value: number | null): string {
   return typeof value === 'number' ? value.toFixed(1) : '—'
+}
+
+function truncateHotkey(value: string): string {
+  if (!value || value.length <= 12) return value || 'unknown'
+  return `${value.slice(0, 6)}...${value.slice(-4)}`
+}
+
+function statusLabel(lead: AdminSubmittedLead): string {
+  if (lead.fulfilled) return 'Fulfilled'
+  if (lead.status === 'committed') return 'Never revealed'
+  if (lead.status === 'pending') return 'Awaiting validation'
+  return lead.status
 }
 
 function StatusPill({ lead }: { lead: AdminSubmittedLead }) {
@@ -148,7 +170,7 @@ function StatusPill({ lead }: { lead: AdminSubmittedLead }) {
       )}
     >
       <Icon className="h-3 w-3" />
-      {lead.status}
+      {statusLabel(lead)}
     </span>
   )
 }
@@ -185,6 +207,99 @@ function ChartTooltip({
   )
 }
 
+function ViewToggle({
+  value,
+  onChange,
+}: {
+  value: VisualMode
+  onChange: (value: VisualMode) => void
+}) {
+  return (
+    <div
+      className="inline-flex rounded-full border p-0.5"
+      style={{
+        borderColor: 'var(--surface-border)',
+        background: 'var(--surface-elevated)',
+      }}
+    >
+      {(['chart', 'table'] as const).map((mode) => (
+        <button
+          key={mode}
+          type="button"
+          onClick={() => onChange(mode)}
+          className={cn(
+            'rounded-full px-2.5 py-1 text-[11px] font-medium capitalize transition-colors',
+            value === mode ? 'bg-gold-soft text-gold' : 'text-white/55 hover:text-white',
+          )}
+        >
+          {mode}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function CompactDataTable({
+  columns,
+  rows,
+}: {
+  columns: string[]
+  rows: Array<Array<string | number>>
+}) {
+  return (
+    <div className="max-h-[320px] overflow-auto rounded-lg border" style={{ borderColor: 'var(--surface-border)' }}>
+      <table className="w-full border-collapse text-xs">
+        <thead>
+          <tr style={{ background: 'var(--surface-elevated)' }}>
+            {columns.map((column) => (
+              <th
+                key={column}
+                className="sticky top-0 px-3 py-2 text-left text-[10px] uppercase tracking-[0.14em]"
+                style={{
+                  background: 'var(--surface-elevated)',
+                  color: 'var(--text-tertiary)',
+                  borderBottom: '1px solid var(--surface-border)',
+                }}
+              >
+                {column}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, rowIdx) => (
+            <tr key={rowIdx} className="hover-bg-warm">
+              {row.map((cell, cellIdx) => (
+                <td
+                  key={cellIdx}
+                  className="px-3 py-2 align-top tabular-nums"
+                  style={{
+                    color: cellIdx === 0 ? 'var(--text-primary)' : 'var(--text-secondary)',
+                    borderBottom: '1px solid var(--surface-border)',
+                  }}
+                >
+                  {cell}
+                </td>
+              ))}
+            </tr>
+          ))}
+          {rows.length === 0 && (
+            <tr>
+              <td
+                colSpan={columns.length}
+                className="px-3 py-8 text-center text-sm"
+                style={{ color: 'var(--text-secondary)' }}
+              >
+                No rows for the current filters.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 export function AdminSubmittedLeads({
   payload,
   error,
@@ -195,34 +310,51 @@ export function AdminSubmittedLeads({
   const [data, setData] = useState<AdminSubmittedLeadsPayload | null>(payload)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<SubmittedLeadStatus>('all')
+  const [rejectReasonFilter, setRejectReasonFilter] = useState('')
   const [requestId, setRequestId] = useState('all')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
-  const [chartRange, setChartRange] = useState<ChartRange>('all')
+  const [visualMode, setVisualMode] = useState<VisualMode>('chart')
   const [rejectType, setRejectType] = useState('all')
+  const [minerHotkey, setMinerHotkey] = useState('top')
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(error)
   const [selectedLead, setSelectedLead] = useState<AdminSubmittedLead | null>(null)
+  const [refreshNonce, setRefreshNonce] = useState(0)
+  const lastForcedRefresh = useRef(0)
 
   useEffect(() => {
     setPage(1)
-  }, [query, filter, requestId, dateFrom, dateTo])
+  }, [query, filter, rejectReasonFilter, requestId, dateFrom, dateTo])
+
+  useEffect(() => {
+    const onRefresh = () => setRefreshNonce(Date.now())
+    window.addEventListener('leadpoet-admin-refresh', onRefresh)
+    return () => window.removeEventListener('leadpoet-admin-refresh', onRefresh)
+  }, [])
 
   useEffect(() => {
     let cancelled = false
     const timeout = window.setTimeout(() => {
       setLoading(true)
       setLoadError(null)
+      const forceRefresh =
+        refreshNonce > 0 && refreshNonce !== lastForcedRefresh.current
       const params = new URLSearchParams({
         page: String(page),
         pageSize: '50',
         status: filter,
         q: query,
+        rejectReason: rejectReasonFilter,
         requestId,
         from: dateFrom,
         to: dateTo,
       })
+      if (forceRefresh) {
+        params.set('refresh', '1')
+        lastForcedRefresh.current = refreshNonce
+      }
       fetch(`/api/admin/fulfillment-submissions?${params.toString()}`, {
         cache: 'no-store',
       })
@@ -243,7 +375,7 @@ export function AdminSubmittedLeads({
       cancelled = true
       window.clearTimeout(timeout)
     }
-  }, [page, query, filter, requestId, dateFrom, dateTo])
+  }, [page, query, filter, rejectReasonFilter, requestId, dateFrom, dateTo, refreshNonce])
 
   const leads = useMemo(() => data?.leads ?? [], [data?.leads])
 
@@ -260,12 +392,13 @@ export function AdminSubmittedLeads({
       export: 'csv',
       status: filter,
       q: query,
+      rejectReason: rejectReasonFilter,
       requestId,
       from: dateFrom,
       to: dateTo,
     })
     return `/api/admin/fulfillment-submissions?${params.toString()}`
-  }, [filter, query, requestId, dateFrom, dateTo])
+  }, [filter, query, rejectReasonFilter, requestId, dateFrom, dateTo])
   const submissionsChartExportHref = useMemo(() => {
     const params = new URLSearchParams({
       export: 'submissions-by-day',
@@ -284,23 +417,38 @@ export function AdminSubmittedLeads({
     })
     return `/api/admin/fulfillment-submissions?${params.toString()}`
   }, [requestId, dateFrom, dateTo])
-  const chartData = useMemo(() => {
-    const daily = data?.daily ?? []
-    if (chartRange === 'all') return daily
-
-    const days = chartRange === '24h' ? 1 : chartRange === '7d' ? 7 : 30
-    const newest = daily.reduce((max, bucket) => {
-      const time = Date.parse(bucket.date)
-      return Number.isFinite(time) && time > max ? time : max
-    }, 0)
-    if (!newest) return daily
-
-    const cutoff = newest - (days - 1) * 24 * 60 * 60 * 1000
-    return daily.filter((bucket) => {
-      const time = Date.parse(bucket.date)
-      return Number.isFinite(time) && time >= cutoff
+  const minerChartExportHref = useMemo(() => {
+    const params = new URLSearchParams({
+      export: 'miner-submissions-by-day',
+      requestId,
+      from: dateFrom,
+      to: dateTo,
     })
-  }, [data?.daily, chartRange])
+    return `/api/admin/fulfillment-submissions?${params.toString()}`
+  }, [requestId, dateFrom, dateTo])
+  const chartData = useMemo(() => data?.daily ?? [], [data?.daily])
+  function applyDateRange(range: ChartRange) {
+    if (range === 'all') {
+      setDateFrom('')
+      setDateTo('')
+      return
+    }
+    const allDates = [
+      ...(data?.daily ?? []).map((row) => row.date),
+      ...(data?.rejectionDaily ?? []).map((row) => row.date),
+      ...(data?.minerDaily ?? []).map((row) => row.date),
+    ]
+      .filter(Boolean)
+      .sort()
+    const newest = allDates[allDates.length - 1]
+    if (!newest) return
+    const days = range === '24h' ? 1 : range === '7d' ? 7 : 30
+    const end = new Date(`${newest}T00:00:00.000Z`)
+    const start = new Date(end)
+    start.setUTCDate(end.getUTCDate() - (days - 1))
+    setDateFrom(start.toISOString().slice(0, 10))
+    setDateTo(newest)
+  }
   const rejectReasonsToShow = useMemo(() => {
     if (rejectType === '__all_types__') {
       return (data?.rejectTypes ?? []).map((item) => item.reason)
@@ -332,6 +480,83 @@ export function AdminSubmittedLeads({
       String(a.date) < String(b.date) ? -1 : 1,
     )
   }, [data?.rejectionDaily, rejectReasonsToShow, rejectType])
+  const rejectTableRows = useMemo(() => {
+    const rows = data?.rejectionDaily ?? []
+    const topReasons =
+      rejectType === 'all'
+        ? new Set(rejectReasonsToShow.filter((reason) => reason !== 'Other reject types'))
+        : new Set(rejectReasonsToShow)
+    const grouped = new Map<string, number>()
+    for (const row of rows) {
+      const reason =
+        rejectType === 'all' && !topReasons.has(row.reason)
+          ? 'Other reject types'
+          : row.reason
+      if (!topReasons.has(reason) && reason !== 'Other reject types') continue
+      const key = `${row.date}|||${reason}`
+      grouped.set(key, (grouped.get(key) ?? 0) + row.count)
+    }
+    return Array.from(grouped.entries())
+      .map(([key, count]) => {
+        const [date, reason] = key.split('|||')
+        return { date, reason, count }
+      })
+      .sort((a, b) => (a.date === b.date ? a.reason.localeCompare(b.reason) : a.date < b.date ? -1 : 1))
+  }, [data?.rejectionDaily, rejectReasonsToShow, rejectType])
+  const minerHotkeysToShow = useMemo(() => {
+    if (minerHotkey === '__all_hotkeys__') {
+      return (data?.minerHotkeys ?? []).map((item) => item.hotkey)
+    }
+    if (minerHotkey !== 'top') return [minerHotkey]
+    const top = (data?.minerHotkeys ?? []).slice(0, 10).map((item) => item.hotkey)
+    return (data?.minerHotkeys ?? []).length > top.length
+      ? [...top, 'Other hotkeys']
+      : top
+  }, [data?.minerHotkeys, minerHotkey])
+  const minerChartData = useMemo(() => {
+    const rows = data?.minerDaily ?? []
+    const topHotkeys =
+      minerHotkey === 'top'
+        ? new Set(minerHotkeysToShow.filter((hotkey) => hotkey !== 'Other hotkeys'))
+        : new Set(minerHotkeysToShow)
+    const byDate = new Map<string, Record<string, string | number>>()
+    for (const row of rows) {
+      const key =
+        minerHotkey === 'top' && !topHotkeys.has(row.minerHotkey)
+          ? 'Other hotkeys'
+          : row.minerHotkey
+      if (!topHotkeys.has(key) && key !== 'Other hotkeys') continue
+      const bucket = byDate.get(row.date) ?? { date: row.date }
+      bucket[key] = ((bucket[key] as number | undefined) ?? 0) + row.count
+      byDate.set(row.date, bucket)
+    }
+    return Array.from(byDate.values()).sort((a, b) =>
+      String(a.date) < String(b.date) ? -1 : 1,
+    )
+  }, [data?.minerDaily, minerHotkey, minerHotkeysToShow])
+  const minerTableRows = useMemo(() => {
+    const rows = data?.minerDaily ?? []
+    const topHotkeys =
+      minerHotkey === 'top'
+        ? new Set(minerHotkeysToShow.filter((hotkey) => hotkey !== 'Other hotkeys'))
+        : new Set(minerHotkeysToShow)
+    const grouped = new Map<string, number>()
+    for (const row of rows) {
+      const keyName =
+        minerHotkey === 'top' && !topHotkeys.has(row.minerHotkey)
+          ? 'Other hotkeys'
+          : row.minerHotkey
+      if (!topHotkeys.has(keyName) && keyName !== 'Other hotkeys') continue
+      const key = `${row.date}|||${keyName}`
+      grouped.set(key, (grouped.get(key) ?? 0) + row.count)
+    }
+    return Array.from(grouped.entries())
+      .map(([key, count]) => {
+        const [date, hotkey] = key.split('|||')
+        return { date, hotkey, count }
+      })
+      .sort((a, b) => (a.date === b.date ? a.hotkey.localeCompare(b.hotkey) : a.date < b.date ? -1 : 1))
+  }, [data?.minerDaily, minerHotkey, minerHotkeysToShow])
 
   return (
     <div className="space-y-6">
@@ -344,16 +569,16 @@ export function AdminSubmittedLeads({
             Submitted Leads
           </h1>
           <span className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
-            Every revealed or committed lead, with validation activity plotted by the day it happened.
+            Every lead submission, split between never-revealed commitments and revealed leads awaiting validator consensus.
           </span>
         </div>
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-6">
           <Tile label="Submitted" value={counts.submitted} />
-          <Tile label="Committed" value={counts.committed} />
+          <Tile label="Never revealed" value={counts.committed} />
           <Tile label="Approved" value={counts.approved} accent="cream" />
           <Tile label="Denied" value={counts.denied} accent="burgundy" />
-          <Tile label="Pending" value={counts.pending} accent="amber" />
+          <Tile label="Awaiting validation" value={counts.pending} accent="amber" />
           <Tile label="Fulfilled" value={counts.fulfilled} accent="gold" />
         </div>
       </section>
@@ -365,223 +590,7 @@ export function AdminSubmittedLeads({
       ) : null}
 
       <section
-        className="rounded-xl border p-4"
-        style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)' }}
-      >
-        <div className="mb-3 flex items-start justify-between gap-3 flex-wrap">
-          <div>
-            <h2 className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-              Submissions by day
-            </h2>
-            <p className="mt-1 text-xs" style={{ color: 'var(--text-tertiary)' }}>
-              Submitted and committed volume by submit date; approved, denied, and fulfilled activity by consensus date.
-            </p>
-          </div>
-          <div className="flex flex-col items-start gap-2 sm:items-end">
-            <div className="flex flex-wrap gap-1">
-              {CHART_RANGES.map((range) => (
-                <button
-                  key={range.key}
-                  type="button"
-                  onClick={() => setChartRange(range.key)}
-                  className={cn(
-                    'rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors',
-                    chartRange === range.key
-                      ? 'bg-gold-tint border-gold-strong text-gold'
-                      : 'border-white/[0.06] hover-bg-warm text-white/55',
-                  )}
-                >
-                  {range.label}
-                </button>
-              ))}
-            </div>
-            <a
-              href={submissionsChartExportHref}
-              className="rounded-full border border-gold-soft bg-gold-soft px-2.5 py-1 text-[11px] font-medium text-gold"
-            >
-              Export chart CSV
-            </a>
-            {data?.fetchedAt && (
-              <span className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
-                Fetched {formatDateTime(data.fetchedAt)}
-              </span>
-            )}
-          </div>
-        </div>
-        <div className="h-[320px]">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={chartData}>
-              <CartesianGrid stroke="rgba(245,240,232,0.06)" vertical={false} />
-              <XAxis
-                dataKey="date"
-                tick={{ fill: 'var(--text-tertiary)', fontSize: 11 }}
-                axisLine={{ stroke: 'var(--surface-border)' }}
-                tickLine={false}
-              />
-              <YAxis
-                allowDecimals={false}
-                tick={{ fill: 'var(--text-tertiary)', fontSize: 11 }}
-                axisLine={false}
-                tickLine={false}
-              />
-              <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(201,169,110,0.06)' }} />
-              <Legend wrapperStyle={{ fontSize: 11, color: 'var(--text-secondary)' }} />
-              <Bar dataKey="committed" stackId="submitted" name="Committed" fill="rgba(245,240,232,0.24)" />
-              <Bar dataKey="approved" stackId="submitted" name="Approved" fill="#e8e1d4" />
-              <Bar dataKey="denied" stackId="submitted" name="Denied" fill="#a8746f" />
-              <Bar dataKey="pending" stackId="submitted" name="Pending" fill="#cf9d61" />
-              <Bar dataKey="fulfilled" name="Fulfilled" fill="#c9a96e" />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </section>
-
-      <section
-        className="rounded-xl border p-4"
-        style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)' }}
-      >
-        <div className="mb-3 flex items-start justify-between gap-3 flex-wrap">
-          <div>
-            <h2 className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-              Reject types by day
-            </h2>
-            <p className="mt-1 text-xs" style={{ color: 'var(--text-tertiary)' }}>
-              Rejection reasons grouped by scored date. Uses the same request/date filters as the submitted-leads table.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-end gap-2">
-            <label className="block">
-              <span
-                className="mb-1 block text-[10px] uppercase tracking-[0.14em]"
-                style={{ color: 'var(--text-tertiary)' }}
-              >
-                Reject type
-              </span>
-              <select
-                value={rejectType}
-                onChange={(e) => setRejectType(e.target.value)}
-                className="premium-focus rounded-lg border bg-transparent px-3 py-1.5 text-xs"
-                style={{
-                  borderColor: 'var(--surface-border)',
-                  color: 'var(--text-primary)',
-                  background: 'var(--surface-elevated)',
-                }}
-              >
-                <option value="all">Top reject types</option>
-                <option value="__all_types__">Show all reject types</option>
-                {(data?.rejectTypes ?? []).map((item) => (
-                  <option key={item.reason} value={item.reason}>
-                    {item.reason} ({item.count})
-                  </option>
-                ))}
-              </select>
-            </label>
-            <a
-              href={rejectsChartExportHref}
-              className="rounded-lg border border-gold-soft bg-gold-soft px-3 py-1.5 text-xs font-medium text-gold"
-            >
-              Export chart CSV
-            </a>
-          </div>
-        </div>
-        <div className="h-[320px]">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={rejectChartData}>
-              <CartesianGrid stroke="rgba(245,240,232,0.06)" vertical={false} />
-              <XAxis
-                dataKey="date"
-                tick={{ fill: 'var(--text-tertiary)', fontSize: 11 }}
-                axisLine={{ stroke: 'var(--surface-border)' }}
-                tickLine={false}
-              />
-              <YAxis
-                allowDecimals={false}
-                tick={{ fill: 'var(--text-tertiary)', fontSize: 11 }}
-                axisLine={false}
-                tickLine={false}
-              />
-              <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(201,169,110,0.06)' }} />
-              <Legend wrapperStyle={{ fontSize: 11, color: 'var(--text-secondary)' }} />
-              {rejectReasonsToShow.map((reason, idx) => (
-                <Bar
-                  key={reason}
-                  dataKey={reason}
-                  stackId="rejects"
-                  name={reason}
-                  fill={[
-                    '#a8746f',
-                    '#c78f72',
-                    '#cf9d61',
-                    '#8f6f6a',
-                    '#b88984',
-                    '#d4a373',
-                    '#9d6b66',
-                    '#c9a96e',
-                  ][idx % 8]}
-                />
-              ))}
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </section>
-
-      <section className="space-y-3">
-        <div>
-          <h2 className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-            Table filters
-          </h2>
-          <p className="mt-1 text-xs" style={{ color: 'var(--text-tertiary)' }}>
-            These controls filter the table below and the table CSV export.
-          </p>
-        </div>
-        <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
-        <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
-          {FILTERS.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              onClick={() => setFilter(item.key)}
-              className={cn(
-                'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all whitespace-nowrap border',
-                filter === item.key
-                  ? 'bg-gold-tint border-gold-strong text-gold'
-                  : 'border-white/[0.06] hover-bg-warm text-white/55',
-              )}
-            >
-              {item.label}
-              <span className="tabular-nums text-[10px] opacity-70">
-                {item.key === 'all'
-                  ? counts.submitted
-                  : item.key === 'fulfilled'
-                    ? counts.fulfilled
-                    : counts[item.key]}
-              </span>
-            </button>
-          ))}
-        </div>
-        <div className="relative flex-1 max-w-md sm:ml-auto">
-          <Search
-            className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5"
-            style={{ color: 'var(--text-tertiary)' }}
-          />
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search company, contact, miner, request..."
-            className="premium-focus w-full rounded-lg border px-9 py-2 text-sm placeholder:text-white/30 bg-transparent"
-            style={{
-              borderColor: 'var(--surface-border)',
-              background: 'var(--surface)',
-              color: 'var(--text-primary)',
-            }}
-          />
-        </div>
-        </div>
-      </section>
-
-      <section
-        className="grid gap-3 rounded-xl border p-3 sm:grid-cols-[minmax(220px,1fr)_160px_160px_auto]"
+        className="grid gap-3 rounded-xl border p-3 lg:grid-cols-[minmax(220px,1fr)_160px_160px_auto_auto]"
         style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)' }}
       >
         <label className="block">
@@ -651,7 +660,29 @@ export function AdminSubmittedLeads({
           />
         </label>
 
+        <div className="flex flex-col justify-end gap-2">
+          <span
+            className="text-[10px] uppercase tracking-[0.14em]"
+            style={{ color: 'var(--text-tertiary)' }}
+          >
+            Date range
+          </span>
+          <div className="flex flex-wrap gap-1">
+            {CHART_RANGES.map((range) => (
+              <button
+                key={range.key}
+                type="button"
+                onClick={() => applyDateRange(range.key)}
+                className="rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors border-white/[0.06] hover-bg-warm text-white/55"
+              >
+                {range.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div className="flex items-end gap-2">
+          <ViewToggle value={visualMode} onChange={setVisualMode} />
           <button
             type="button"
             onClick={() => {
@@ -660,6 +691,7 @@ export function AdminSubmittedLeads({
               setDateTo('')
               setQuery('')
               setFilter('all')
+              setRejectReasonFilter('')
             }}
             className="rounded-lg border px-3 py-2 text-sm"
             style={{
@@ -670,12 +702,368 @@ export function AdminSubmittedLeads({
           >
             Clear
           </button>
-          <a
-            href={exportHref}
-            className="inline-flex items-center justify-center rounded-lg border border-gold-strong bg-gold-soft px-3 py-2 text-sm font-medium text-gold transition-colors hover:bg-gold-tint"
-          >
-            Export table CSV
-          </a>
+        </div>
+      </section>
+
+      <section
+        className="rounded-xl border p-4"
+        style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)' }}
+      >
+        <div className="mb-3 flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h2 className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+              Submissions by day
+            </h2>
+            <p className="mt-1 text-xs" style={{ color: 'var(--text-tertiary)' }}>
+              Never-revealed commitments and awaiting-validation leads by submit date; approved, denied, and fulfilled activity by consensus date.
+            </p>
+          </div>
+          <div className="flex flex-col items-start gap-2 sm:items-end">
+            <a
+              href={submissionsChartExportHref}
+              className="rounded-full border border-gold-soft bg-gold-soft px-2.5 py-1 text-[11px] font-medium text-gold"
+            >
+              Export chart CSV
+            </a>
+            {data?.fetchedAt && (
+              <span className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
+                Fetched {formatDateTime(data.fetchedAt)}
+              </span>
+            )}
+          </div>
+        </div>
+        {visualMode === 'chart' ? (
+          <div className="h-[320px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartData}>
+                <CartesianGrid stroke="rgba(245,240,232,0.06)" vertical={false} />
+                <XAxis
+                  dataKey="date"
+                  tick={{ fill: 'var(--text-tertiary)', fontSize: 11 }}
+                  axisLine={{ stroke: 'var(--surface-border)' }}
+                  tickLine={false}
+                />
+                <YAxis
+                  allowDecimals={false}
+                  tick={{ fill: 'var(--text-tertiary)', fontSize: 11 }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(201,169,110,0.06)' }} />
+                <Legend wrapperStyle={{ fontSize: 11, color: 'var(--text-secondary)' }} />
+                <Bar dataKey="committed" stackId="submitted" name="Never revealed" fill="rgba(245,240,232,0.24)" />
+                <Bar dataKey="approved" stackId="submitted" name="Approved" fill="#e8e1d4" />
+                <Bar dataKey="denied" stackId="submitted" name="Denied" fill="#a8746f" />
+                <Bar dataKey="pending" stackId="submitted" name="Awaiting validation" fill="#cf9d61" />
+                <Bar dataKey="fulfilled" name="Fulfilled" fill="#c9a96e" />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        ) : (
+          <CompactDataTable
+            columns={['Date', 'Submitted', 'Never revealed', 'Approved', 'Denied', 'Awaiting validation', 'Fulfilled']}
+            rows={chartData.map((row) => [
+              row.date,
+              row.submitted,
+              row.committed,
+              row.approved,
+              row.denied,
+              row.pending,
+              row.fulfilled,
+            ])}
+          />
+        )}
+      </section>
+
+      <section
+        className="rounded-xl border p-4"
+        style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)' }}
+      >
+        <div className="mb-3 flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h2 className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+              Reject types by day
+            </h2>
+            <p className="mt-1 text-xs" style={{ color: 'var(--text-tertiary)' }}>
+              Rejection reasons grouped by scored date. Uses the same request/date filters as the submitted-leads table.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="block">
+              <span
+                className="mb-1 block text-[10px] uppercase tracking-[0.14em]"
+                style={{ color: 'var(--text-tertiary)' }}
+              >
+                Reject type
+              </span>
+              <select
+                value={rejectType}
+                onChange={(e) => setRejectType(e.target.value)}
+                className="premium-focus rounded-lg border bg-transparent px-3 py-1.5 text-xs"
+                style={{
+                  borderColor: 'var(--surface-border)',
+                  color: 'var(--text-primary)',
+                  background: 'var(--surface-elevated)',
+                }}
+              >
+                <option value="all">Top reject types</option>
+                <option value="__all_types__">Show all reject types</option>
+                {(data?.rejectTypes ?? []).map((item) => (
+                  <option key={item.reason} value={item.reason}>
+                    {item.reason} ({item.count})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <a
+              href={rejectsChartExportHref}
+              className="rounded-lg border border-gold-soft bg-gold-soft px-3 py-1.5 text-xs font-medium text-gold"
+            >
+              Export chart CSV
+            </a>
+          </div>
+        </div>
+        {visualMode === 'chart' ? (
+          <div className="h-[320px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={rejectChartData}>
+                <CartesianGrid stroke="rgba(245,240,232,0.06)" vertical={false} />
+                <XAxis
+                  dataKey="date"
+                  tick={{ fill: 'var(--text-tertiary)', fontSize: 11 }}
+                  axisLine={{ stroke: 'var(--surface-border)' }}
+                  tickLine={false}
+                />
+                <YAxis
+                  allowDecimals={false}
+                  tick={{ fill: 'var(--text-tertiary)', fontSize: 11 }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(201,169,110,0.06)' }} />
+                {rejectType !== '__all_types__' && (
+                  <Legend wrapperStyle={{ fontSize: 11, color: 'var(--text-secondary)' }} />
+                )}
+                {rejectReasonsToShow.map((reason, idx) => (
+                  <Bar
+                    key={reason}
+                    dataKey={reason}
+                    stackId="rejects"
+                    name={reason}
+                    fill={[
+                      '#a8746f',
+                      '#c78f72',
+                      '#cf9d61',
+                      '#8f6f6a',
+                      '#b88984',
+                      '#d4a373',
+                      '#9d6b66',
+                      '#c9a96e',
+                    ][idx % 8]}
+                  />
+                ))}
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        ) : (
+          <CompactDataTable
+            columns={['Date', 'Reject type', 'Count']}
+            rows={rejectTableRows.map((row) => [row.date, row.reason, row.count])}
+          />
+        )}
+      </section>
+
+      <section
+        className="rounded-xl border p-4"
+        style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)' }}
+      >
+        <div className="mb-3 flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h2 className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+              Miner submissions by day
+            </h2>
+            <p className="mt-1 text-xs" style={{ color: 'var(--text-tertiary)' }}>
+              Lead submission volume grouped by miner hotkey. Uses the same request/date filters as the table.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="block">
+              <span
+                className="mb-1 block text-[10px] uppercase tracking-[0.14em]"
+                style={{ color: 'var(--text-tertiary)' }}
+              >
+                Hotkey
+              </span>
+              <select
+                value={minerHotkey}
+                onChange={(e) => setMinerHotkey(e.target.value)}
+                className="premium-focus rounded-lg border bg-transparent px-3 py-1.5 text-xs"
+                style={{
+                  borderColor: 'var(--surface-border)',
+                  color: 'var(--text-primary)',
+                  background: 'var(--surface-elevated)',
+                }}
+              >
+                <option value="top">Top hotkeys</option>
+                <option value="__all_hotkeys__">Show all hotkeys</option>
+                {(data?.minerHotkeys ?? []).map((item) => (
+                  <option key={item.hotkey} value={item.hotkey}>
+                    {truncateHotkey(item.hotkey)} ({item.count})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <a
+              href={minerChartExportHref}
+              className="rounded-lg border border-gold-soft bg-gold-soft px-3 py-1.5 text-xs font-medium text-gold"
+            >
+              Export chart CSV
+            </a>
+          </div>
+        </div>
+        {visualMode === 'chart' ? (
+          <div className="h-[320px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={minerChartData}>
+                <CartesianGrid stroke="rgba(245,240,232,0.06)" vertical={false} />
+                <XAxis
+                  dataKey="date"
+                  tick={{ fill: 'var(--text-tertiary)', fontSize: 11 }}
+                  axisLine={{ stroke: 'var(--surface-border)' }}
+                  tickLine={false}
+                />
+                <YAxis
+                  allowDecimals={false}
+                  tick={{ fill: 'var(--text-tertiary)', fontSize: 11 }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(201,169,110,0.06)' }} />
+                {minerHotkey !== '__all_hotkeys__' && (
+                  <Legend
+                    wrapperStyle={{ fontSize: 11, color: 'var(--text-secondary)' }}
+                    formatter={(value) =>
+                      value === 'Other hotkeys' ? value : truncateHotkey(String(value))
+                    }
+                  />
+                )}
+                {minerHotkeysToShow.map((hotkey, idx) => (
+                  <Bar
+                    key={hotkey}
+                    dataKey={hotkey}
+                    stackId="miners"
+                    name={hotkey}
+                    fill={[
+                      '#c9a96e',
+                      '#e8e1d4',
+                      '#cf9d61',
+                      '#a8746f',
+                      '#8f6f6a',
+                      '#d4a373',
+                      '#b88984',
+                      '#9d6b66',
+                      '#bfa06a',
+                      '#f0d9a0',
+                      'rgba(245,240,232,0.24)',
+                    ][idx % 11]}
+                  />
+                ))}
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        ) : (
+          <CompactDataTable
+            columns={['Date', 'Miner hotkey', 'Short', 'Submissions']}
+            rows={minerTableRows.map((row) => [
+              row.date,
+              row.hotkey,
+              row.hotkey === 'Other hotkeys' ? row.hotkey : truncateHotkey(row.hotkey),
+              row.count,
+            ])}
+          />
+        )}
+      </section>
+
+      <section className="space-y-3">
+        <div>
+          <h2 className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+            Table filters
+          </h2>
+          <p className="mt-1 text-xs" style={{ color: 'var(--text-tertiary)' }}>
+            These controls filter the table below and the table CSV export.
+          </p>
+        </div>
+        <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
+        <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
+          {FILTERS.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => setFilter(item.key)}
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all whitespace-nowrap border',
+                filter === item.key
+                  ? 'bg-gold-tint border-gold-strong text-gold'
+                  : 'border-white/[0.06] hover-bg-warm text-white/55',
+              )}
+            >
+              {item.label}
+              <span className="tabular-nums text-[10px] opacity-70">
+                {item.key === 'all'
+                  ? counts.submitted
+                  : item.key === 'fulfilled'
+                    ? counts.fulfilled
+                    : counts[item.key]}
+              </span>
+            </button>
+          ))}
+        </div>
+        <div className="relative min-w-[220px]">
+          <input
+            type="text"
+            list="reject-reason-options"
+            value={rejectReasonFilter}
+            onChange={(e) => setRejectReasonFilter(e.target.value)}
+            placeholder="Filter reject type..."
+            className="premium-focus w-full rounded-lg border px-3 py-2 text-sm placeholder:text-white/30 bg-transparent"
+            style={{
+              borderColor: 'var(--surface-border)',
+              background: 'var(--surface)',
+              color: 'var(--text-primary)',
+            }}
+          />
+          <datalist id="reject-reason-options">
+            {(data?.rejectTypes ?? []).map((item) => (
+              <option key={item.reason} value={item.reason}>
+                {item.count}
+              </option>
+            ))}
+          </datalist>
+        </div>
+        <div className="relative flex-1 max-w-md sm:ml-auto">
+          <Search
+            className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5"
+            style={{ color: 'var(--text-tertiary)' }}
+          />
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search company, contact, miner, request..."
+            className="premium-focus w-full rounded-lg border px-9 py-2 text-sm placeholder:text-white/30 bg-transparent"
+            style={{
+              borderColor: 'var(--surface-border)',
+              background: 'var(--surface)',
+              color: 'var(--text-primary)',
+            }}
+          />
+        </div>
+        <a
+          href={exportHref}
+          className="inline-flex items-center justify-center rounded-lg border border-gold-strong bg-gold-soft px-3 py-2 text-sm font-medium text-gold transition-colors hover:bg-gold-tint"
+        >
+          Export table CSV
+        </a>
         </div>
       </section>
 
@@ -831,17 +1219,23 @@ function LeadDetailPanel({
   lead: AdminSubmittedLead
   onClose: () => void
 }) {
+  const icp = lead.requestIcp ?? {}
+  const submittedFields = submittedLeadFields(lead.leadData)
+
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end bg-black/60 sm:items-center sm:justify-center"
+      className="fixed inset-0 z-50 bg-black/80"
       onClick={onClose}
     >
       <div
-        className="max-h-[90vh] w-full overflow-auto rounded-t-2xl border p-5 shadow-2xl sm:max-w-4xl sm:rounded-2xl"
-        style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)' }}
+        className="flex h-screen w-screen flex-col overflow-hidden border p-5 shadow-2xl"
+        style={{ borderColor: 'var(--surface-border)', background: 'var(--surface-base)' }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-4 flex items-start justify-between gap-4">
+        <div
+          className="mb-4 flex flex-shrink-0 items-start justify-between gap-4 border-b pb-4"
+          style={{ borderColor: 'var(--surface-border)' }}
+        >
           <div>
             <h2 className="text-lg font-medium" style={{ color: 'var(--text-primary)' }}>
               {dash(lead.contact)} · {dash(lead.company)}
@@ -863,7 +1257,7 @@ function LeadDetailPanel({
           </button>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid flex-shrink-0 gap-3 sm:grid-cols-4 xl:grid-cols-6">
           <Detail label="Status" value={lead.fulfilled ? 'fulfilled' : lead.status} />
           <Detail label="Request" value={dash(lead.requestLabel)} />
           <Detail label="Client" value={dash(lead.clientCompany)} />
@@ -872,18 +1266,16 @@ function LeadDetailPanel({
           <Detail label="Submitted" value={formatDateTime(lead.submittedAt)} />
           <Detail label="Activity" value={formatDateTime(lead.activityAt)} />
           <Detail label="Consensus" value={formatDateTime(lead.consensusAt)} />
-          <Detail label="Email" value={dash(lead.email)} />
-          <Detail label="Role" value={dash(lead.role)} />
-          <Detail label="Country" value={dash(lead.country)} />
           <Detail label="Final score" value={score(lead.score)} />
           <Detail label="Intent score" value={score(lead.intentScore)} />
           <Detail label="Rep score" value={score(lead.repScore)} />
           <Detail label="Reject reason" value={dash(lead.rejectionReason)} />
-          <Detail label="Extended reject reason" value={dash(lead.rejectionDetail)} />
         </div>
 
+        <RejectionFocus lead={lead} icp={icp} />
+
         {lead.intentDetails && (
-          <section className="mt-4 rounded-xl border p-4" style={{ borderColor: 'var(--surface-border)' }}>
+          <section className="mt-4 flex-shrink-0 rounded-xl border p-4" style={{ borderColor: 'var(--surface-border)' }}>
             <div className="mb-2 text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-tertiary)' }}>
               Intent details
             </div>
@@ -893,17 +1285,330 @@ function LeadDetailPanel({
           </section>
         )}
 
-        <section className="mt-4 rounded-xl border p-4" style={{ borderColor: 'var(--surface-border)' }}>
-          <div className="mb-2 text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-tertiary)' }}>
-            Raw lead data
+        <div className="mt-4 grid min-h-0 flex-1 gap-4 xl:grid-cols-2">
+          <section className="min-h-0 overflow-hidden rounded-xl border" style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)' }}>
+            <div
+              className="sticky top-0 z-10 border-b px-4 py-3"
+              style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)' }}
+            >
+              <div className="text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-tertiary)' }}>
+                Request ICP
+              </div>
+              <div className="mt-1 text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                What the request asked miners to find
+              </div>
+            </div>
+            <div className="h-full overflow-auto p-4 pb-24">
+              <div className="space-y-4 text-sm">
+                <IcpCompare label="Prompt" value={icp.prompt} />
+                <IcpCompare label="Product / service" value={icp.product_service} />
+                <IcpCompare label="Target roles" value={icp.target_roles} />
+                <IcpCompare label="Role types" value={icp.target_role_types} />
+                <IcpCompare label="Seniority" value={icp.target_seniority} />
+                <IcpCompare label="Industries" value={icp.industry} />
+                <IcpCompare label="Sub-industries" value={icp.sub_industry} />
+                <IcpCompare label="Employee count" value={icp.employee_count} />
+                <IcpCompare label="Countries" value={icp.country} />
+                <IcpCompare label="Geography" value={icp.geography} />
+                <IcpCompare label="Intent signals" value={icp.intent_signals} />
+                <IcpCompare label="Required attributes" value={icp.required_attributes} />
+              </div>
+              <div className="mt-5">
+                <div className="mb-2 text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-tertiary)' }}>
+                  Raw request ICP
+                </div>
+                <pre
+                  className="max-h-[360px] overflow-auto rounded-lg p-3 text-[11px]"
+                  style={{ background: 'var(--surface-base)', color: 'var(--text-secondary)' }}
+                >
+                  {JSON.stringify(lead.requestIcp, null, 2)}
+                </pre>
+              </div>
+            </div>
+          </section>
+
+          <section className="min-h-0 overflow-hidden rounded-xl border" style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)' }}>
+            <div
+              className="sticky top-0 z-10 border-b px-4 py-3"
+              style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)' }}
+            >
+              <div className="text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-tertiary)' }}>
+                Submitted lead
+              </div>
+              <div className="mt-1 text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                What the miner submitted
+              </div>
+            </div>
+            <div className="h-full overflow-auto p-4 pb-24">
+              <div className="space-y-3 text-sm">
+                {submittedFields.map(({ label, value }) => (
+                  <IcpCompare key={label} label={label} value={value} />
+                ))}
+              </div>
+              <div className="mt-5">
+                <div className="mb-2 text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-tertiary)' }}>
+                  Raw submitted lead
+                </div>
+            <pre
+              className="max-h-[420px] overflow-auto rounded-lg p-3 text-[11px]"
+              style={{ background: 'var(--surface-base)', color: 'var(--text-secondary)' }}
+            >
+              {JSON.stringify(lead.leadData, null, 2)}
+            </pre>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function renderIcpValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => {
+        if (typeof item === 'string') return item
+        if (item && typeof item === 'object' && 'text' in item) {
+          return String((item as { text?: unknown }).text ?? '')
+        }
+        return JSON.stringify(item)
+      })
+      .filter(Boolean)
+      .join(', ')
+  }
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>
+    return Object.entries(obj)
+      .flatMap(([key, val]) => {
+        if (!Array.isArray(val) || val.length === 0) return []
+        return `${key}: ${renderIcpValue(val)}`
+      })
+      .join(' | ')
+  }
+  return typeof value === 'string' && value.trim() ? value : '—'
+}
+
+function submittedLeadFields(data: Record<string, unknown>): Array<{ label: string; value: unknown }> {
+  const priority = [
+    ['full_name', 'Full name'],
+    ['email', 'Email'],
+    ['phone', 'Phone'],
+    ['role', 'Role'],
+    ['role_type', 'Role type'],
+    ['seniority', 'Seniority'],
+    ['business', 'Company'],
+    ['description', 'Description'],
+    ['industry', 'Industry'],
+    ['sub_industry', 'Sub-industry'],
+    ['employee_count', 'Employee count'],
+    ['country', 'Contact country'],
+    ['state', 'Contact state'],
+    ['city', 'Contact city'],
+    ['company_hq_country', 'HQ country'],
+    ['company_hq_state', 'HQ state'],
+    ['company_hq_city', 'HQ city'],
+    ['company_website', 'Company website'],
+    ['company_linkedin', 'Company LinkedIn'],
+    ['linkedin_url', 'Person LinkedIn'],
+    ['intent_signals', 'Submitted intent signals'],
+  ] as const
+  const used = new Set<string>(priority.map(([key]) => key))
+  const rows: Array<{ label: string; value: unknown }> = priority
+    .filter(([key]) => data[key] !== undefined && data[key] !== null && data[key] !== '')
+    .map(([key, label]) => ({ label, value: data[key] }))
+
+  for (const [key, value] of Object.entries(data)) {
+    if (used.has(key)) continue
+    if (value === undefined || value === null || value === '') continue
+    rows.push({
+      label: key
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, (char) => char.toUpperCase()),
+      value,
+    })
+  }
+
+  return rows
+}
+
+function submittedHq(data: Record<string, unknown>): string {
+  return [
+    data.company_hq_city,
+    data.company_hq_state,
+    data.company_hq_country,
+  ]
+    .filter(Boolean)
+    .join(', ') || '—'
+}
+
+function rejectionFocus(lead: AdminSubmittedLead, icp: Record<string, unknown>): {
+  expectedLabel: string
+  expected: unknown
+  submittedLabel: string
+  submitted: unknown
+} {
+  const reason = lead.rejectionReason ?? ''
+  const data = lead.leadData
+
+  if (reason.includes('geography') || reason.includes('location')) {
+    return {
+      expectedLabel: 'Expected location',
+      expected: {
+        geography: icp.geography,
+        countries: icp.country,
+      },
+      submittedLabel: 'Submitted HQ / country',
+      submitted: {
+        hq: submittedHq(data),
+        contact_country: data.country,
+      },
+    }
+  }
+  if (reason.includes('role_type')) {
+    return {
+      expectedLabel: 'Expected role types',
+      expected: icp.target_role_types,
+      submittedLabel: 'Submitted role / role type',
+      submitted: {
+        role: data.role,
+        role_type: data.role_type,
+      },
+    }
+  }
+  if (reason.includes('role')) {
+    return {
+      expectedLabel: 'Expected roles',
+      expected: icp.target_roles,
+      submittedLabel: 'Submitted role',
+      submitted: data.role,
+    }
+  }
+  if (reason.includes('sub_industry')) {
+    return {
+      expectedLabel: 'Expected sub-industries',
+      expected: icp.sub_industry,
+      submittedLabel: 'Submitted sub-industry',
+      submitted: data.sub_industry,
+    }
+  }
+  if (reason.includes('industry')) {
+    return {
+      expectedLabel: 'Expected industries',
+      expected: icp.industry,
+      submittedLabel: 'Submitted industry',
+      submitted: data.industry,
+    }
+  }
+  if (reason.includes('employee')) {
+    return {
+      expectedLabel: 'Expected employee count',
+      expected: icp.employee_count,
+      submittedLabel: 'Submitted employee count',
+      submitted: data.employee_count,
+    }
+  }
+  if (reason.includes('seniority')) {
+    return {
+      expectedLabel: 'Expected seniority',
+      expected: icp.target_seniority,
+      submittedLabel: 'Submitted seniority',
+      submitted: data.seniority,
+    }
+  }
+  if (reason.includes('required_attribute')) {
+    return {
+      expectedLabel: 'Required attributes',
+      expected: icp.required_attributes,
+      submittedLabel: 'Submitted lead evidence',
+      submitted: {
+        company: data.business,
+        role: data.role,
+        description: data.description,
+        intent_signals: data.intent_signals,
+      },
+    }
+  }
+  if (reason.includes('email')) {
+    return {
+      expectedLabel: 'Expected email',
+      expected: 'Valid, deliverable, person-matching email',
+      submittedLabel: 'Submitted email',
+      submitted: data.email,
+    }
+  }
+  if (reason.includes('company')) {
+    return {
+      expectedLabel: 'Company requirements',
+      expected: {
+        industries: icp.industry,
+        sub_industries: icp.sub_industry,
+        required_attributes: icp.required_attributes,
+      },
+      submittedLabel: 'Submitted company',
+      submitted: {
+        business: data.business,
+        website: data.company_website,
+        linkedin: data.company_linkedin,
+        description: data.description,
+      },
+    }
+  }
+
+  return {
+    expectedLabel: 'Request target',
+    expected: icp,
+    submittedLabel: 'Submitted lead',
+    submitted: data,
+  }
+}
+
+function RejectionFocus({
+  lead,
+  icp,
+}: {
+  lead: AdminSubmittedLead
+  icp: Record<string, unknown>
+}) {
+  const focus = rejectionFocus(lead, icp)
+  return (
+    <section
+      className="mt-4 flex-shrink-0 rounded-xl border p-4"
+      style={{ borderColor: 'rgba(168, 116, 111, 0.35)', background: 'rgba(168, 116, 111, 0.08)' }}
+    >
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-tertiary)' }}>
+            Rejection focus
           </div>
-          <pre
-            className="max-h-[420px] overflow-auto rounded-lg p-3 text-[11px]"
-            style={{ background: 'var(--surface-base)', color: 'var(--text-secondary)' }}
-          >
-            {JSON.stringify(lead.leadData, null, 2)}
-          </pre>
-        </section>
+          <div className="mt-1 text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+            {dash(lead.rejectionReason)}
+          </div>
+        </div>
+        <div className="max-w-2xl text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+          {dash(lead.rejectionDetail)}
+        </div>
+      </div>
+      <div className="grid gap-3 lg:grid-cols-2">
+        <div className="rounded-lg border p-3" style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)' }}>
+          <IcpCompare label={focus.expectedLabel} value={focus.expected} />
+        </div>
+        <div className="rounded-lg border p-3" style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)' }}>
+          <IcpCompare label={focus.submittedLabel} value={focus.submitted} />
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function IcpCompare({ label, value }: { label: string; value: unknown }) {
+  return (
+    <div className="grid gap-1 sm:grid-cols-[130px_minmax(0,1fr)]">
+      <div className="text-[10px] uppercase tracking-[0.12em]" style={{ color: 'var(--text-tertiary)' }}>
+        {label}
+      </div>
+      <div className="leading-relaxed" style={{ color: 'var(--text-primary)' }}>
+        {renderIcpValue(value)}
       </div>
     </div>
   )
