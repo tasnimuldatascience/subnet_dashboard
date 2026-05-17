@@ -539,11 +539,15 @@ function detectRequiredAttributes(text: string): RequiredAttributes {
       'company attributes',
       'company criteria',
       'required company criteria',
+      'company requirements',
+      'must-have company criteria',
+      'must have company criteria',
+      'hard company requirements',
       'required_attributes.company',
     ]),
     ...collectSectionItems(
       text,
-      /^(required\s+)?company\s+(attributes?|criteria)\s*[:=]?/i,
+      /^(required\s+)?company\s+(attributes?|criteria|requirements?)\s*[:=]?/i,
     ),
   ].flatMap((value) => (value ? splitAttributeList(value) : []))
 
@@ -554,11 +558,15 @@ function detectRequiredAttributes(text: string): RequiredAttributes {
       'contact attributes',
       'contact criteria',
       'required contact criteria',
+      'contact requirements',
+      'must-have contact criteria',
+      'must have contact criteria',
+      'hard contact requirements',
       'required_attributes.contact',
     ]),
     ...collectSectionItems(
       text,
-      /^(required\s+)?contact\s+(attributes?|criteria)\s*[:=]?/i,
+      /^(required\s+)?contact\s+(attributes?|criteria|requirements?)\s*[:=]?/i,
     ),
   ].flatMap((value) => (value ? splitAttributeList(value) : []))
 

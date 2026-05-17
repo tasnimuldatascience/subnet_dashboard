@@ -168,7 +168,10 @@ ${VALID_ROLE_TYPES.map((v) => `  - ${v}`).join('\n')}
 ${EMPLOYEE_COUNT_BUCKETS.map((v) => `  - ${v}`).join('\n')}
 - "country" must be country names, e.g. "United States", "France". Empty array means any country.
 - "intent_signals" must be a list of plain strings — each one a concrete observable event miners can verify from web content. Avoid vague signals like "has budget" or "high intent". Do NOT infer required-vs-optional; the operator will toggle "Required" per signal in the admin UI after reviewing your draft.
-- "required_attributes" is optional fail-closed criteria. Use "company" for company-level gates (for example, "Is an importer or exporter"). Use "contact" for person-level gates (for example, "Is a W-2 employee"). Only include attributes explicitly stated by the operator; otherwise return {"company":[],"contact":[]}.
+- "required_attributes" is optional fail-closed criteria. This is the ONLY place for must-have criteria / required attributes / required criteria / hard requirements that are not already covered by role, industry, country, geography, employee_count, or intent_signals.
+- Use required_attributes.company for company-level gates, e.g. "Is an importer or exporter", "Has SOC 2 certification", "Uses Salesforce", "Operates in manufacturing, retail, or wholesale".
+- Use required_attributes.contact for person-level gates, e.g. "Is a W-2 employee", "Owns procurement", "Has budget authority", "Works in the US".
+- Preserve each required attribute as a standalone sentence. Do not split commas inside one criterion. Only include attributes explicitly stated by the operator; otherwise return {"company":[],"contact":[]}.
 - "product_service" describes what the client sells, not just the buyer pain.
 - "num_leads" defaults to 10 if unspecified.
 - "excluded_companies" is optional; include only explicitly named excluded prospect companies.

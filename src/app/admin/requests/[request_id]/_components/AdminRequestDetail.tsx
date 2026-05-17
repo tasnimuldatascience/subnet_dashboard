@@ -1651,8 +1651,6 @@ function IcpPanel({ icp }: { icp: IcpDetails | null }) {
   }
   const requiredCompanyAttributes = asList(icp.required_attributes?.company)
   const requiredContactAttributes = asList(icp.required_attributes?.contact)
-  const hasRequiredAttributes =
-    requiredCompanyAttributes.length > 0 || requiredContactAttributes.length > 0
 
   return (
     <div className="space-y-3">
@@ -1730,20 +1728,18 @@ function IcpPanel({ icp }: { icp: IcpDetails | null }) {
           ))}
         </ul>
       </FieldGroup>
-      {hasRequiredAttributes && (
-        <FieldGroup title="Required attributes">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <AttributeList
-              title="Company"
-              values={requiredCompanyAttributes}
-            />
-            <AttributeList
-              title="Contact"
-              values={requiredContactAttributes}
-            />
-          </div>
-        </FieldGroup>
-      )}
+      <FieldGroup title="Required attributes">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <AttributeList
+            title="Company"
+            values={requiredCompanyAttributes}
+          />
+          <AttributeList
+            title="Contact"
+            values={requiredContactAttributes}
+          />
+        </div>
+      </FieldGroup>
       {(icp.excluded_companies ?? []).length > 0 && (
         <FieldGroup title="Excluded companies">
           <div className="flex flex-wrap gap-1.5">

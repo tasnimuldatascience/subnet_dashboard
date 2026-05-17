@@ -28,6 +28,7 @@ type RequestSnapshot = {
   company: string | null
   num_leads: number
   icp_details: IcpDetails | null
+  required_attributes?: IcpDetails['required_attributes'] | null
 }
 
 type ReusePayload = {
@@ -67,6 +68,10 @@ function buildDraftFromRequest(payload: ReusePayload): ParsedIcpDraft | null {
   const source = payload.chain.leaf ?? payload.chain.root
   const icp = payload.icp ?? source.icp_details ?? payload.chain.root.icp_details
   if (!icp) return null
+  const requiredAttributes =
+    icp.required_attributes ??
+    source.required_attributes ??
+    payload.chain.root.required_attributes
 
   return {
     ...emptyDraft(),
@@ -80,7 +85,7 @@ function buildDraftFromRequest(payload: ReusePayload): ParsedIcpDraft | null {
     target_seniority: icp.target_seniority ?? '',
     employee_count: employeeBuckets(icp.employee_count),
     intent_signals: normalizeIntentSignals(icp.intent_signals),
-    required_attributes: normalizeRequiredAttributes(icp.required_attributes),
+    required_attributes: normalizeRequiredAttributes(requiredAttributes),
     product_service: icp.product_service ?? '',
     num_leads: payload.target_num_leads ?? icp.num_leads ?? source.num_leads ?? 10,
     internal_label: source.internal_label ?? payload.chain.root.internal_label ?? '',

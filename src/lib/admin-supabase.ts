@@ -101,6 +101,7 @@ export interface AdminFulfillmentRequest {
   status: string
   num_leads: number
   icp_details: IcpDetails | null
+  required_attributes?: Partial<RequiredAttributes> | null
   created_at: string
   window_start: string | null
   window_end: string | null

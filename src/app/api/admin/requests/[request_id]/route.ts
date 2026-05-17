@@ -27,6 +27,7 @@ import {
   DeepResearchState,
   DeepResearchAnalysisPayload,
   DeepResearchStatus,
+  IcpDetails,
 } from '@/lib/admin-supabase'
 
 export const runtime = 'nodejs'
@@ -45,6 +46,18 @@ interface DeepResearchRow {
   deep_research_analysis: DeepResearchAnalysisPayload | null
 }
 
+function mergeRequiredAttributes(row: AdminFulfillmentRequest | null): IcpDetails | null {
+  if (!row?.icp_details) return row?.icp_details ?? null
+  if (!row.required_attributes) return row.icp_details
+  return {
+    ...row.icp_details,
+    required_attributes: {
+      ...(row.icp_details.required_attributes ?? {}),
+      ...row.required_attributes,
+    },
+  }
+}
+
 async function walkChain(
   supabase: ReturnType<typeof getAdminSupabase>,
   startId: string,
@@ -57,7 +70,7 @@ async function walkChain(
     const { data, error } = await supabase
       .from('fulfillment_requests')
       .select(
-        'request_id, internal_label, company, status, num_leads, icp_details, created_at, window_start, window_end, successor_request_id',
+        'request_id, internal_label, company, status, num_leads, icp_details, required_attributes, created_at, window_start, window_end, successor_request_id',
       )
       .eq('request_id', id)
       .limit(1)
@@ -81,7 +94,7 @@ async function walkChain(
     const { data: predData } = await supabase
       .from('fulfillment_requests')
       .select(
-        'request_id, internal_label, company, status, num_leads, icp_details, created_at, window_start, window_end, successor_request_id',
+        'request_id, internal_label, company, status, num_leads, icp_details, required_attributes, created_at, window_start, window_end, successor_request_id',
       )
       .eq('successor_request_id', cur.request_id)
       .limit(1)
@@ -261,7 +274,7 @@ export async function GET(
   return NextResponse.json(
     {
       chain: { root, leaf, cycles },
-      icp: leaf.icp_details ?? root.icp_details ?? null,
+      icp: mergeRequiredAttributes(leaf) ?? mergeRequiredAttributes(root),
       winners: winningLeads,
       target_num_leads: root.num_leads ?? leaf.num_leads,
       delivered_count: winningLeads.length,
