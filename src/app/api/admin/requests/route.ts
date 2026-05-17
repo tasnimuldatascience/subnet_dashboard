@@ -163,11 +163,12 @@ export async function GET() {
       is_chain_held: boolean
     }> = []
     let winnersErr: { message: string } | null = null
-    for (const group of chunks(allChainRequestIds, 100)) {
+    for (const group of chunks(allChainRequestIds, 25)) {
       const { data, error } = await supabase
         .from('fulfillment_score_consensus')
         .select('request_id, lead_id, computed_at, consensus_final_score, is_winner, is_chain_held')
         .in('request_id', group)
+        .or('is_winner.eq.true,is_chain_held.eq.true,consensus_final_score.gt.0')
       if (error) {
         winnersErr = { message: error.message || 'winner batch failed' }
         break
