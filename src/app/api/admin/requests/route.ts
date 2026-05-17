@@ -95,6 +95,12 @@ function summarizeIcp(icp: IcpDetails | null): ChainSummary['icp_summary'] {
   return { industries, sub_industries, countries, intent_signals }
 }
 
+function chunks<T>(items: T[], size: number): T[][] {
+  const out: T[][] = []
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size))
+  return out
+}
+
 export async function GET() {
   let supabase
   try {
@@ -136,7 +142,10 @@ export async function GET() {
 
   const chains = buildChainViews(rows)
 
-  // Pull winner counts per chain in one go.
+  // Pull approved counts per chain in batches. Final fulfilled chains mark
+  // winners with is_winner=true, while in-flight/partial chains can already
+  // have accepted candidates via is_chain_held or a positive consensus score.
+  // The admin list calls this "Approved", so include all three states.
   const allChainRequestIds = chains.flatMap((c) => [
     ...c.predecessors.map((p) => p.request_id),
     c.leaf.request_id,
@@ -145,11 +154,26 @@ export async function GET() {
   let winnerCounts: Map<string, number> = new Map()
   const latestWinnerAt: Map<string, string> = new Map()
   if (allChainRequestIds.length > 0) {
-    const { data: winnersData, error: winnersErr } = await supabase
-      .from('fulfillment_score_consensus')
-      .select('request_id, lead_id, computed_at')
-      .in('request_id', allChainRequestIds)
-      .eq('is_winner', true)
+    const winnerRows: Array<{
+      request_id: string
+      lead_id: string
+      computed_at: string
+      consensus_final_score: number | null
+      is_winner: boolean
+      is_chain_held: boolean
+    }> = []
+    let winnersErr: { message: string } | null = null
+    for (const group of chunks(allChainRequestIds, 100)) {
+      const { data, error } = await supabase
+        .from('fulfillment_score_consensus')
+        .select('request_id, lead_id, computed_at, consensus_final_score, is_winner, is_chain_held')
+        .in('request_id', group)
+      if (error) {
+        winnersErr = { message: error.message || 'winner batch failed' }
+        break
+      }
+      winnerRows.push(...((data ?? []) as typeof winnerRows))
+    }
     if (winnersErr) {
       console.error('[admin] winners count query failed', winnersErr)
     } else {
@@ -162,7 +186,10 @@ export async function GET() {
         reqIdToRoot.set(c.leaf.request_id, c.rootId)
       }
       const seenLeadsByRoot = new Map<string, Set<string>>()
-      for (const w of winnersData || []) {
+      for (const w of winnerRows) {
+        const approved =
+          w.is_winner || w.is_chain_held || (w.consensus_final_score ?? 0) > 0
+        if (!approved) continue
         const root = reqIdToRoot.get(w.request_id)
         if (!root) continue
         let set = seenLeadsByRoot.get(root)

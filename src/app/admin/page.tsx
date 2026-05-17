@@ -2,6 +2,10 @@ import { headers } from 'next/headers'
 import Link from 'next/link'
 import { AdminRequestList, ChainSummary } from './_components/AdminRequestList'
 import {
+  AdminSubmittedLeads,
+  type AdminSubmittedLeadsPayload,
+} from './_components/AdminSubmittedLeads'
+import {
   AdminModelCompetition,
   type AdminModelCompetitionPayload,
 } from './_components/AdminModelCompetition'
@@ -10,6 +14,7 @@ import { cn } from '@/lib/utils'
 export const dynamic = 'force-dynamic'
 
 type AdminView = 'fulfillment' | 'model-competition'
+type FulfillmentTab = 'requests' | 'submitted-leads'
 
 async function fetchChains(): Promise<ChainSummary[]> {
   // Build the absolute URL so this works on Vercel, on EC2 behind
@@ -47,6 +52,22 @@ async function fetchModelCompetition(): Promise<AdminModelCompetitionPayload> {
     throw new Error(`API returned ${res.status}: ${await res.text()}`)
   }
   return (await res.json()) as AdminModelCompetitionPayload
+}
+
+async function fetchSubmittedLeads(): Promise<AdminSubmittedLeadsPayload> {
+  const h = await headers()
+  const host = h.get('x-forwarded-host') ?? h.get('host')
+  const proto = h.get('x-forwarded-proto') ?? 'https'
+  const base = host ? `${proto}://${host}` : ''
+  const auth = h.get('authorization')
+  const res = await fetch(`${base}/api/admin/fulfillment-submissions`, {
+    cache: 'no-store',
+    headers: auth ? { authorization: auth } : undefined,
+  })
+  if (!res.ok) {
+    throw new Error(`API returned ${res.status}: ${await res.text()}`)
+  }
+  return (await res.json()) as AdminSubmittedLeadsPayload
 }
 
 function AdminViewTabs({ active }: { active: AdminView }) {
@@ -90,18 +111,58 @@ function getAdminView(value: string | string[] | undefined): AdminView {
   return view === 'model-competition' ? 'model-competition' : 'fulfillment'
 }
 
+function getFulfillmentTab(value: string | string[] | undefined): FulfillmentTab {
+  const tab = Array.isArray(value) ? value[0] : value
+  return tab === 'submitted-leads' ? 'submitted-leads' : 'requests'
+}
+
+function FulfillmentTabs({ active }: { active: FulfillmentTab }) {
+  const tabs: Array<{ key: FulfillmentTab; label: string; href: string }> = [
+    { key: 'requests', label: 'Requests', href: '/admin' },
+    {
+      key: 'submitted-leads',
+      label: 'Submitted leads',
+      href: '/admin?tab=submitted-leads',
+    },
+  ]
+
+  return (
+    <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
+      {tabs.map((tab) => (
+        <Link
+          key={tab.key}
+          href={tab.href}
+          className={cn(
+            'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all whitespace-nowrap border',
+            active === tab.key
+              ? 'bg-gold-tint border-gold-strong text-gold'
+              : 'border-white/[0.06] hover-bg-warm text-white/55',
+          )}
+        >
+          {tab.label}
+        </Link>
+      ))}
+    </div>
+  )
+}
+
 export default async function AdminLandingPage({
   searchParams,
 }: {
-  searchParams: Promise<{ view?: string | string[] }>
+  searchParams: Promise<{ view?: string | string[]; tab?: string | string[] }>
 }) {
-  const activeView = getAdminView((await searchParams).view)
+  const params = await searchParams
+  const activeView = getAdminView(params.view)
+  const fulfillmentTab = getFulfillmentTab(params.tab)
   let chains: ChainSummary[] = []
   let modelPayload: AdminModelCompetitionPayload | null = null
+  let submittedLeadsPayload: AdminSubmittedLeadsPayload | null = null
   let error: string | null = null
   try {
     if (activeView === 'model-competition') {
       modelPayload = await fetchModelCompetition()
+    } else if (fulfillmentTab === 'submitted-leads') {
+      submittedLeadsPayload = await fetchSubmittedLeads()
     } else {
       chains = await fetchChains()
     }
@@ -119,8 +180,16 @@ export default async function AdminLandingPage({
       <AdminViewTabs active={activeView} />
       {activeView === 'model-competition' ? (
         <AdminModelCompetition payload={modelPayload} error={error} />
+      ) : fulfillmentTab === 'submitted-leads' ? (
+        <>
+          <FulfillmentTabs active={fulfillmentTab} />
+          <AdminSubmittedLeads payload={submittedLeadsPayload} error={error} />
+        </>
       ) : (
-        <AdminRequestList chains={chains} error={error} />
+        <>
+          <FulfillmentTabs active={fulfillmentTab} />
+          <AdminRequestList chains={chains} error={error} />
+        </>
       )}
     </div>
   )
