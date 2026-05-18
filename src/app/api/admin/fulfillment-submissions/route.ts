@@ -60,6 +60,11 @@ type MinerDailyRow = {
   date: string
   minerHotkey: string
   count: number
+  committed: number
+  approved: number
+  denied: number
+  pending: number
+  fulfilled: number
 }
 
 type ChartConsensusRow = {
@@ -465,6 +470,7 @@ export async function GET(request: NextRequest) {
   const query = (searchParams.get('q') ?? '').trim().toLowerCase()
   const rejectReasonFilter = (searchParams.get('rejectReason') ?? '').trim().toLowerCase()
   const requestFilter = searchParams.get('requestId') ?? 'all'
+  const minerFilter = searchParams.get('minerHotkey') ?? 'all'
   const dateFrom = normalizeDateBound(searchParams.get('from'))
   const dateTo = normalizeDateBound(searchParams.get('to'), true)
   const wantsCsv = searchParams.get('export') === 'csv'
@@ -588,11 +594,16 @@ export async function GET(request: NextRequest) {
   >()
   const baseFilteredLeads = leads.filter((lead) => {
     if (requestFilter !== 'all' && lead.requestId !== requestFilter) return false
+    if (minerFilter !== 'all' && lead.minerHotkey !== minerFilter) return false
     return inDateRange(lead.activityAt, dateFrom, dateTo)
   })
 
   const baseFilteredConsensus = chartConsensusRows.filter((row) => {
     if (requestFilter !== 'all' && row.request_id !== requestFilter) return false
+    if (minerFilter !== 'all') {
+      const scoreRow = scoreByLead.get(`${row.request_id}:${row.lead_id}`)
+      if (scoreRow?.miner_hotkey !== minerFilter) return false
+    }
     return inDateRange(row.computed_at, dateFrom, dateTo)
   })
 
@@ -673,8 +684,20 @@ export async function GET(request: NextRequest) {
     const date = dateKey(lead.activityAt)
     const minerHotkey = lead.minerHotkey || 'unknown_hotkey'
     const key = `${date}|||${minerHotkey}`
-    const bucket = minerMap.get(key) ?? { date, minerHotkey, count: 0 }
+    const bucket =
+      minerMap.get(key) ?? {
+        date,
+        minerHotkey,
+        count: 0,
+        committed: 0,
+        approved: 0,
+        denied: 0,
+        pending: 0,
+        fulfilled: 0,
+      }
     bucket.count += 1
+    if (lead.fulfilled) bucket.fulfilled += 1
+    else bucket[lead.status] += 1
     minerMap.set(key, bucket)
   }
   const minerDaily = Array.from(minerMap.values()).sort((a, b) =>
@@ -756,8 +779,17 @@ export async function GET(request: NextRequest) {
   if (exportKind === 'miner-submissions-by-day') {
     return csvResponse(
       'miner-submissions-by-day.csv',
-      ['date', 'miner_hotkey', 'count'],
-      minerDaily.map((row) => [row.date, row.minerHotkey, row.count]),
+      ['date', 'miner_hotkey', 'count', 'committed', 'approved', 'denied', 'pending', 'fulfilled'],
+      minerDaily.map((row) => [
+        row.date,
+        row.minerHotkey,
+        row.count,
+        row.committed,
+        row.approved,
+        row.denied,
+        row.pending,
+        row.fulfilled,
+      ]),
     )
   }
 
@@ -849,6 +881,7 @@ export async function GET(request: NextRequest) {
       totalPages: Math.max(1, Math.ceil(totalFiltered / pageSize)),
       filters: {
         requestId: requestFilter,
+        minerHotkey: minerFilter,
         from: searchParams.get('from') ?? '',
         to: searchParams.get('to') ?? '',
       },

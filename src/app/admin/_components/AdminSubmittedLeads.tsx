@@ -23,7 +23,9 @@ type SubmittedLeadStatus =
   | 'pending'
   | 'fulfilled'
 type ChartRange = '24h' | '7d' | '30d' | 'all'
+type SelectedDateRange = ChartRange | 'custom'
 type VisualMode = 'chart' | 'table'
+type MinerMetricMode = 'total' | 'outcome'
 
 export interface AdminSubmittedLead {
   leadId: string
@@ -69,6 +71,11 @@ export interface MinerDailyBucket {
   date: string
   minerHotkey: string
   count: number
+  committed: number
+  approved: number
+  denied: number
+  pending: number
+  fulfilled: number
 }
 
 export interface RejectionDailyBucket {
@@ -135,6 +142,25 @@ function truncateHotkey(value: string): string {
   return `${value.slice(0, 6)}...${value.slice(-4)}`
 }
 
+function defaultDateRange(payload: AdminSubmittedLeadsPayload | null): {
+  from: string
+  to: string
+} {
+  const allDates = [
+    ...(payload?.daily ?? []).map((row) => row.date),
+    ...(payload?.rejectionDaily ?? []).map((row) => row.date),
+    ...(payload?.minerDaily ?? []).map((row) => row.date),
+  ]
+    .filter(Boolean)
+    .sort()
+  const newest = allDates[allDates.length - 1]
+  if (!newest) return { from: '', to: '' }
+  const end = new Date(`${newest}T00:00:00.000Z`)
+  const start = new Date(end)
+  start.setUTCDate(end.getUTCDate() - 6)
+  return { from: start.toISOString().slice(0, 10), to: newest }
+}
+
 function statusLabel(lead: AdminSubmittedLead): string {
   if (lead.fulfilled) return 'Fulfilled'
   if (lead.status === 'committed') return 'Never revealed'
@@ -185,6 +211,10 @@ function ChartTooltip({
   label?: string
 }) {
   if (!active || !payload?.length) return null
+  const sortedPayload = [...payload].sort((a, b) => {
+    const byValue = (b.value ?? 0) - (a.value ?? 0)
+    return byValue !== 0 ? byValue : a.name.localeCompare(b.name)
+  })
   return (
     <div
       className="rounded-lg border px-3 py-2 text-xs shadow-xl"
@@ -196,7 +226,7 @@ function ChartTooltip({
     >
       <div className="mb-1 font-medium">{label}</div>
       <div className="space-y-0.5">
-        {payload.map((entry) => (
+        {sortedPayload.map((entry) => (
           <div key={entry.name} className="flex items-center justify-between gap-5">
             <span style={{ color: entry.color }}>{entry.name}</span>
             <span className="tabular-nums">{entry.value}</span>
@@ -307,16 +337,19 @@ export function AdminSubmittedLeads({
   payload: AdminSubmittedLeadsPayload | null
   error: string | null
 }) {
+  const initialRange = defaultDateRange(payload)
   const [data, setData] = useState<AdminSubmittedLeadsPayload | null>(payload)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<SubmittedLeadStatus>('all')
   const [rejectReasonFilter, setRejectReasonFilter] = useState('')
   const [requestId, setRequestId] = useState('all')
-  const [dateFrom, setDateFrom] = useState('')
-  const [dateTo, setDateTo] = useState('')
+  const [minerHotkey, setMinerHotkey] = useState('all')
+  const [dateFrom, setDateFrom] = useState(initialRange.from)
+  const [dateTo, setDateTo] = useState(initialRange.to)
+  const [dateRange, setDateRange] = useState<SelectedDateRange>('7d')
   const [visualMode, setVisualMode] = useState<VisualMode>('chart')
   const [rejectType, setRejectType] = useState('all')
-  const [minerHotkey, setMinerHotkey] = useState('top')
+  const [minerMetricMode, setMinerMetricMode] = useState<MinerMetricMode>('total')
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(error)
@@ -326,7 +359,7 @@ export function AdminSubmittedLeads({
 
   useEffect(() => {
     setPage(1)
-  }, [query, filter, rejectReasonFilter, requestId, dateFrom, dateTo])
+  }, [query, filter, rejectReasonFilter, requestId, minerHotkey, dateFrom, dateTo])
 
   useEffect(() => {
     const onRefresh = () => setRefreshNonce(Date.now())
@@ -348,6 +381,7 @@ export function AdminSubmittedLeads({
         q: query,
         rejectReason: rejectReasonFilter,
         requestId,
+        minerHotkey,
         from: dateFrom,
         to: dateTo,
       })
@@ -375,7 +409,7 @@ export function AdminSubmittedLeads({
       cancelled = true
       window.clearTimeout(timeout)
     }
-  }, [page, query, filter, rejectReasonFilter, requestId, dateFrom, dateTo, refreshNonce])
+  }, [page, query, filter, rejectReasonFilter, requestId, minerHotkey, dateFrom, dateTo, refreshNonce])
 
   const leads = useMemo(() => data?.leads ?? [], [data?.leads])
 
@@ -394,40 +428,45 @@ export function AdminSubmittedLeads({
       q: query,
       rejectReason: rejectReasonFilter,
       requestId,
+      minerHotkey,
       from: dateFrom,
       to: dateTo,
     })
     return `/api/admin/fulfillment-submissions?${params.toString()}`
-  }, [filter, query, rejectReasonFilter, requestId, dateFrom, dateTo])
+  }, [filter, query, rejectReasonFilter, requestId, minerHotkey, dateFrom, dateTo])
   const submissionsChartExportHref = useMemo(() => {
     const params = new URLSearchParams({
       export: 'submissions-by-day',
       requestId,
+      minerHotkey,
       from: dateFrom,
       to: dateTo,
     })
     return `/api/admin/fulfillment-submissions?${params.toString()}`
-  }, [requestId, dateFrom, dateTo])
+  }, [requestId, minerHotkey, dateFrom, dateTo])
   const rejectsChartExportHref = useMemo(() => {
     const params = new URLSearchParams({
       export: 'rejects-by-day',
       requestId,
+      minerHotkey,
       from: dateFrom,
       to: dateTo,
     })
     return `/api/admin/fulfillment-submissions?${params.toString()}`
-  }, [requestId, dateFrom, dateTo])
+  }, [requestId, minerHotkey, dateFrom, dateTo])
   const minerChartExportHref = useMemo(() => {
     const params = new URLSearchParams({
       export: 'miner-submissions-by-day',
       requestId,
+      minerHotkey,
       from: dateFrom,
       to: dateTo,
     })
     return `/api/admin/fulfillment-submissions?${params.toString()}`
-  }, [requestId, dateFrom, dateTo])
+  }, [requestId, minerHotkey, dateFrom, dateTo])
   const chartData = useMemo(() => data?.daily ?? [], [data?.daily])
   function applyDateRange(range: ChartRange) {
+    setDateRange(range)
     if (range === 'all') {
       setDateFrom('')
       setDateTo('')
@@ -501,13 +540,14 @@ export function AdminSubmittedLeads({
         const [date, reason] = key.split('|||')
         return { date, reason, count }
       })
-      .sort((a, b) => (a.date === b.date ? a.reason.localeCompare(b.reason) : a.date < b.date ? -1 : 1))
+      .sort((a, b) => {
+        if (a.date !== b.date) return a.date < b.date ? -1 : 1
+        const byCount = b.count - a.count
+        return byCount !== 0 ? byCount : a.reason.localeCompare(b.reason)
+      })
   }, [data?.rejectionDaily, rejectReasonsToShow, rejectType])
   const minerHotkeysToShow = useMemo(() => {
-    if (minerHotkey === '__all_hotkeys__') {
-      return (data?.minerHotkeys ?? []).map((item) => item.hotkey)
-    }
-    if (minerHotkey !== 'top') return [minerHotkey]
+    if (minerHotkey !== 'all') return [minerHotkey]
     const top = (data?.minerHotkeys ?? []).slice(0, 10).map((item) => item.hotkey)
     return (data?.minerHotkeys ?? []).length > top.length
       ? [...top, 'Other hotkeys']
@@ -516,44 +556,73 @@ export function AdminSubmittedLeads({
   const minerChartData = useMemo(() => {
     const rows = data?.minerDaily ?? []
     const topHotkeys =
-      minerHotkey === 'top'
+      minerHotkey === 'all'
         ? new Set(minerHotkeysToShow.filter((hotkey) => hotkey !== 'Other hotkeys'))
         : new Set(minerHotkeysToShow)
     const byDate = new Map<string, Record<string, string | number>>()
     for (const row of rows) {
       const key =
-        minerHotkey === 'top' && !topHotkeys.has(row.minerHotkey)
+        minerHotkey === 'all' && !topHotkeys.has(row.minerHotkey)
           ? 'Other hotkeys'
           : row.minerHotkey
       if (!topHotkeys.has(key) && key !== 'Other hotkeys') continue
       const bucket = byDate.get(row.date) ?? { date: row.date }
-      bucket[key] = ((bucket[key] as number | undefined) ?? 0) + row.count
+      if (minerMetricMode === 'total') {
+        bucket[key] = ((bucket[key] as number | undefined) ?? 0) + row.count
+      } else {
+        bucket[`${key} · Approved`] =
+          ((bucket[`${key} · Approved`] as number | undefined) ?? 0) + row.approved
+        bucket[`${key} · Denied`] =
+          ((bucket[`${key} · Denied`] as number | undefined) ?? 0) + row.denied
+        bucket[`${key} · Fulfilled`] =
+          ((bucket[`${key} · Fulfilled`] as number | undefined) ?? 0) + row.fulfilled
+        bucket[`${key} · Awaiting validation`] =
+          ((bucket[`${key} · Awaiting validation`] as number | undefined) ?? 0) + row.pending
+        bucket[`${key} · Never revealed`] =
+          ((bucket[`${key} · Never revealed`] as number | undefined) ?? 0) + row.committed
+      }
       byDate.set(row.date, bucket)
     }
     return Array.from(byDate.values()).sort((a, b) =>
       String(a.date) < String(b.date) ? -1 : 1,
     )
-  }, [data?.minerDaily, minerHotkey, minerHotkeysToShow])
+  }, [data?.minerDaily, minerHotkey, minerHotkeysToShow, minerMetricMode])
   const minerTableRows = useMemo(() => {
     const rows = data?.minerDaily ?? []
     const topHotkeys =
-      minerHotkey === 'top'
+      minerHotkey === 'all'
         ? new Set(minerHotkeysToShow.filter((hotkey) => hotkey !== 'Other hotkeys'))
         : new Set(minerHotkeysToShow)
-    const grouped = new Map<string, number>()
+    const grouped = new Map<string, {
+      count: number
+      committed: number
+      approved: number
+      denied: number
+      pending: number
+      fulfilled: number
+    }>()
     for (const row of rows) {
       const keyName =
-        minerHotkey === 'top' && !topHotkeys.has(row.minerHotkey)
+        minerHotkey === 'all' && !topHotkeys.has(row.minerHotkey)
           ? 'Other hotkeys'
           : row.minerHotkey
       if (!topHotkeys.has(keyName) && keyName !== 'Other hotkeys') continue
       const key = `${row.date}|||${keyName}`
-      grouped.set(key, (grouped.get(key) ?? 0) + row.count)
+      const bucket =
+        grouped.get(key) ??
+        { count: 0, committed: 0, approved: 0, denied: 0, pending: 0, fulfilled: 0 }
+      bucket.count += row.count
+      bucket.committed += row.committed
+      bucket.approved += row.approved
+      bucket.denied += row.denied
+      bucket.pending += row.pending
+      bucket.fulfilled += row.fulfilled
+      grouped.set(key, bucket)
     }
     return Array.from(grouped.entries())
-      .map(([key, count]) => {
+      .map(([key, values]) => {
         const [date, hotkey] = key.split('|||')
-        return { date, hotkey, count }
+        return { date, hotkey, ...values }
       })
       .sort((a, b) => (a.date === b.date ? a.hotkey.localeCompare(b.hotkey) : a.date < b.date ? -1 : 1))
   }, [data?.minerDaily, minerHotkey, minerHotkeysToShow])
@@ -590,7 +659,7 @@ export function AdminSubmittedLeads({
       ) : null}
 
       <section
-        className="grid gap-3 rounded-xl border p-3 lg:grid-cols-[minmax(220px,1fr)_160px_160px_auto_auto]"
+        className="grid gap-3 rounded-xl border p-3 lg:grid-cols-[minmax(220px,1fr)_minmax(180px,240px)_150px_150px_auto_auto]"
         style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)' }}
       >
         <label className="block">
@@ -625,12 +694,41 @@ export function AdminSubmittedLeads({
             className="mb-1 block text-[10px] uppercase tracking-[0.14em]"
             style={{ color: 'var(--text-tertiary)' }}
           >
+            Miner hotkey
+          </span>
+          <select
+            value={minerHotkey}
+            onChange={(e) => setMinerHotkey(e.target.value)}
+            className="premium-focus w-full rounded-lg border bg-transparent px-3 py-2 text-sm"
+            style={{
+              borderColor: 'var(--surface-border)',
+              color: 'var(--text-primary)',
+              background: 'var(--surface-elevated)',
+            }}
+          >
+            <option value="all">All hotkeys</option>
+            {(data?.minerHotkeys ?? []).map((item) => (
+              <option key={item.hotkey} value={item.hotkey}>
+                {truncateHotkey(item.hotkey)} ({item.count})
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="block">
+          <span
+            className="mb-1 block text-[10px] uppercase tracking-[0.14em]"
+            style={{ color: 'var(--text-tertiary)' }}
+          >
             From
           </span>
           <input
             type="date"
             value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
+            onChange={(e) => {
+              setDateFrom(e.target.value)
+              setDateRange('custom')
+            }}
             className="premium-focus w-full rounded-lg border bg-transparent px-3 py-2 text-sm"
             style={{
               borderColor: 'var(--surface-border)',
@@ -650,7 +748,10 @@ export function AdminSubmittedLeads({
           <input
             type="date"
             value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
+            onChange={(e) => {
+              setDateTo(e.target.value)
+              setDateRange('custom')
+            }}
             className="premium-focus w-full rounded-lg border bg-transparent px-3 py-2 text-sm"
             style={{
               borderColor: 'var(--surface-border)',
@@ -673,7 +774,12 @@ export function AdminSubmittedLeads({
                 key={range.key}
                 type="button"
                 onClick={() => applyDateRange(range.key)}
-                className="rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors border-white/[0.06] hover-bg-warm text-white/55"
+                className={cn(
+                  'rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors',
+                  dateRange === range.key
+                    ? 'bg-gold-tint border-gold-strong text-gold'
+                    : 'border-white/[0.06] hover-bg-warm text-white/55',
+                )}
               >
                 {range.label}
               </button>
@@ -692,6 +798,8 @@ export function AdminSubmittedLeads({
               setQuery('')
               setFilter('all')
               setRejectReasonFilter('')
+              setMinerHotkey('all')
+              setDateRange('all')
             }}
             className="rounded-lg border px-3 py-2 text-sm"
             style={{
@@ -892,11 +1000,11 @@ export function AdminSubmittedLeads({
                 className="mb-1 block text-[10px] uppercase tracking-[0.14em]"
                 style={{ color: 'var(--text-tertiary)' }}
               >
-                Hotkey
+                Metric
               </span>
               <select
-                value={minerHotkey}
-                onChange={(e) => setMinerHotkey(e.target.value)}
+                value={minerMetricMode}
+                onChange={(e) => setMinerMetricMode(e.target.value as MinerMetricMode)}
                 className="premium-focus rounded-lg border bg-transparent px-3 py-1.5 text-xs"
                 style={{
                   borderColor: 'var(--surface-border)',
@@ -904,13 +1012,8 @@ export function AdminSubmittedLeads({
                   background: 'var(--surface-elevated)',
                 }}
               >
-                <option value="top">Top hotkeys</option>
-                <option value="__all_hotkeys__">Show all hotkeys</option>
-                {(data?.minerHotkeys ?? []).map((item) => (
-                  <option key={item.hotkey} value={item.hotkey}>
-                    {truncateHotkey(item.hotkey)} ({item.count})
-                  </option>
-                ))}
+                <option value="total">Total submissions</option>
+                <option value="outcome">Accepted / rejected / fulfilled</option>
               </select>
             </label>
             <a
@@ -939,46 +1042,67 @@ export function AdminSubmittedLeads({
                   tickLine={false}
                 />
                 <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(201,169,110,0.06)' }} />
-                {minerHotkey !== '__all_hotkeys__' && (
-                  <Legend
-                    wrapperStyle={{ fontSize: 11, color: 'var(--text-secondary)' }}
-                    formatter={(value) =>
-                      value === 'Other hotkeys' ? value : truncateHotkey(String(value))
-                    }
-                  />
-                )}
-                {minerHotkeysToShow.map((hotkey, idx) => (
-                  <Bar
-                    key={hotkey}
-                    dataKey={hotkey}
-                    stackId="miners"
-                    name={hotkey}
-                    fill={[
-                      '#c9a96e',
-                      '#e8e1d4',
-                      '#cf9d61',
-                      '#a8746f',
-                      '#8f6f6a',
-                      '#d4a373',
-                      '#b88984',
-                      '#9d6b66',
-                      '#bfa06a',
-                      '#f0d9a0',
-                      'rgba(245,240,232,0.24)',
-                    ][idx % 11]}
-                  />
-                ))}
+                <Legend
+                  wrapperStyle={{ fontSize: 11, color: 'var(--text-secondary)' }}
+                  formatter={(value) =>
+                    value === 'Other hotkeys' ? value : truncateHotkey(String(value))
+                  }
+                />
+                {minerMetricMode === 'total'
+                  ? minerHotkeysToShow.map((hotkey, idx) => (
+                      <Bar
+                        key={hotkey}
+                        dataKey={hotkey}
+                        stackId="miners"
+                        name={hotkey}
+                        fill={[
+                          '#c9a96e',
+                          '#e8e1d4',
+                          '#cf9d61',
+                          '#a8746f',
+                          '#8f6f6a',
+                          '#d4a373',
+                          '#b88984',
+                          '#9d6b66',
+                          '#bfa06a',
+                          '#f0d9a0',
+                          'rgba(245,240,232,0.24)',
+                        ][idx % 11]}
+                      />
+                    ))
+                  : minerHotkeysToShow.flatMap((hotkey, idx) =>
+                      [
+                        ['Approved', '#e8e1d4'],
+                        ['Denied', '#a8746f'],
+                        ['Fulfilled', '#c9a96e'],
+                        ['Awaiting validation', '#cf9d61'],
+                        ['Never revealed', 'rgba(245,240,232,0.24)'],
+                      ].map(([outcome, color]) => (
+                        <Bar
+                          key={`${hotkey}-${outcome}`}
+                          dataKey={`${hotkey} · ${outcome}`}
+                          stackId={`${idx}-${hotkey}`}
+                          name={`${hotkey} · ${outcome}`}
+                          fill={color}
+                        />
+                      )),
+                    )}
               </BarChart>
             </ResponsiveContainer>
           </div>
         ) : (
           <CompactDataTable
-            columns={['Date', 'Miner hotkey', 'Short', 'Submissions']}
+            columns={['Date', 'Miner hotkey', 'Short', 'Submissions', 'Approved', 'Denied', 'Fulfilled', 'Awaiting validation', 'Never revealed']}
             rows={minerTableRows.map((row) => [
               row.date,
               row.hotkey,
               row.hotkey === 'Other hotkeys' ? row.hotkey : truncateHotkey(row.hotkey),
               row.count,
+              row.approved,
+              row.denied,
+              row.fulfilled,
+              row.pending,
+              row.committed,
             ])}
           />
         )}
