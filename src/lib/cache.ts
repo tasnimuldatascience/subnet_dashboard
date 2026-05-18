@@ -225,6 +225,7 @@ const MODEL_COMPETITION_REFRESH_INTERVAL = 60 * 1000
 // the rest of this cache).
 const MODEL_COMPETITION_V2_LIVE_AT =
   process.env.MODEL_COMPETITION_V2_LIVE_AT || '2026-05-14T04:00:00Z'
+const MODEL_COMPETITION_SUBMISSIONS_LIVE_AT = '2026-05-14T00:00:00Z'
 
 // Get today's 12 AM UTC timestamp
 function getTodayMidnightUTC(): Date {
@@ -288,6 +289,20 @@ async function fetchModelCompetitionData(): Promise<unknown> {
     .select('id, miner_hotkey, model_name, status, score, score_breakdown, created_at, evaluated_at')
     .eq('status', 'evaluating')
 
+  // Fetch recent historical submissions directly from the source table so the
+  // public UI can show activity even when the today-only leaderboard view is
+  // empty. Keep code_content gated by the same 24h public lock below.
+  const { data: recentModelsFromSource, error: recentModelsError } = await supabase
+    .from('qualification_models')
+    .select('id, miner_hotkey, model_name, status, score, score_breakdown, code_content, created_at, evaluated_at, is_champion')
+    .gte('created_at', MODEL_COMPETITION_SUBMISSIONS_LIVE_AT)
+    .order('created_at', { ascending: false })
+    .limit(100)
+
+  if (recentModelsError) {
+    console.error('[Cache] Error fetching qualification_models recent submissions:', recentModelsError)
+  }
+
   // Merge evaluating models into todaysModels if not already present
   if (evaluatingFromModels && evaluatingFromModels.length > 0) {
     const existingIds = new Set(todaysModels.map((m: { model_id: string }) => m.model_id))
@@ -346,6 +361,49 @@ async function fetchModelCompetitionData(): Promise<unknown> {
         createdAt: m.created_at,
         evaluatedAt: m.evaluated_at,
         isChampion: champModel ? m.model_id === champModel.id : false,
+        canShowCode,
+      }
+    })
+
+  const todayIds = new Set(recentSubmissions.map((m: { id: string }) => m.id))
+  const pastSubmissions = ((recentModelsFromSource || []) as Array<{
+    id: string
+    miner_hotkey: string
+    model_name: string | null
+    status: string
+    score: number | null
+    score_breakdown: unknown | null
+    code_content: unknown | null
+    created_at: string
+    evaluated_at: string | null
+    is_champion: boolean | null
+  }>)
+    .filter((m) => !todayIds.has(m.id))
+    .map((m) => {
+      const createdAt = new Date(m.created_at)
+      const canShowCode = createdAt < twentyFourHoursAgo
+      let parsedCodeContent: Record<string, string> | null = null
+      if (canShowCode && m.code_content) {
+        try {
+          parsedCodeContent = typeof m.code_content === 'string'
+            ? JSON.parse(m.code_content)
+            : m.code_content as Record<string, string>
+        } catch {
+          console.error('[Cache] Failed to parse code_content for historical submission:', m.id)
+        }
+      }
+
+      return {
+        id: m.id,
+        minerHotkey: m.miner_hotkey,
+        modelName: m.model_name || 'Unnamed',
+        status: m.status,
+        score: m.score,
+        scoreBreakdown: m.score_breakdown,
+        codeContent: parsedCodeContent,
+        createdAt: m.created_at,
+        evaluatedAt: m.evaluated_at,
+        isChampion: champModel ? m.id === champModel.id : Boolean(m.is_champion),
         canShowCode,
       }
     })
@@ -519,6 +577,7 @@ async function fetchModelCompetitionData(): Promise<unknown> {
   return {
     championHistory: championsList,
     recentSubmissions,
+    pastSubmissions,
     stats: {
       totalSubmissions: totalToday,
       uniqueMiners: uniqueMinersToday,

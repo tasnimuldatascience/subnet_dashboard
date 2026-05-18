@@ -157,6 +157,7 @@ interface Stats {
 interface ModelCompetitionData {
   championHistory: ChampionHistoryEntry[]
   recentSubmissions: Submission[]
+  pastSubmissions?: Submission[]
   stats: Stats
   fetchedAt: string
 }
@@ -1279,6 +1280,10 @@ export function ModelCompetition({ onSync }: { onSync?: () => void } = {}) {
     () => data?.recentSubmissions.filter((s) => !s.isChampion) ?? [],
     [data]
   )
+  const pastSubmissions = useMemo(
+    () => data?.pastSubmissions?.filter((s) => !s.isChampion) ?? [],
+    [data]
+  )
   const handleChampionOpen = useCallback(() => {
     if (!currentChampion) return
     const championSubmission = data?.recentSubmissions.find((s) => s.isChampion)
@@ -1368,6 +1373,14 @@ export function ModelCompetition({ onSync }: { onSync?: () => void } = {}) {
           ════════════════════════════════════════════════════════════ */}
       <ChallengersBoard
         challengers={challengers}
+        onSelect={(s) => {
+          setSelectedSubmission(s)
+          setIsSubmissionDetailOpen(true)
+        }}
+      />
+
+      <PastSubmissionsBoard
+        submissions={pastSubmissions}
         onSelect={(s) => {
           setSelectedSubmission(s)
           setIsSubmissionDetailOpen(true)
@@ -1942,6 +1955,105 @@ function ChallengerRow({
       )}
       <span className="hidden md:inline-block font-mono text-slate-500 tabular-nums text-[10px] text-right">
         {getRelativeTime(submission.createdAt)}
+      </span>
+    </button>
+  )
+}
+
+/* ============================================================
+ * PastSubmissionsBoard. Recent historical model submissions so
+ * activity is visible even when the today-only challenger board is empty.
+ * ============================================================ */
+function PastSubmissionsBoard({
+  submissions,
+  onSelect,
+}: {
+  submissions: Submission[]
+  onSelect: (s: Submission) => void
+}) {
+  if (submissions.length === 0) {
+    return (
+      <section className="rounded-xl border border-slate-800/70 bg-slate-950/50 px-5 py-8 text-center">
+        <p className="text-sm text-slate-400">No past submissions in the current competition era.</p>
+        <p className="text-[11px] text-slate-500 mt-1">
+          Historical model submissions will appear here once available.
+        </p>
+      </section>
+    )
+  }
+
+  return (
+    <section className="rounded-xl border border-slate-800/70 bg-slate-950/50 overflow-hidden">
+      <header className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-800/70 bg-gradient-to-b from-slate-900/80 to-slate-900/40">
+        <span className="text-[11px] font-semibold text-slate-100 uppercase tracking-[0.1em]">
+          Past submissions
+        </span>
+        <span className="ml-auto text-[10px] text-slate-500 font-mono tabular-nums">
+          {submissions.length}
+        </span>
+      </header>
+      <div className="hidden md:grid grid-cols-[2rem_1fr_7rem_6rem_8rem] gap-3 px-4 py-1.5 text-[9px] text-slate-500 font-mono uppercase tracking-[0.06em] bg-slate-900/40 border-b border-slate-800/60">
+        <span className="text-right">#</span>
+        <span>Model / hotkey</span>
+        <span className="text-right">Score</span>
+        <span className="text-right">Status</span>
+        <span className="text-right">Submitted</span>
+      </div>
+      <div className="max-h-[420px] overflow-y-auto divide-y divide-slate-800/60">
+        {submissions.map((s, idx) => (
+          <PastSubmissionRow
+            key={s.id}
+            rank={idx + 1}
+            submission={s}
+            onSelect={() => onSelect(s)}
+          />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function PastSubmissionRow({
+  rank,
+  submission,
+  onSelect,
+}: {
+  rank: number
+  submission: Submission
+  onSelect: () => void
+}) {
+  const hasScore = submission.score !== null
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className="w-full grid grid-cols-[2rem_minmax(0,1fr)_auto] md:grid-cols-[2rem_1fr_7rem_6rem_8rem] gap-2 md:gap-3 items-center px-4 py-2.5 text-[11px] text-left transition-colors hover-bg-warm focus:outline-none focus:bg-slate-800/40"
+      title={`View submission ${submission.minerHotkey}`}
+    >
+      <span className="text-[10px] font-mono text-slate-500 text-right tabular-nums">
+        {String(rank).padStart(2, '0')}
+      </span>
+      <div className="min-w-0">
+        <div className="truncate text-slate-200">{submission.modelName}</div>
+        <div className="mt-0.5 flex items-center gap-2">
+          <code className="font-mono text-[10px] text-slate-500 truncate" title={submission.minerHotkey}>
+            {truncateHotkey(submission.minerHotkey)}
+          </code>
+          {submission.canShowCode ? (
+            <Eye className="h-3 w-3 text-slate-500 shrink-0" aria-label="Code available" />
+          ) : (
+            <Lock className="h-3 w-3 text-slate-500 shrink-0" aria-label="Code locked" />
+          )}
+        </div>
+      </div>
+      <span className="font-mono font-semibold text-right tabular-nums tracking-tight text-gold">
+        {hasScore ? submission.score!.toFixed(2) : '—'}
+      </span>
+      <span className="hidden md:inline-flex justify-end">
+        <StatusBadge status={submission.status} />
+      </span>
+      <span className="hidden md:inline-block font-mono text-slate-500 tabular-nums text-[10px] text-right">
+        {formatDate(submission.createdAt)}
       </span>
     </button>
   )

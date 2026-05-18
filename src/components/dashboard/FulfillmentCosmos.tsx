@@ -78,7 +78,6 @@ const COLOR_REQUEST_PENDING = '#7a766e'               // muted warm gray, waitin
 const COLOR_REQUEST_COMPLETED = '#e8e1d4'             // warm cream/white, finalized
 const COLOR_MINER = '#5e5a52'                         // warm gray, neutral miner
 const COLOR_MINER_WINNING = '#b89868'                 // muted gold, miner with wins
-const COLOR_TOP_RING = '#e8c987'                      // brighter gold, top miner ring
 
 const PENDING_STATUSES = new Set(['pending', 'open', 'continued_open', 'commit_closed', 'scoring'])
 
@@ -463,7 +462,6 @@ function computeLayout(requests: CosmosRequest[], leads: CosmosConsensusLead[]):
 interface CosmosProps {
   requests: CosmosRequest[]
   leads: CosmosConsensusLead[]
-  topMiners?: Set<string>
   visibleNodeIds?: Set<string> | null
   forceLabelIds?: Set<string> | null
   emphasizedNodeIds?: Set<string> | null
@@ -474,7 +472,6 @@ interface CosmosProps {
 export function FulfillmentCosmos({
   requests,
   leads,
-  topMiners,
   visibleNodeIds = null,
   forceLabelIds = null,
   emphasizedNodeIds = null,
@@ -822,7 +819,6 @@ export function FulfillmentCosmos({
               const isRequest = node.type === 'request'
               const status = node.request?.status || ''
               const baseR = renderedNodeRadius(node)
-              const isTopMiner = !isRequest && topMiners?.has(node.hotkey || '')
               const isPending = isRequest && PENDING_STATUSES.has(status)
 
               let fillRef: string
@@ -907,22 +903,11 @@ export function FulfillmentCosmos({
                     }
                   }}
                 >
-                  {isTopMiner && (
-                    <circle
-                      cx={node.x}
-                      cy={node.y}
-                      r={baseR + 3}
-                      fill="none"
-                      stroke={COLOR_TOP_RING}
-                      strokeOpacity={isFocused || isEmphasized ? 1 : 0.85}
-                      strokeWidth={1.4}
-                    />
-                  )}
                   {isEmphasized && !isFocused && (
                     <circle
                       cx={node.x}
                       cy={node.y}
-                      r={baseR + (isTopMiner ? 7 : 5)}
+                      r={baseR + 5}
                       fill="none"
                       stroke="#ffffff"
                       strokeOpacity={0.75}
@@ -933,7 +918,7 @@ export function FulfillmentCosmos({
                     <circle
                       cx={node.x}
                       cy={node.y}
-                      r={baseR + (isTopMiner ? 6 : 5)}
+                      r={baseR + 5}
                       fill="none"
                       stroke={isRequest ? (isPending ? COLOR_REQUEST_PENDING : COLOR_REQUEST_COMPLETED) : COLOR_MINER_WINNING}
                       strokeOpacity={0.55}
@@ -1066,16 +1051,6 @@ export function FulfillmentCosmos({
             <span>Fulfilled lead</span>
           </span>
 
-          <span className="opacity-30">·</span>
-
-          {/* Miner types */}
-          <span className="flex items-center gap-1.5">
-            <span
-              className="inline-block w-1.5 h-1.5 rounded-full border"
-              style={{ borderColor: COLOR_TOP_RING, background: 'transparent' }}
-            />
-            <span>Top miner</span>
-          </span>
         </div>
       )}
 

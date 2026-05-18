@@ -254,6 +254,20 @@ function formatDate(dateStr: string): string {
   })
 }
 
+function formatRewardWeekRange(startStr: string | null): string {
+  if (!startStr) return 'Current reward week'
+  const start = new Date(startStr)
+  if (Number.isNaN(start.getTime())) return 'Current reward week'
+  const end = new Date(start)
+  end.setUTCDate(start.getUTCDate() + 7)
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'UTC',
+  })
+  return `Current reward week · ${fmt.format(start)} to ${fmt.format(end)}`
+}
+
 function formatRelative(dateStr: string | null | undefined): string {
   if (!dateStr) return ''
   const d = new Date(dateStr)
@@ -615,11 +629,6 @@ export function Fulfillment({ onSync }: { onSync?: () => void } = {}) {
     }
   }, [data])
 
-  const topMinerSet = useMemo(() => {
-    if (!data) return new Set<string>()
-    return new Set(data.leaderboard.map((l) => l.hotkey))
-  }, [data])
-
   const emphasizedNodeIds = useMemo(() => {
     if (!focusedMinerHotkey) return null
     return new Set<string>([`mnr:${focusedMinerHotkey}`])
@@ -803,7 +812,6 @@ export function Fulfillment({ onSync }: { onSync?: () => void } = {}) {
         <FulfillmentCosmos
           requests={filteredRequests}
           leads={filteredLeads}
-          topMiners={topMinerSet}
           visibleNodeIds={visibleNodeIds}
           forceLabelIds={matchedNodeIds}
           emphasizedNodeIds={emphasizedNodeIds}
@@ -1024,14 +1032,9 @@ function RequestHistoryDialog({
               {mode === 'requests'
                 ? 'Fulfillment activity'
                 : mode === 'leaderboard'
-                  ? 'Top rewarded miners'
+                  ? 'Miner leaderboard'
                   : 'Rejection reasons'}
             </DialogTitle>
-            {mode === 'leaderboard' && (
-              <span className="ml-auto text-[10px] text-slate-500 font-mono tabular-nums">
-                Current reward week{leaderboardWindowStart ? ` · since ${formatDate(leaderboardWindowStart)}` : ''}
-              </span>
-            )}
             {mode === 'rejections' && (
               <span className="ml-auto text-[10px] text-slate-500 font-mono tabular-nums">
                 {rejectionView.failed} failed · {rejectionView.passed} passed
@@ -1076,20 +1079,6 @@ function RequestHistoryDialog({
                 label="Completed"
                 tone="completed"
               />
-              <button
-                onClick={() => setMode('leaderboard')}
-                className={cn(
-                  'flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium border transition-all',
-                  mode === 'leaderboard'
-                    ? 'bg-gold-soft text-gold border-gold-soft'
-                    : 'bg-transparent text-slate-400 border-transparent hover:text-slate-200 hover:bg-slate-800/40'
-                )}
-              >
-                <span>Top miners</span>
-                <span className={cn('text-[10px] font-mono tabular-nums', mode === 'leaderboard' ? 'text-current/70' : 'text-slate-500')}>
-                  {leaderboard.length}
-                </span>
-              </button>
               <button
                 onClick={() => setMode('rejections')}
                 className={cn(
@@ -1139,13 +1128,14 @@ function RequestHistoryDialog({
           </div>
         </DialogHeader>
 
+        <LeaderboardSummary
+          entries={leaderboard}
+          windowStart={leaderboardWindowStart}
+          onSelect={onSelectMiner}
+        />
+
         <div className="flex-1 overflow-y-auto overflow-x-hidden">
-          {mode === 'leaderboard' ? (
-            <LeaderboardHistoryContent
-              entries={leaderboard}
-              onSelect={onSelectMiner}
-            />
-          ) : mode === 'rejections' ? (
+          {mode === 'rejections' ? (
             <div className="p-5">
               <RejectionReasonsContent view={rejectionView} />
             </div>
@@ -1201,56 +1191,65 @@ function HistoryStat({
   )
 }
 
-function LeaderboardHistoryContent({
+function LeaderboardSummary({
   entries,
+  windowStart,
   onSelect,
 }: {
   entries: { rank: number; hotkey: string; wins: number; bonusPct: number }[]
+  windowStart: string | null
   onSelect: (hotkey: string) => void
 }) {
   if (entries.length === 0) {
     return (
-      <div className="p-12 text-center text-sm text-slate-500">
-        No rewarded miners yet for the current reward week.
+      <div className="border-b border-slate-800/80 px-5 py-4">
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-xs font-semibold text-slate-100">Miner leaderboard</span>
+          <span className="text-[10px] text-slate-500 font-mono">
+            {formatRewardWeekRange(windowStart)}
+          </span>
+        </div>
+        <div className="rounded-md border border-dashed border-slate-800/80 px-4 py-5 text-center text-sm text-slate-500">
+          No fulfilled leads yet this week.
+        </div>
       </div>
     )
   }
 
   return (
-    <div>
-      <div className="grid grid-cols-[3rem_minmax(0,1fr)_5rem_5rem] gap-3 px-5 py-2 text-[9px] uppercase tracking-[0.08em] text-slate-500 font-mono border-b border-slate-800/60 sticky top-0 bg-slate-950/95 backdrop-blur-sm z-10">
-        <span>Rank</span>
-        <span>Hotkey</span>
-        <span className="text-right">Bonus</span>
-        <span className="text-right">Leads</span>
+    <div className="border-b border-slate-800/80 px-5 py-4">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-xs font-semibold text-slate-100">Miner leaderboard</span>
+        <span className="text-[10px] text-slate-500 font-mono">
+          {formatRewardWeekRange(windowStart)}
+        </span>
       </div>
-      {entries.map((entry) => (
-        <button
-          key={entry.hotkey}
-          type="button"
-          onClick={() => onSelect(entry.hotkey)}
-          className="w-full grid grid-cols-[3rem_minmax(0,1fr)_5rem_5rem] gap-3 items-center px-5 py-3 text-left border-b border-slate-800/40 hover:bg-slate-900/60 transition-colors"
-          title={`Inspect ${entry.hotkey}`}
-        >
-          <span className="font-mono text-slate-500 tabular-nums">
-            {String(entry.rank).padStart(2, '0')}
-          </span>
-          <div className="min-w-0">
-            <code className="font-mono text-slate-200 truncate block" title={entry.hotkey}>
-              {entry.hotkey}
-            </code>
-            <span className="text-[10px] text-slate-500 font-mono">
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+        {entries.slice(0, 5).map((entry) => (
+          <button
+            key={entry.hotkey}
+            type="button"
+            onClick={() => onSelect(entry.hotkey)}
+            className="rounded-lg border border-slate-800/80 bg-slate-900/40 px-3 py-2 text-left transition-colors hover:bg-slate-800/60"
+            title={`Inspect ${entry.hotkey}`}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-mono text-[10px] text-slate-500 tabular-nums">
+                #{entry.rank}
+              </span>
+              <span className="font-mono text-[10px] text-amber-warm tabular-nums">
+                {entry.bonusPct > 0 ? `+${entry.bonusPct}%` : ''}
+              </span>
+            </div>
+            <code className="mt-1 block truncate font-mono text-[11px] text-slate-200" title={entry.hotkey}>
               {truncateHotkey(entry.hotkey)}
-            </span>
-          </div>
-          <span className="text-right font-mono text-amber-warm tabular-nums">
-            {entry.bonusPct > 0 ? `+${entry.bonusPct}%` : '—'}
-          </span>
-          <span className="text-right font-mono text-gold tabular-nums">
-            {entry.wins}
-          </span>
-        </button>
-      ))}
+            </code>
+            <div className="mt-1 text-xs font-semibold text-gold tabular-nums">
+              {entry.wins} leads
+            </div>
+          </button>
+        ))}
+      </div>
     </div>
   )
 }
