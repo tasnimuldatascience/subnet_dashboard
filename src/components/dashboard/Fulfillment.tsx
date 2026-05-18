@@ -101,6 +101,7 @@ interface FulfillmentData {
     fulfilledCount: number
     recycledCount: number
     leaderboardWindowDays?: number
+    leaderboardWindowStart?: string
   }
 }
 
@@ -352,7 +353,6 @@ export function Fulfillment({ onSync }: { onSync?: () => void } = {}) {
   // Per-miner fetch errors. The MinerDetailDialog reads from this so failures
   // are visible to the user instead of producing a blank scores panel.
   const [minerErrors, setMinerErrors] = useState<Record<string, string>>({})
-  const [leaderboardVisible, setLeaderboardVisible] = useState(true)
   const [historyOpen, setHistoryOpen] = useState(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
   // Last ETag we've seen from the API. Sent back as If-None-Match on the
@@ -791,18 +791,10 @@ export function Fulfillment({ onSync }: { onSync?: () => void } = {}) {
           <button
             onClick={() => setHistoryOpen(true)}
             className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] font-medium text-slate-300 bg-slate-900/60 border border-slate-700/50 hover:bg-slate-800/60 hover:text-slate-100 hover:border-slate-600 transition-colors"
-            title="Open request history table"
-            aria-label="Open request history"
+            title="Open fulfillment activity panel"
+            aria-label="Open fulfillment activity panel"
           >
-            <span>History</span>
-          </button>
-          <button
-            onClick={() => setLeaderboardVisible((v) => !v)}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] font-medium text-slate-300 bg-slate-900/60 border border-slate-700/50 hover:bg-slate-800/60 hover:text-slate-100 hover:border-slate-600 transition-colors"
-            title={leaderboardVisible ? 'Hide leaderboard' : 'Show leaderboard'}
-            aria-label="Toggle leaderboard"
-          >
-            <span>{leaderboardVisible ? 'Hide leaderboard' : 'Show leaderboard'}</span>
+            <span>Activity panel</span>
           </button>
         </div>
       </div>
@@ -819,15 +811,6 @@ export function Fulfillment({ onSync }: { onSync?: () => void } = {}) {
           onMinerActivate={handleMinerActivate}
         />
 
-        {leaderboardVisible && data.leaderboard.length > 0 && (
-          <LeaderboardPanel
-            entries={data.leaderboard}
-            focusedHotkey={focusedMinerHotkey}
-            windowDays={data.stats.leaderboardWindowDays ?? 30}
-            onSelect={handleMinerActivate}
-          />
-        )}
-
       </div>
       </div>
       {/* End md:block desktop layout */}
@@ -835,8 +818,14 @@ export function Fulfillment({ onSync }: { onSync?: () => void } = {}) {
       <RequestHistoryDialog
         open={historyOpen}
         requests={data.activeRequests}
+        leaderboard={data.leaderboard}
+        leaderboardWindowStart={data.stats.leaderboardWindowStart ?? null}
         rejectionView={rejectionView}
         cosmosStats={historyStats}
+        onSelectMiner={(hotkey) => {
+          setHistoryOpen(false)
+          handleMinerActivate(hotkey)
+        }}
         onSelectRequest={(req) => {
           setHistoryOpen(false)
           setDialogRequest(req)
@@ -870,70 +859,6 @@ export function Fulfillment({ onSync }: { onSync?: () => void } = {}) {
           }
         }}
       />
-    </div>
-  )
-}
-
-/* ============================================================
- * Leaderboard panel (premium)
- * ============================================================ */
-function LeaderboardPanel({
-  entries,
-  focusedHotkey,
-  windowDays,
-  onSelect,
-}: {
-  entries: { rank: number; hotkey: string; wins: number; bonusPct: number }[]
-  focusedHotkey: string | null
-  windowDays: number
-  onSelect: (hotkey: string) => void
-}) {
-  return (
-    <div
-      data-keep-open
-      className="absolute top-3 right-3 w-72 max-w-[calc(100%-1.5rem)] bg-slate-950/80 backdrop-blur-md rounded-xl border border-slate-800/80 shadow-2xl shadow-black/40 overflow-hidden"
-    >
-      <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-slate-800/70 bg-gradient-to-b from-slate-900/80 to-slate-900/40">
-        <span className="text-[11px] font-semibold text-slate-100">Top miners</span>
-        <span className="ml-auto text-[10px] text-slate-500 font-mono">last {windowDays}d</span>
-      </div>
-      <div className="divide-y divide-slate-800/60">
-        {entries.map((entry) => {
-          const isFocused = focusedHotkey === entry.hotkey
-          return (
-            <button
-              key={entry.hotkey}
-              onClick={() => onSelect(entry.hotkey)}
-              // Column order: rank · hotkey · bonus% · leads. The bonus column
-              // is fixed-width so the leads column always lands flush with the
-              // right edge of the panel, regardless of whether a row has a %.
-              className={cn(
-                'w-full grid grid-cols-[1.75rem_minmax(0,1fr)_2.75rem_4rem] items-center gap-2.5 px-3.5 py-2 transition-colors text-left',
-                isFocused
-                  ? 'bg-gold-soft'
-                  : 'hover-bg-warm'
-              )}
-              title={`View scores for ${entry.hotkey}`}
-            >
-              <span className="text-[10px] font-mono text-slate-500 text-right tabular-nums">
-                {String(entry.rank).padStart(2, '0')}
-              </span>
-              <code className="text-[11px] font-mono text-slate-200 truncate" title={entry.hotkey}>
-                {truncateHotkey(entry.hotkey)}
-              </code>
-              <span className="text-[10px] font-mono text-amber-warm tabular-nums text-right opacity-90">
-                {entry.bonusPct > 0 ? `+${entry.bonusPct}%` : ''}
-              </span>
-              <div className="flex items-baseline justify-end gap-1">
-                <span className="text-xs font-semibold text-gold tabular-nums">
-                  <CountUp value={entry.wins} />
-                </span>
-                <span className="text-[9px] text-slate-500 uppercase tracking-[0.08em]">leads</span>
-              </div>
-            </button>
-          )
-        })}
-      </div>
     </div>
   )
 }
@@ -1035,21 +960,27 @@ function RejectionReasonsContent({
 function RequestHistoryDialog({
   open,
   requests,
+  leaderboard,
+  leaderboardWindowStart,
   rejectionView,
   cosmosStats,
+  onSelectMiner,
   onSelectRequest,
   onOpenChange,
 }: {
   open: boolean
   requests: ActiveRequest[]
+  leaderboard: { rank: number; hotkey: string; wins: number; bonusPct: number }[]
+  leaderboardWindowStart: string | null
   rejectionView: RejectionView
   cosmosStats: { submissions: number; fulfilled: number; miners: number }
+  onSelectMiner: (hotkey: string) => void
   onSelectRequest: (req: ActiveRequest) => void
   onOpenChange: (open: boolean) => void
 }) {
   const [query, setQuery] = useState('')
   const [scope, setScope] = useState<FilterMode>('all')
-  const [mode, setMode] = useState<'requests' | 'rejections'>('requests')
+  const [mode, setMode] = useState<'requests' | 'leaderboard' | 'rejections'>('requests')
 
   useEffect(() => {
     if (!open) {
@@ -1090,8 +1021,17 @@ function RequestHistoryDialog({
         <DialogHeader className="px-5 py-4 border-b border-slate-800/80 space-y-3 text-left">
           <div className="flex items-center gap-2 pr-8">
             <DialogTitle className="text-sm font-semibold text-slate-100">
-              {mode === 'requests' ? 'Request history' : 'Rejection reasons'}
+              {mode === 'requests'
+                ? 'Fulfillment activity'
+                : mode === 'leaderboard'
+                  ? 'Top rewarded miners'
+                  : 'Rejection reasons'}
             </DialogTitle>
+            {mode === 'leaderboard' && (
+              <span className="ml-auto text-[10px] text-slate-500 font-mono tabular-nums">
+                Current reward week{leaderboardWindowStart ? ` · since ${formatDate(leaderboardWindowStart)}` : ''}
+              </span>
+            )}
             {mode === 'rejections' && (
               <span className="ml-auto text-[10px] text-slate-500 font-mono tabular-nums">
                 {rejectionView.failed} failed · {rejectionView.passed} passed
@@ -1136,6 +1076,20 @@ function RequestHistoryDialog({
                 label="Completed"
                 tone="completed"
               />
+              <button
+                onClick={() => setMode('leaderboard')}
+                className={cn(
+                  'flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium border transition-all',
+                  mode === 'leaderboard'
+                    ? 'bg-gold-soft text-gold border-gold-soft'
+                    : 'bg-transparent text-slate-400 border-transparent hover:text-slate-200 hover:bg-slate-800/40'
+                )}
+              >
+                <span>Top miners</span>
+                <span className={cn('text-[10px] font-mono tabular-nums', mode === 'leaderboard' ? 'text-current/70' : 'text-slate-500')}>
+                  {leaderboard.length}
+                </span>
+              </button>
               <button
                 onClick={() => setMode('rejections')}
                 className={cn(
@@ -1186,7 +1140,12 @@ function RequestHistoryDialog({
         </DialogHeader>
 
         <div className="flex-1 overflow-y-auto overflow-x-hidden">
-          {mode === 'rejections' ? (
+          {mode === 'leaderboard' ? (
+            <LeaderboardHistoryContent
+              entries={leaderboard}
+              onSelect={onSelectMiner}
+            />
+          ) : mode === 'rejections' ? (
             <div className="p-5">
               <RejectionReasonsContent view={rejectionView} />
             </div>
@@ -1238,6 +1197,60 @@ function HistoryStat({
       <div className={cn('text-lg font-semibold tabular-nums leading-tight mt-0.5', valueClass)}>
         {value.toLocaleString()}
       </div>
+    </div>
+  )
+}
+
+function LeaderboardHistoryContent({
+  entries,
+  onSelect,
+}: {
+  entries: { rank: number; hotkey: string; wins: number; bonusPct: number }[]
+  onSelect: (hotkey: string) => void
+}) {
+  if (entries.length === 0) {
+    return (
+      <div className="p-12 text-center text-sm text-slate-500">
+        No rewarded miners yet for the current reward week.
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <div className="grid grid-cols-[3rem_minmax(0,1fr)_5rem_5rem] gap-3 px-5 py-2 text-[9px] uppercase tracking-[0.08em] text-slate-500 font-mono border-b border-slate-800/60 sticky top-0 bg-slate-950/95 backdrop-blur-sm z-10">
+        <span>Rank</span>
+        <span>Hotkey</span>
+        <span className="text-right">Bonus</span>
+        <span className="text-right">Leads</span>
+      </div>
+      {entries.map((entry) => (
+        <button
+          key={entry.hotkey}
+          type="button"
+          onClick={() => onSelect(entry.hotkey)}
+          className="w-full grid grid-cols-[3rem_minmax(0,1fr)_5rem_5rem] gap-3 items-center px-5 py-3 text-left border-b border-slate-800/40 hover:bg-slate-900/60 transition-colors"
+          title={`Inspect ${entry.hotkey}`}
+        >
+          <span className="font-mono text-slate-500 tabular-nums">
+            {String(entry.rank).padStart(2, '0')}
+          </span>
+          <div className="min-w-0">
+            <code className="font-mono text-slate-200 truncate block" title={entry.hotkey}>
+              {entry.hotkey}
+            </code>
+            <span className="text-[10px] text-slate-500 font-mono">
+              {truncateHotkey(entry.hotkey)}
+            </span>
+          </div>
+          <span className="text-right font-mono text-amber-warm tabular-nums">
+            {entry.bonusPct > 0 ? `+${entry.bonusPct}%` : '—'}
+          </span>
+          <span className="text-right font-mono text-gold tabular-nums">
+            {entry.wins}
+          </span>
+        </button>
+      ))}
     </div>
   )
 }

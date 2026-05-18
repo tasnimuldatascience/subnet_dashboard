@@ -34,7 +34,7 @@ function getSupabase() {
 // =================================================================
 
 const CACHE_TTL = 60_000
-const LEADERBOARD_WINDOW_DAYS = 30
+const LEADERBOARD_WINDOW_DAYS = 7
 const LEADERBOARD_ROW_LIMIT = 10_000
 const CONSENSUS_ROW_LIMIT = 25_000
 const REJECTION_SAMPLE_SIZE = 500
@@ -53,6 +53,14 @@ function computeEtag(payload: unknown): string {
   // resistance against accidental matches.
   const hash = createHash('sha1').update(JSON.stringify(payload)).digest('hex')
   return `W/"${hash.slice(0, 16)}"`
+}
+
+function currentRewardWeekStartUTC(now = new Date()): Date {
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0))
+  const day = start.getUTCDay()
+  const daysSinceMonday = (day + 6) % 7
+  start.setUTCDate(start.getUTCDate() - daysSinceMonday)
+  return start
 }
 
 async function fetchFulfillmentData() {
@@ -249,17 +257,15 @@ async function fetchFulfillmentData() {
     }
   }
 
-  // Leaderboard: wins per miner over a bounded recent window, tie-broken by
-  // total reward pct. Excludes banned hotkeys. Previously this scanned
-  // EVERY winning consensus row ever; capped now by window + row limit so
-  // it stays fast as the table grows. The accuracy trade-off is acceptable
-  // for a "top 5" leaderboard; for full historical fidelity, materialize
-  // this as a DB view (see db/migrations/).
-  const windowStart = new Date(Date.now() - LEADERBOARD_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString()
+  // Leaderboard: current reward week only. Fulfillment rewards reset every
+  // Monday at 00:00 UTC, and only rows with a positive reward_pct represent
+  // miners that are actually getting paid.
+  const windowStart = currentRewardWeekStartUTC().toISOString()
   const { data: allWinners } = await supabase
     .from('fulfillment_score_consensus')
     .select('miner_hotkey, reward_pct, computed_at')
     .eq('is_winner', true)
+    .gt('reward_pct', 0)
     .gte('computed_at', windowStart)
     .order('computed_at', { ascending: false })
     .limit(LEADERBOARD_ROW_LIMIT)
@@ -311,8 +317,9 @@ async function fetchFulfillmentData() {
       fulfilledCount,
       recycledCount,
       // leaderboardWindowDays surfaces the window the API used so the
-      // panel can honestly say "last 30d" instead of implying all-time.
+      // panel can honestly say "current reward week" instead of implying all-time.
       leaderboardWindowDays: LEADERBOARD_WINDOW_DAYS,
+      leaderboardWindowStart: windowStart,
     }
   }
 }
