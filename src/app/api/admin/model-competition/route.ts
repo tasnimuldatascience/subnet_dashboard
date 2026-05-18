@@ -5,6 +5,7 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 const MODEL_COMPETITION_ADMIN_START = '2026-05-14T00:00:00.000Z'
+const BENCHMARK_HISTORY_START = '2026-05-13T00:00:00.000Z'
 
 type QualificationModelRow = {
   id: string
@@ -16,6 +17,16 @@ type QualificationModelRow = {
   evaluated_at: string | null
   is_champion: boolean | null
   champion_at: string | null
+}
+
+type BenchmarkIcpSetRow = {
+  set_id: number
+  icps: unknown[] | null
+  icp_set_hash: string | null
+  industry_distribution: Record<string, number> | null
+  active_from: string | null
+  active_until: string | null
+  is_active: boolean | null
 }
 
 export async function GET() {
@@ -61,9 +72,51 @@ export async function GET() {
       championAt: row.champion_at,
     }))
 
+  let benchmarkError: string | null = null
+  let benchmarkHistory: Array<{
+    setId: number
+    date: string
+    activeFrom: string | null
+    activeUntil: string | null
+    isActive: boolean
+    icpSetHash: string | null
+    industryDistribution: Record<string, number> | null
+    icps: unknown[]
+    icpCount: number
+  }> = []
+
+  const { data: benchmarkData, error: benchmarkErr } = await supabase
+    .from('qualification_private_icp_sets')
+    .select('set_id, icps, icp_set_hash, industry_distribution, active_from, active_until, is_active')
+    .gte('active_from', BENCHMARK_HISTORY_START)
+    .order('active_from', { ascending: false, nullsFirst: false })
+    .limit(100)
+
+  if (benchmarkErr) {
+    benchmarkError = benchmarkErr.message || 'Could not load benchmark history'
+  } else {
+    benchmarkHistory = ((benchmarkData ?? []) as BenchmarkIcpSetRow[]).map((row) => {
+      return {
+        setId: row.set_id,
+        date: row.active_from
+          ? row.active_from.slice(0, 10)
+          : String(row.set_id),
+        activeFrom: row.active_from,
+        activeUntil: row.active_until,
+        isActive: Boolean(row.is_active),
+        icpSetHash: row.icp_set_hash,
+        industryDistribution: row.industry_distribution,
+        icps: Array.isArray(row.icps) ? row.icps : [],
+        icpCount: Array.isArray(row.icps) ? row.icps.length : 0,
+      }
+    })
+  }
+
   return NextResponse.json(
     {
       models,
+      benchmarkHistory,
+      benchmarkError,
       stats: {
         totalModels: models.length,
         withCode: codeCount ?? 0,
@@ -72,6 +125,7 @@ export async function GET() {
       },
       fetchedAt: new Date().toISOString(),
       startsAt: MODEL_COMPETITION_ADMIN_START,
+      benchmarkStartsAt: BENCHMARK_HISTORY_START,
     },
     { headers: { 'Cache-Control': 'no-store' } },
   )

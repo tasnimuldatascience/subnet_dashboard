@@ -19,6 +19,8 @@ export interface AdminModelCompetitionModel {
 
 export interface AdminModelCompetitionPayload {
   models: AdminModelCompetitionModel[]
+  benchmarkHistory?: BenchmarkHistoryEntry[]
+  benchmarkError?: string | null
   stats: {
     totalModels: number
     withCode: number
@@ -27,6 +29,19 @@ export interface AdminModelCompetitionPayload {
   }
   fetchedAt: string
   startsAt?: string
+  benchmarkStartsAt?: string
+}
+
+export interface BenchmarkHistoryEntry {
+  setId: number
+  date: string
+  activeFrom: string | null
+  activeUntil: string | null
+  isActive: boolean
+  icpSetHash: string | null
+  industryDistribution: Record<string, number> | null
+  icps: unknown[]
+  icpCount: number
 }
 
 function formatScore(score: number | null): string {
@@ -95,6 +110,7 @@ export function AdminModelCompetition({
   payload: AdminModelCompetitionPayload | null
   error: string | null
 }) {
+  const [activeTab, setActiveTab] = useState<'models' | 'benchmarks'>('models')
   const [query, setQuery] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(
     payload?.models[0]?.id ?? null,
@@ -126,6 +142,14 @@ export function AdminModelCompetition({
   const currentFile =
     activeFile && fileNames.includes(activeFile) ? activeFile : fileNames[0] ?? null
   const loadingSelectedCode = Boolean(selected && loadingCodeId === selected.id)
+  const benchmarkHistory = payload?.benchmarkHistory ?? []
+  const [selectedSetId, setSelectedSetId] = useState<number | null>(
+    benchmarkHistory[0]?.setId ?? null,
+  )
+  const selectedBenchmark =
+    benchmarkHistory.find((entry) => entry.setId === selectedSetId) ??
+    benchmarkHistory[0] ??
+    null
 
   useEffect(() => {
     if (!selected) return
@@ -209,6 +233,30 @@ export function AdminModelCompetition({
         </div>
       ) : null}
 
+      <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
+        {[
+          { key: 'models' as const, label: 'Models submitted', count: models.length },
+          { key: 'benchmarks' as const, label: 'Benchmark history', count: benchmarkHistory.length },
+        ].map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => setActiveTab(tab.key)}
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-all whitespace-nowrap',
+              activeTab === tab.key
+                ? 'bg-gold-tint border-gold-strong text-gold'
+                : 'border-white/[0.06] hover-bg-warm text-white/55',
+            )}
+          >
+            {tab.label}
+            <span className="tabular-nums text-[10px] opacity-70">{tab.count}</span>
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'models' ? (
+        <>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Models" value={payload?.stats.totalModels ?? 0} />
         <Stat label="With Code" value={payload?.stats.withCode ?? 0} />
@@ -450,7 +498,185 @@ export function AdminModelCompetition({
           </div>
         )}
       </section>
+        </>
+      ) : (
+        <BenchmarkHistory
+          entries={benchmarkHistory}
+          selected={selectedBenchmark}
+          selectedSetId={selectedSetId}
+          onSelect={setSelectedSetId}
+          error={payload?.benchmarkError ?? null}
+        />
+      )}
     </div>
+  )
+}
+
+function icpField(icp: unknown, key: string): unknown {
+  return icp && typeof icp === 'object' ? (icp as Record<string, unknown>)[key] : undefined
+}
+
+function icpText(value: unknown): string {
+  if (Array.isArray(value)) return value.map((item) => icpText(item)).filter(Boolean).join(', ')
+  if (value && typeof value === 'object') return JSON.stringify(value)
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  return ''
+}
+
+function BenchmarkHistory({
+  entries,
+  selected,
+  selectedSetId,
+  onSelect,
+  error,
+}: {
+  entries: BenchmarkHistoryEntry[]
+  selected: BenchmarkHistoryEntry | null
+  selectedSetId: number | null
+  onSelect: (setId: number) => void
+  error: string | null
+}) {
+  if (error) {
+    return (
+      <div className="rounded-xl border border-burgundy-soft bg-burgundy-soft p-4 text-sm text-burgundy">
+        {error}
+      </div>
+    )
+  }
+
+  if (entries.length === 0) {
+    return (
+      <div
+        className="rounded-xl border p-12 text-center text-sm"
+        style={{
+          borderColor: 'var(--surface-border)',
+          background: 'var(--surface)',
+          color: 'var(--text-secondary)',
+        }}
+      >
+        No benchmark ICP sets found from May 13 onward.
+      </div>
+    )
+  }
+
+  return (
+    <section className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
+      <div
+        className="rounded-xl border"
+        style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)' }}
+      >
+        <header className="border-b px-4 py-3" style={{ borderColor: 'var(--surface-border)' }}>
+          <h2 className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+            Benchmark days
+          </h2>
+          <p className="mt-1 text-xs" style={{ color: 'var(--text-tertiary)' }}>
+            Daily ICP prompt sets used to benchmark model submissions.
+          </p>
+        </header>
+        <div className="max-h-[720px] overflow-auto">
+          {entries.map((entry) => {
+            const active = entry.setId === selectedSetId
+            return (
+              <button
+                key={entry.setId}
+                type="button"
+                onClick={() => onSelect(entry.setId)}
+                className={cn(
+                  'block w-full border-b px-4 py-3 text-left transition-colors hover-bg-warm',
+                  active ? 'bg-gold-soft/20' : '',
+                )}
+                style={{ borderColor: 'var(--surface-border)' }}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                      {entry.date}
+                    </div>
+                    <div className="mt-1 font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
+                      set {entry.setId}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-lg font-medium tabular-nums text-gold">
+                      {entry.icpCount}
+                    </div>
+                    <div className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+                      prompts
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-2 text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+                  {entry.isActive ? 'Active now' : 'Historical'} · {entry.activeFrom ? formatDateTime(entry.activeFrom) : '—'}
+                </div>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      <div
+        className="rounded-xl border"
+        style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)' }}
+      >
+        <header className="border-b px-4 py-3" style={{ borderColor: 'var(--surface-border)' }}>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                {selected?.date ?? 'Benchmark'} prompts
+              </h2>
+              <p className="mt-1 text-xs" style={{ color: 'var(--text-tertiary)' }}>
+                {selected?.activeFrom ? `Active ${formatDateTime(selected.activeFrom)} to ${formatDateTime(selected.activeUntil)}` : 'Select a day to inspect prompts.'}
+              </p>
+            </div>
+            {selected?.icpSetHash && (
+              <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
+                hash {selected.icpSetHash.slice(0, 16)}...
+              </div>
+            )}
+          </div>
+        </header>
+
+        <div className="max-h-[720px] overflow-auto p-4">
+          <div className="space-y-3">
+            {(selected?.icps ?? []).map((icp, idx) => {
+              const prompt = icpText(icpField(icp, 'prompt') ?? icpField(icp, 'buyer_description'))
+              return (
+                <article
+                  key={`${selected?.setId}-${idx}`}
+                  className="rounded-lg border p-4"
+                  style={{
+                    borderColor: 'var(--surface-border)',
+                    background: 'var(--surface-elevated)',
+                  }}
+                >
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+                    <div className="font-mono text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
+                      #{idx + 1} · {icpText(icpField(icp, 'icp_id')) || `icp_${idx + 1}`}
+                    </div>
+                    <div className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+                      {icpText(icpField(icp, 'industry'))}
+                      {icpField(icp, 'sub_industry') ? ` / ${icpText(icpField(icp, 'sub_industry'))}` : ''}
+                    </div>
+                  </div>
+                  <p className="text-sm leading-relaxed" style={{ color: 'var(--text-primary)' }}>
+                    {prompt || 'No prompt text stored.'}
+                  </p>
+                  <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+                    <Meta label="Target roles" value={icpText(icpField(icp, 'target_roles')) || '—'} />
+                    <Meta label="Role types" value={icpText(icpField(icp, 'target_role_types')) || '—'} />
+                    <Meta label="Countries" value={icpText(icpField(icp, 'country')) || '—'} />
+                    <Meta label="Employee count" value={icpText(icpField(icp, 'employee_count')) || '—'} />
+                    <Meta label="Intent signals" value={icpText(icpField(icp, 'intent_signals')) || '—'} />
+                    <Meta label="Product/service" value={icpText(icpField(icp, 'product_service')) || '—'} />
+                  </div>
+                </article>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+    </section>
   )
 }
 

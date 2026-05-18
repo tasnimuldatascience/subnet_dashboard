@@ -473,6 +473,7 @@ export async function GET(request: NextRequest) {
   const minerFilter = searchParams.get('minerHotkey') ?? 'all'
   const dateFrom = normalizeDateBound(searchParams.get('from'))
   const dateTo = normalizeDateBound(searchParams.get('to'), true)
+  const bucket = searchParams.get('bucket') === 'hour' ? 'hour' : 'day'
   const wantsCsv = searchParams.get('export') === 'csv'
   const exportKind = searchParams.get('export') ?? ''
 
@@ -504,6 +505,13 @@ export async function GET(request: NextRequest) {
     chartConsensusRows,
     scoreByLead,
   } = dataset
+  const bucketKey = (value: string | null | undefined): string => {
+    const day = dateKey(value)
+    if (bucket !== 'hour' || day === 'Unknown') return day
+    const parsed = new Date(value ?? '')
+    if (Number.isNaN(parsed.getTime())) return 'Unknown'
+    return `${day} ${String(parsed.getUTCHours()).padStart(2, '0')}:00`
+  }
 
   const leads = submissions.flatMap((submission) => {
     const leadEntries =
@@ -608,7 +616,7 @@ export async function GET(request: NextRequest) {
   })
 
   for (const lead of baseFilteredLeads) {
-    const key = dateKey(lead.activityAt)
+    const key = bucketKey(lead.activityAt)
     const bucket =
       dailyMap.get(key) ??
       {
@@ -627,7 +635,7 @@ export async function GET(request: NextRequest) {
   }
 
   for (const row of baseFilteredConsensus) {
-    const key = dateKey(row.computed_at)
+    const key = bucketKey(row.computed_at)
     const bucket =
       dailyMap.get(key) ??
       {
@@ -647,6 +655,28 @@ export async function GET(request: NextRequest) {
     dailyMap.set(key, bucket)
   }
 
+  if (bucket === 'hour' && dateFrom && dateTo) {
+    const start = new Date(dateFrom)
+    const end = new Date(dateTo)
+    start.setUTCMinutes(0, 0, 0)
+    end.setUTCMinutes(0, 0, 0)
+    for (let t = start.getTime(); t <= end.getTime(); t += 60 * 60 * 1000) {
+      const d = new Date(t)
+      const key = `${d.toISOString().slice(0, 10)} ${String(d.getUTCHours()).padStart(2, '0')}:00`
+      if (!dailyMap.has(key)) {
+        dailyMap.set(key, {
+          date: key,
+          submitted: 0,
+          committed: 0,
+          approved: 0,
+          denied: 0,
+          pending: 0,
+          fulfilled: 0,
+        })
+      }
+    }
+  }
+
   const daily = Array.from(dailyMap.values()).sort((a, b) =>
     a.date < b.date ? -1 : 1,
   )
@@ -657,7 +687,7 @@ export async function GET(request: NextRequest) {
 
   const rejectionMap = new Map<string, RejectionDailyRow>()
   for (const row of deniedConsensusRows) {
-    const date = dateKey(row.computed_at)
+    const date = bucketKey(row.computed_at)
     const scoreRow = scoreByLead.get(`${row.request_id}:${row.lead_id}`)
     const reason = rejectionReason(scoreRow)
     const key = `${date}|||${reason}`
@@ -681,7 +711,7 @@ export async function GET(request: NextRequest) {
 
   const minerMap = new Map<string, MinerDailyRow>()
   for (const lead of baseFilteredLeads) {
-    const date = dateKey(lead.activityAt)
+    const date = bucketKey(lead.activityAt)
     const minerHotkey = lead.minerHotkey || 'unknown_hotkey'
     const key = `${date}|||${minerHotkey}`
     const bucket =
@@ -884,6 +914,7 @@ export async function GET(request: NextRequest) {
         minerHotkey: minerFilter,
         from: searchParams.get('from') ?? '',
         to: searchParams.get('to') ?? '',
+        bucket,
       },
       maxSubmissions: MAX_SUBMISSIONS,
       fetchedAt: new Date().toISOString(),

@@ -385,6 +385,7 @@ export function AdminSubmittedLeads({
         from: dateFrom,
         to: dateTo,
       })
+      if (dateRange === '24h') params.set('bucket', 'hour')
       if (forceRefresh) {
         params.set('refresh', '1')
         lastForcedRefresh.current = refreshNonce
@@ -409,7 +410,7 @@ export function AdminSubmittedLeads({
       cancelled = true
       window.clearTimeout(timeout)
     }
-  }, [page, query, filter, rejectReasonFilter, requestId, minerHotkey, dateFrom, dateTo, refreshNonce])
+  }, [page, query, filter, rejectReasonFilter, requestId, minerHotkey, dateFrom, dateTo, dateRange, refreshNonce])
 
   const leads = useMemo(() => data?.leads ?? [], [data?.leads])
 
@@ -432,8 +433,9 @@ export function AdminSubmittedLeads({
       from: dateFrom,
       to: dateTo,
     })
+    if (dateRange === '24h') params.set('bucket', 'hour')
     return `/api/admin/fulfillment-submissions?${params.toString()}`
-  }, [filter, query, rejectReasonFilter, requestId, minerHotkey, dateFrom, dateTo])
+  }, [filter, query, rejectReasonFilter, requestId, minerHotkey, dateFrom, dateTo, dateRange])
   const submissionsChartExportHref = useMemo(() => {
     const params = new URLSearchParams({
       export: 'submissions-by-day',
@@ -442,8 +444,9 @@ export function AdminSubmittedLeads({
       from: dateFrom,
       to: dateTo,
     })
+    if (dateRange === '24h') params.set('bucket', 'hour')
     return `/api/admin/fulfillment-submissions?${params.toString()}`
-  }, [requestId, minerHotkey, dateFrom, dateTo])
+  }, [requestId, minerHotkey, dateFrom, dateTo, dateRange])
   const rejectsChartExportHref = useMemo(() => {
     const params = new URLSearchParams({
       export: 'rejects-by-day',
@@ -452,8 +455,9 @@ export function AdminSubmittedLeads({
       from: dateFrom,
       to: dateTo,
     })
+    if (dateRange === '24h') params.set('bucket', 'hour')
     return `/api/admin/fulfillment-submissions?${params.toString()}`
-  }, [requestId, minerHotkey, dateFrom, dateTo])
+  }, [requestId, minerHotkey, dateFrom, dateTo, dateRange])
   const minerChartExportHref = useMemo(() => {
     const params = new URLSearchParams({
       export: 'miner-submissions-by-day',
@@ -462,8 +466,9 @@ export function AdminSubmittedLeads({
       from: dateFrom,
       to: dateTo,
     })
+    if (dateRange === '24h') params.set('bucket', 'hour')
     return `/api/admin/fulfillment-submissions?${params.toString()}`
-  }, [requestId, minerHotkey, dateFrom, dateTo])
+  }, [requestId, minerHotkey, dateFrom, dateTo, dateRange])
   const chartData = useMemo(() => data?.daily ?? [], [data?.daily])
   function applyDateRange(range: ChartRange) {
     setDateRange(range)
