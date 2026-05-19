@@ -152,10 +152,9 @@ export async function GET(
   const leaf = cycles[cycles.length - 1]
   const chainIds = cycles.map((c) => c.request_id)
 
-  // Pull consensus rows that can be considered accepted for the chain:
-  // final winners, currently-held partial winners, and positive-score
-  // approved candidates on in-flight rows. The UI splits these into
-  // "Approved leads" and "Fulfilled leads".
+  // Pull every consensus row for the chain. The detail UI derives:
+  // fulfilled, approved, denied, and pending submitted-lead views from
+  // this full set plus fulfillment_submissions.
   const { data: consensusData, error: consensusErr } = await supabase
     .from('fulfillment_score_consensus')
     .select(
@@ -167,7 +166,6 @@ export async function GET(
         'intent_details, intent_breakdown, intent_signal_mapping, num_validators, computed_at',
     )
     .in('request_id', chainIds)
-    .or('is_winner.eq.true,is_chain_held.eq.true,consensus_final_score.gt.0')
     .order('consensus_final_score', { ascending: false })
 
   if (consensusErr) {
@@ -191,7 +189,11 @@ export async function GET(
   }
 
   const consensusRows = (consensusData || []) as unknown as AdminConsensusRow[]
-  const approvedRows = dedupeConsensus(consensusRows)
+  const approvedRows = dedupeConsensus(
+    consensusRows.filter(
+      (w) => w.is_winner || w.is_chain_held || (w.consensus_final_score ?? 0) > 0,
+    ),
+  )
   const fulfilledRows = dedupeConsensus(consensusRows.filter((w) => w.is_winner))
 
   // Pull lead_data for every accepted (submission_id, lead_id) pair.
@@ -227,10 +229,9 @@ export async function GET(
   const approvedLeads = hydrateLeads(approvedRows)
   const fulfilledLeads = hydrateLeads(fulfilledRows)
 
-  // Count all submissions for the "All submissions" tab badge — but
-  // don't fetch the actual rows on the detail endpoint. The
-  // submissions tab pulls them lazily so we don't blow up payload
-  // size on chains with hundreds of attempts.
+  // Count submission rows for the Leads tab badge. The actual submitted
+  // leads are loaded by /leads with pagination so this detail endpoint
+  // remains light even on chains with hundreds of attempts.
   const { count: allSubsCount } = await supabase
     .from('fulfillment_submissions')
     .select('submission_id', { count: 'exact', head: true })
