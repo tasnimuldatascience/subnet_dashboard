@@ -9,6 +9,9 @@ import {
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
+const SUBMISSION_BATCH_SIZE = 1000
+const CONSENSUS_BATCH_SIZE = 1000
+
 type SubmittedLeadStatus = 'approved' | 'fulfilled' | 'pending' | 'denied'
 type SubmittedLeadFilter = SubmittedLeadStatus | 'all'
 
@@ -19,6 +22,7 @@ type SubmissionRow = {
   revealed: boolean | null
   revealed_at: string | null
   lead_hashes: Array<{ lead_id?: string }> | null
+  lead_data: LeadDataEntry[] | null
 }
 
 type ScoreRow = {
@@ -151,6 +155,54 @@ function countRows(rows: SubmittedLeadIndexRow[]): Record<SubmittedLeadFilter, n
   }
 }
 
+async function fetchAllConsensusRows(
+  supabase: ReturnType<typeof getAdminSupabase>,
+  chainIds: string[],
+): Promise<{ data: AdminConsensusRow[]; error: { message: string } | null }> {
+  const all: AdminConsensusRow[] = []
+  for (let offset = 0; ; offset += CONSENSUS_BATCH_SIZE) {
+    const { data, error } = await supabase
+      .from('fulfillment_score_consensus')
+      .select(
+        'consensus_id, request_id, submission_id, lead_id, miner_hotkey, ' +
+          'consensus_final_score, consensus_intent_signal_final, consensus_rep_score, ' +
+          'consensus_icp_fit, consensus_tier2_passed, consensus_email_verified, ' +
+          'consensus_person_verified, consensus_company_verified, consensus_decision_maker, ' +
+          'any_fabricated, is_winner, is_chain_held, reward_pct, reward_expires_epoch, ' +
+          'intent_details, intent_breakdown, intent_signal_mapping, num_validators, computed_at',
+      )
+      .in('request_id', chainIds)
+      .range(offset, offset + CONSENSUS_BATCH_SIZE - 1)
+
+    if (error) return { data: all, error }
+    const batch = (data ?? []) as unknown as AdminConsensusRow[]
+    all.push(...batch)
+    if (batch.length < CONSENSUS_BATCH_SIZE) break
+  }
+  return { data: all, error: null }
+}
+
+async function fetchAllSubmissions(
+  supabase: ReturnType<typeof getAdminSupabase>,
+  chainIds: string[],
+): Promise<{ data: SubmissionRow[]; error: { message: string } | null }> {
+  const all: SubmissionRow[] = []
+  for (let offset = 0; ; offset += SUBMISSION_BATCH_SIZE) {
+    const { data, error } = await supabase
+      .from('fulfillment_submissions')
+      .select('submission_id, request_id, miner_hotkey, revealed, revealed_at, lead_hashes, lead_data')
+      .in('request_id', chainIds)
+      .order('revealed_at', { ascending: false, nullsFirst: false })
+      .range(offset, offset + SUBMISSION_BATCH_SIZE - 1)
+
+    if (error) return { data: all, error }
+    const batch = (data ?? []) as SubmissionRow[]
+    all.push(...batch)
+    if (batch.length < SUBMISSION_BATCH_SIZE) break
+  }
+  return { data: all, error: null }
+}
+
 export async function GET(
   req: NextRequest,
   ctx: { params: Promise<{ request_id: string }> },
@@ -182,18 +234,10 @@ export async function GET(
   }
   const chainIds = cycles.map((cycle) => cycle.request_id)
 
-  const { data: consensusData, error: consensusErr } = await supabase
-    .from('fulfillment_score_consensus')
-    .select(
-      'consensus_id, request_id, submission_id, lead_id, miner_hotkey, ' +
-        'consensus_final_score, consensus_intent_signal_final, consensus_rep_score, ' +
-        'consensus_icp_fit, consensus_tier2_passed, consensus_email_verified, ' +
-        'consensus_person_verified, consensus_company_verified, consensus_decision_maker, ' +
-        'any_fabricated, is_winner, is_chain_held, reward_pct, reward_expires_epoch, ' +
-        'intent_details, intent_breakdown, intent_signal_mapping, num_validators, computed_at',
-    )
-    .in('request_id', chainIds)
-    .limit(10000)
+  const { data: consensusRows, error: consensusErr } = await fetchAllConsensusRows(
+    supabase,
+    chainIds,
+  )
 
   if (consensusErr) {
     return NextResponse.json(
@@ -202,11 +246,10 @@ export async function GET(
     )
   }
 
-  const { data: submissionData, error: submissionErr } = await supabase
-    .from('fulfillment_submissions')
-    .select('submission_id, request_id, miner_hotkey, revealed, revealed_at, lead_hashes')
-    .in('request_id', chainIds)
-    .limit(10000)
+  const { data: submissions, error: submissionErr } = await fetchAllSubmissions(
+    supabase,
+    chainIds,
+  )
 
   if (submissionErr) {
     return NextResponse.json(
@@ -214,9 +257,6 @@ export async function GET(
       { status: 502 },
     )
   }
-
-  const consensusRows = (consensusData ?? []) as unknown as AdminConsensusRow[]
-  const submissions = (submissionData ?? []) as SubmissionRow[]
 
   const consensusByLead = new Map<string, AdminConsensusRow>()
   const consensusBySubmission = new Map<string, AdminConsensusRow[]>()
@@ -230,6 +270,9 @@ export async function GET(
   const indexRows = submissions.flatMap((submission): SubmittedLeadIndexRow[] => {
     const leadIds = new Set<string>()
     for (const entry of submission.lead_hashes ?? []) {
+      if (entry.lead_id) leadIds.add(entry.lead_id)
+    }
+    for (const entry of submission.lead_data ?? []) {
       if (entry.lead_id) leadIds.add(entry.lead_id)
     }
     for (const consensus of consensusBySubmission.get(submission.submission_id) ?? []) {
@@ -281,12 +324,20 @@ export async function GET(
   const pageSubmissionIds = Array.from(new Set(pageRows.map((row) => row.submission_id)))
   const pageLeadIds = Array.from(new Set(pageRows.map((row) => row.lead_id)))
 
+  const submissionsById = new Map(submissions.map((submission) => [submission.submission_id, submission]))
   const leadDataBySubmission = new Map<string, LeadDataEntry[]>()
-  if (pageSubmissionIds.length > 0) {
+  for (const submissionId of pageSubmissionIds) {
+    const leadData = submissionsById.get(submissionId)?.lead_data
+    if (leadData) leadDataBySubmission.set(submissionId, leadData)
+  }
+  const missingPageSubmissionIds = pageSubmissionIds.filter(
+    (submissionId) => !leadDataBySubmission.has(submissionId),
+  )
+  if (missingPageSubmissionIds.length > 0) {
     const { data: pageSubmissionData, error: pageSubmissionErr } = await supabase
       .from('fulfillment_submissions')
       .select('submission_id, lead_data')
-      .in('submission_id', pageSubmissionIds)
+      .in('submission_id', missingPageSubmissionIds)
 
     if (pageSubmissionErr) {
       console.warn('[admin] request leads page hydration failed', pageSubmissionErr.message)

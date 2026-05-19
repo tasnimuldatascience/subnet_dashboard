@@ -121,8 +121,9 @@ export function AdminRequestDetail({
   const { chain, icp, winners, target_num_leads, delivered_count } = payload
   const approvedLeads = payload.approved_leads ?? winners
   const fulfilledLeads = payload.fulfilled_leads ?? winners
-  const submittedLeadTotal =
-    payload.submitted_leads?.length ?? payload.all_submissions_count
+  const [submittedLeadTotal, setSubmittedLeadTotal] = useState<number | null>(
+    payload.submitted_leads?.length ?? null,
+  )
   const root = chain.root
   const leaf = chain.leaf
   const deepResearch: DeepResearchState =
@@ -138,6 +139,32 @@ export function AdminRequestDetail({
   const tone = statusTone(leaf.status)
   const isFulfilled = tone === 'fulfilled'
   const isPartial = tone === 'partial'
+
+  useEffect(() => {
+    const controller = new AbortController()
+    async function loadSubmittedLeadTotal() {
+      try {
+        const params = new URLSearchParams({
+          status: 'all',
+          page: '1',
+          pageSize: '10',
+        })
+        const res = await fetch(`/api/admin/requests/${requestId}/leads?${params}`, {
+          cache: 'no-store',
+          signal: controller.signal,
+        })
+        if (!res.ok) return
+        const next = (await res.json()) as RequestLeadsResponse
+        setSubmittedLeadTotal(next.counts.all)
+      } catch (e) {
+        if ((e as Error).name !== 'AbortError') {
+          console.warn('[admin] request lead total failed', e)
+        }
+      }
+    }
+    loadSubmittedLeadTotal()
+    return () => controller.abort()
+  }, [requestId])
 
   return (
     <div className="space-y-6">
@@ -260,9 +287,9 @@ export function AdminRequestDetail({
               }
             />
             <Stat
-              label="Submissions"
-              value={`${payload.all_submissions_count}`}
-              secondary="commits across the chain"
+              label="Submitted leads"
+              value={submittedLeadTotal == null ? 'Loading' : `${submittedLeadTotal}`}
+              secondary="individual leads across the chain"
             />
             <Stat
               label="Chain cycles"
@@ -310,7 +337,7 @@ export function AdminRequestDetail({
             )}
             {t.key === 'leads' && (
               <span className="tabular-nums text-[10px] opacity-70">
-                {submittedLeadTotal}
+                {submittedLeadTotal ?? '...'}
               </span>
             )}
             {t.key === 'chain' && (
@@ -333,8 +360,9 @@ export function AdminRequestDetail({
       {tab === 'leads' && (
         <SubmittedLeadsPanel
           requestId={requestId}
-          initialTotal={submittedLeadTotal}
+          initialTotal={submittedLeadTotal ?? 0}
           icp={icp}
+          onTotalLoaded={setSubmittedLeadTotal}
         />
       )}
       {tab === 'icp' && <IcpPanel icp={icp} />}
@@ -1220,10 +1248,12 @@ function SubmittedLeadsPanel({
   requestId,
   initialTotal,
   icp,
+  onTotalLoaded,
 }: {
   requestId: string
   initialTotal: number
   icp: IcpDetails | null
+  onTotalLoaded: (total: number) => void
 }) {
   const [filter, setFilter] = useState<RequestSubmittedLeadStatus>('all')
   const [page, setPage] = useState(1)
@@ -1267,6 +1297,7 @@ function SubmittedLeadsPanel({
         }
         const next = (await res.json()) as RequestLeadsResponse
         setData(next)
+        onTotalLoaded(next.counts.all)
       } catch (e) {
         if ((e as Error).name !== 'AbortError') {
           setError(e instanceof Error ? e.message : 'Could not load leads')
@@ -1278,7 +1309,7 @@ function SubmittedLeadsPanel({
 
     loadPage()
     return () => controller.abort()
-  }, [filter, page, requestId])
+  }, [filter, onTotalLoaded, page, requestId])
 
   const visible = data.leads
   const counts = data.counts
