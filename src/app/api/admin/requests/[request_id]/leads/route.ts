@@ -108,12 +108,7 @@ function classifyLead(
   consensus: AdminConsensusRow | undefined,
 ): SubmittedLeadStatus {
   if (consensus?.is_winner) return 'fulfilled'
-  if (
-    consensus?.is_chain_held ||
-    ((consensus?.consensus_final_score ?? 0) > 0)
-  ) {
-    return 'approved'
-  }
+  if (consensus?.is_chain_held) return 'approved'
   if (!submission.revealed || !consensus) return 'pending'
   return 'denied'
 }
