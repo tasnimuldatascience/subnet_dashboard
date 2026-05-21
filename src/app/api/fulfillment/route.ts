@@ -148,7 +148,7 @@ async function fetchFulfillmentData() {
     // for a recycled chain can be far fewer than the chain's num_leads.
     // Batch in groups of 100 to avoid Supabase default row limit (1000)
     // and .in() value limits.
-    let chainCanonicalRows: Array<Record<string, unknown>> = []
+    const chainCanonicalRows: Array<Record<string, unknown>> = []
     const allChainLeadIds = Array.from(leadIdToVisibleRid.keys())
     if (allChainLeadIds.length > 0) {
       for (let i = 0; i < allChainLeadIds.length; i += 100) {
