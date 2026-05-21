@@ -146,18 +146,24 @@ async function fetchFulfillmentData() {
     // request_id is from another cycle in the chain. Without this the
     // dialog only shows leads scored under the visible request_id, which
     // for a recycled chain can be far fewer than the chain's num_leads.
+    // Batch in groups of 100 to avoid Supabase default row limit (1000)
+    // and .in() value limits.
     let chainCanonicalRows: Array<Record<string, unknown>> = []
     const allChainLeadIds = Array.from(leadIdToVisibleRid.keys())
     if (allChainLeadIds.length > 0) {
-      const { data: chainData, error: chainErr } = await supabase
-        .from('fulfillment_score_consensus')
-        .select('*')
-        .in('lead_id', allChainLeadIds)
-        .eq('is_winner', true)
-      if (chainErr) {
-        console.error('[Fulfillment API] chain canonical consensus error:', chainErr)
-      } else {
-        chainCanonicalRows = (chainData || []) as Array<Record<string, unknown>>
+      for (let i = 0; i < allChainLeadIds.length; i += 100) {
+        const batch = allChainLeadIds.slice(i, i + 100)
+        const { data: chainData, error: chainErr } = await supabase
+          .from('fulfillment_score_consensus')
+          .select('*')
+          .in('lead_id', batch)
+          .eq('is_winner', true)
+          .limit(1000)
+        if (chainErr) {
+          console.error('[Fulfillment API] chain canonical consensus error:', chainErr)
+        } else {
+          chainCanonicalRows.push(...((chainData || []) as Array<Record<string, unknown>>))
+        }
       }
     }
 
