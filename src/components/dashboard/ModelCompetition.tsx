@@ -1994,7 +1994,7 @@ function PastSubmissionsBoard({
       </header>
       <div className="hidden md:grid grid-cols-[2rem_1fr_7rem_6rem_8rem] gap-3 px-4 py-1.5 text-[9px] text-slate-500 font-mono uppercase tracking-[0.06em] bg-slate-900/40 border-b border-slate-800/60">
         <span className="text-right">#</span>
-        <span>Model / hotkey</span>
+        <span>Hotkey</span>
         <span className="text-right">Score</span>
         <span className="text-right">Status</span>
         <span className="text-right">Submitted</span>
@@ -2033,18 +2033,15 @@ function PastSubmissionRow({
       <span className="text-[10px] font-mono text-slate-500 text-right tabular-nums">
         {String(rank).padStart(2, '0')}
       </span>
-      <div className="min-w-0">
-        <div className="truncate text-slate-200">{submission.modelName}</div>
-        <div className="mt-0.5 flex items-center gap-2">
-          <code className="font-mono text-[10px] text-slate-500 truncate" title={submission.minerHotkey}>
-            {truncateHotkey(submission.minerHotkey)}
-          </code>
-          {submission.canShowCode ? (
-            <Eye className="h-3 w-3 text-slate-500 shrink-0" aria-label="Code available" />
-          ) : (
-            <Lock className="h-3 w-3 text-slate-500 shrink-0" aria-label="Code locked" />
-          )}
-        </div>
+      <div className="flex items-center gap-2 min-w-0">
+        <code className="font-mono text-slate-200 truncate" title={submission.minerHotkey}>
+          {truncateHotkey(submission.minerHotkey)}
+        </code>
+        {submission.canShowCode ? (
+          <Eye className="h-3 w-3 text-slate-500 shrink-0" aria-label="Code available" />
+        ) : (
+          <Lock className="h-3 w-3 text-slate-500 shrink-0" aria-label="Code locked" />
+        )}
       </div>
       <span className="font-mono font-semibold text-right tabular-nums tracking-tight text-gold">
         {hasScore ? submission.score!.toFixed(2) : '—'}
