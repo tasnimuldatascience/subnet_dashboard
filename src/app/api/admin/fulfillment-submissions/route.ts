@@ -195,11 +195,7 @@ function classifyLead(
 ): SubmittedLeadStatus {
   if (!submission.revealed) return 'committed'
   if (!consensus) return 'pending'
-  if (
-    consensus.is_winner ||
-    consensus.is_chain_held ||
-    (consensus.consensus_final_score ?? 0) > 0
-  ) {
+  if (consensus.is_winner || consensus.is_chain_held) {
     return 'approved'
   }
   return 'denied'
@@ -647,8 +643,7 @@ export async function GET(request: NextRequest) {
         pending: 0,
         fulfilled: 0,
       }
-    const approved =
-      row.is_winner || row.is_chain_held || (row.consensus_final_score ?? 0) > 0
+    const approved = row.is_winner || row.is_chain_held
     if (approved) bucket.approved += 1
     else bucket.denied += 1
     if (row.is_winner) bucket.fulfilled += 1
