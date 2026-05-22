@@ -69,6 +69,7 @@ interface Props {
   leaderboard: LeaderboardEntry[]
   leaderboardWindowDays: number
   totalSubmittedLeads: number
+  totalDeliveredLeads: number
   rejectionBreakdown: RejectionEntry[]
   scoreTotals: { passed: number; failed: number; sampleSize?: number }
   filter: FilterMode
@@ -170,6 +171,7 @@ export function FulfillmentMobile({
   leaderboard,
   leaderboardWindowDays,
   totalSubmittedLeads,
+  totalDeliveredLeads,
   rejectionBreakdown,
   scoreTotals,
   filter,
@@ -200,18 +202,17 @@ export function FulfillmentMobile({
 
   // At-a-glance stat strip values (always from full data, not filtered)
   const stats = useMemo(() => {
-    const fulfilledLeads = allConsensus.filter((c) => c.is_winner).length
     // Count unique miners that have shown up in any consensus row in the
     // current snapshot. This reflects "miners actively contributing".
     const miners = new Set(
       allConsensus.map((c) => c.miner_hotkey).filter((h): h is string => Boolean(h)),
     ).size
     return {
-      fulfilledLeads,
+      fulfilledLeads: totalDeliveredLeads,
       miners,
       submittedLeads: totalSubmittedLeads,
     }
-  }, [allConsensus, totalSubmittedLeads])
+  }, [allConsensus, totalDeliveredLeads, totalSubmittedLeads])
 
   // Filtered + sorted request list
   const filteredRequests = useMemo(() => {
@@ -347,7 +348,7 @@ export function FulfillmentMobile({
                         {entry.wins}
                       </span>
                       <span className="text-[9px] text-slate-500 uppercase tracking-[0.08em]">
-                        leads
+                        fulfilled
                       </span>
                     </div>
                   </button>

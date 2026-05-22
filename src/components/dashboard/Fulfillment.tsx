@@ -103,6 +103,7 @@ interface FulfillmentData {
   stats: {
     activeRequestCount: number
     totalSubmittedLeads?: number
+    totalDeliveredLeads?: number
     totalConsensus: number
     totalWinners: number
     fulfilledCount: number
@@ -658,15 +659,13 @@ export function Fulfillment({ onSync }: { onSync?: () => void } = {}) {
 
   const historyStats = useMemo(() => {
     if (!data) return { submissions: 0, fulfilled: 0, miners: 0 }
-    let fulfilled = 0
     const miners = new Set<string>()
     for (const c of data.allConsensus) {
-      if (c.is_winner) fulfilled += 1
       miners.add(c.miner_hotkey)
     }
     return {
       submissions: data.stats.totalSubmittedLeads ?? data.allConsensus.length,
-      fulfilled,
+      fulfilled: data.stats.totalDeliveredLeads ?? data.stats.totalWinners,
       miners: miners.size,
     }
   }, [data])
@@ -725,6 +724,7 @@ export function Fulfillment({ onSync }: { onSync?: () => void } = {}) {
           leaderboard={data.leaderboard}
           leaderboardWindowDays={data.stats.leaderboardWindowDays ?? 30}
           totalSubmittedLeads={data.stats.totalSubmittedLeads ?? data.allConsensus.length}
+          totalDeliveredLeads={data.stats.totalDeliveredLeads ?? data.stats.totalWinners}
           rejectionBreakdown={data.rejectionBreakdown}
           scoreTotals={data.scoreTotals}
           filter={filter}
@@ -1260,7 +1260,7 @@ function LeaderboardSummary({
               {truncateHotkey(entry.hotkey)}
             </code>
             <div className="mt-1 text-xs font-semibold text-gold tabular-nums">
-              {entry.wins} leads
+              {entry.wins} fulfilled
             </div>
           </button>
         ))}
