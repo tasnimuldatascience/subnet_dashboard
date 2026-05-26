@@ -24,4 +24,4 @@ jobs:
             pm2 save
             echo "Deploy complete: $(date)"
           script_stop: true
-          command_timeout: 5m
+          command_timeout: 10m
