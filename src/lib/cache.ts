@@ -283,6 +283,14 @@ async function fetchModelCompetitionData(): Promise<unknown> {
     .limit(1)
     .single()
 
+  // Fetch reference model baseline score (daily benchmark on today's ICP set)
+  const { data: baselineData } = await supabase
+    .from('qualification_baselines')
+    .select('baseline_score, set_id, scored_at')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .single()
+
   // Fetch evaluating models from qualification_models (not always in leaderboard)
   const { data: evaluatingFromModels } = await supabase
     .from('qualification_models')
@@ -590,6 +598,8 @@ async function fetchModelCompetitionData(): Promise<unknown> {
       totalChampions: championsList.length,
       uniqueChampionMiners,
       currentChampionScore: champModel?.score || 0,
+      baselineScore: baselineData?.baseline_score || 0,
+      baselineSetId: baselineData?.set_id || null,
     },
     fetchedAt: new Date().toISOString(),
   }

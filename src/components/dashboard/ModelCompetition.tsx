@@ -152,6 +152,8 @@ interface Stats {
   totalChampions: number
   uniqueChampionMiners: number
   currentChampionScore: number
+  baselineScore: number
+  baselineSetId: number | null
 }
 
 interface ModelCompetitionData {
@@ -1269,11 +1271,13 @@ export function ModelCompetition({ onSync }: { onSync?: () => void } = {}) {
       ? currentChampion.score - previousChampionScore
       : null
 
-  // Threshold: a new model must beat the champion by CHALLENGE_THRESHOLD_PCT
-  // to take the crown. We surface the exact target so miners know the number.
+  // Threshold: a new model must score 10+ absolute points above the champion
+  // to dethrone (CHAMPION_DETHRONING_THRESHOLD_POINTS in gateway config).
+  const DETHRONE_THRESHOLD = 10
+  const baselineScore = data?.stats.baselineScore || 0
   const beatToWin = currentChampion
-    ? currentChampion.score * (1 + CHALLENGE_THRESHOLD_PCT / 100)
-    : 10 * (1 + CHALLENGE_THRESHOLD_PCT / 100) // No champion → baseline 10
+    ? currentChampion.score + DETHRONE_THRESHOLD
+    : Math.max(20, baselineScore + DETHRONE_THRESHOLD) // No champion → baseline + 10 or minimum 20
 
   // Today's challengers, excluding the current champion row.
   const challengers = useMemo(
@@ -1346,10 +1350,11 @@ export function ModelCompetition({ onSync }: { onSync?: () => void } = {}) {
           champion={currentChampion}
           championDelta={championDelta}
           beatToWin={beatToWin}
+          baselineScore={baselineScore}
           onOpen={handleChampionOpen}
         />
       ) : (
-        <VacantThrone beatToWin={beatToWin} />
+        <VacantThrone beatToWin={beatToWin} baselineScore={baselineScore} />
       )}
 
       {/* ════════════════════════════════════════════════════════════
@@ -1477,11 +1482,13 @@ function ChampionHero({
   champion,
   championDelta,
   beatToWin,
+  baselineScore,
   onOpen,
 }: {
   champion: ChampionHistoryEntry
   championDelta: number | null
   beatToWin: number
+  baselineScore: number
   onOpen: () => void
 }) {
   useTick(1000) // re-render for live reign counter
@@ -1615,14 +1622,29 @@ function ChampionHero({
             )}
           </div>
 
-          {/* Beat to win */}
-          <div className="ml-auto flex items-center gap-2 text-[11px]">
-            <span className="text-[10px] text-slate-500 uppercase tracking-[0.1em] font-medium">
-              Beat to win
-            </span>
-            <span className="text-base font-mono font-semibold text-gold-bright tabular-nums">
-              {beatToWin.toFixed(2)}
-            </span>
+          {/* Baseline + Beat to win */}
+          <div className="ml-auto flex items-center gap-3 sm:gap-4 text-[11px]">
+            {baselineScore > 0 && (
+              <>
+                <div className="flex flex-col items-end">
+                  <span className="text-[10px] text-slate-500 uppercase tracking-[0.1em] font-medium">
+                    Baseline
+                  </span>
+                  <span className="text-sm font-mono font-semibold text-slate-300 tabular-nums">
+                    {baselineScore.toFixed(2)}
+                  </span>
+                </div>
+                <div className="w-px h-8 bg-slate-700" />
+              </>
+            )}
+            <div className="flex flex-col items-end">
+              <span className="text-[10px] text-slate-500 uppercase tracking-[0.1em] font-medium">
+                Beat to win
+              </span>
+              <span className="text-base font-mono font-semibold text-gold-bright tabular-nums">
+                {beatToWin.toFixed(2)}
+              </span>
+            </div>
           </div>
 
           {/* Click-to-open affordance. The whole hero is the trigger; this
@@ -1641,7 +1663,7 @@ function ChampionHero({
 /* ============================================================
  * VacantThrone. Shown when championHistory has no active champion.
  * ============================================================ */
-function VacantThrone({ beatToWin }: { beatToWin: number }) {
+function VacantThrone({ beatToWin, baselineScore }: { beatToWin: number; baselineScore: number }) {
   return (
     <section
       aria-label="No current champion"
@@ -1649,9 +1671,16 @@ function VacantThrone({ beatToWin }: { beatToWin: number }) {
     >
       <h3 className="text-sm font-semibold text-slate-100">The throne is empty</h3>
       <p className="text-[12px] text-slate-400 mt-1.5 max-w-md mx-auto">
-        No active champion right now. The first model to score{' '}
+        No active champion right now.
+        {baselineScore > 0 && (
+          <>
+            {' '}Today&apos;s baseline score is{' '}
+            <span className="text-slate-300 tabular-nums font-mono">{baselineScore.toFixed(2)}</span>.
+          </>
+        )}
+        {' '}Score{' '}
         <span className="text-gold tabular-nums font-mono">{beatToWin.toFixed(2)}</span>{' '}
-        or higher takes the crown.
+        or higher to claim the crown.
       </p>
     </section>
   )
@@ -2144,8 +2173,8 @@ function HowToChallenge({
           title="Beat the threshold"
           description={
             currentChampionScore !== null
-              ? `Current champion scores ${currentChampionScore.toFixed(2)} / 100. Beat it by ${CHALLENGE_THRESHOLD_PCT}% to take the crown.`
-              : 'The throne is empty. The first model to clear the floor takes the crown.'
+              ? `Current champion scores ${currentChampionScore.toFixed(2)} / 100. Score ${(currentChampionScore + 10).toFixed(2)}+ to take the crown (10 points above).`
+              : 'The throne is empty. Score 20.00+ to claim the crown.'
           }
         />
       </div>
