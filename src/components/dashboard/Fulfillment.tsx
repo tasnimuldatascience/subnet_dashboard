@@ -446,9 +446,16 @@ export function Fulfillment({ onSync }: { onSync?: () => void } = {}) {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  const filteredRequests = useMemo<CosmosRequest[]>(() => {
+  const graphableActiveRequests = useMemo(() => {
     if (!data) return []
-    return data.activeRequests
+    const requestIdsWithVisibleLeads = new Set(data.allConsensus.map((c) => c.request_id))
+    return data.activeRequests.filter(
+      (r) => PENDING_STATUSES.includes(r.status) || requestIdsWithVisibleLeads.has(r.request_id)
+    )
+  }, [data])
+
+  const filteredRequests = useMemo<CosmosRequest[]>(() => {
+    return graphableActiveRequests
       .filter((r) => {
         if (filter === 'all') return true
         if (filter === 'pending') return PENDING_STATUSES.includes(r.status)
@@ -462,7 +469,7 @@ export function Fulfillment({ onSync }: { onSync?: () => void } = {}) {
         created_at: r.created_at,
         icp_details: r.icp_details,
       }))
-  }, [data, filter])
+  }, [graphableActiveRequests, filter])
 
   const filteredLeads = useMemo<CosmosConsensusLead[]>(() => {
     if (!data) return []
@@ -634,13 +641,12 @@ export function Fulfillment({ onSync }: { onSync?: () => void } = {}) {
   }, [focusedMinerHotkey, focusedMinerScores, minerLoading, data])
 
   const counts = useMemo(() => {
-    if (!data) return { all: 0, pending: 0, completed: 0 }
     return {
-      all: data.activeRequests.length,
-      pending: data.activeRequests.filter((r) => PENDING_STATUSES.includes(r.status)).length,
-      completed: data.activeRequests.filter((r) => r.status === 'fulfilled').length,
+      all: graphableActiveRequests.length,
+      pending: graphableActiveRequests.filter((r) => PENDING_STATUSES.includes(r.status)).length,
+      completed: graphableActiveRequests.filter((r) => r.status === 'fulfilled').length,
     }
-  }, [data])
+  }, [graphableActiveRequests])
 
   const emphasizedNodeIds = useMemo(() => {
     if (!focusedMinerHotkey) return null

@@ -81,15 +81,6 @@ const COLOR_MINER_WINNING = '#b89868'                 // muted gold, miner with 
 
 const PENDING_STATUSES = new Set(['pending', 'open', 'continued_open', 'commit_closed', 'scoring'])
 
-function asText(v: unknown): string {
-  if (typeof v === 'string') return v
-  if (Array.isArray(v)) {
-    return v.filter((x) => typeof x === 'string' && x.length > 0).join(', ')
-  }
-  if (v == null) return ''
-  return String(v)
-}
-
 /**
  * Smart truncation for industry-like labels. Handles strings, arrays, and
  * arbitrary length. Keeps the first `maxItems` items, then appends "+N more",
@@ -145,13 +136,17 @@ function computeLayout(requests: CosmosRequest[], leads: CosmosConsensusLead[]):
   const nodeById = new Map<string, GraphNode>()
   const edges: GraphEdge[] = []
   const clusters: IndustryCluster[] = []
+  const requestIdsWithVisibleLeads = new Set(leads.map((l) => l.request_id))
 
   // === 1. Split requests into pending + completed (or other) ===
   const pendingRequests: CosmosRequest[] = []
   const completedRequests: CosmosRequest[] = []
   for (const r of requests) {
     if (PENDING_STATUSES.has(r.status)) pendingRequests.push(r)
-    else completedRequests.push(r)
+    // A completed request with no consensus rows has no relationship to draw.
+    // Keeping it as a white node makes it look fulfilled in this graph even
+    // though the visualization has no evidence to connect it to miners/leads.
+    else if (requestIdsWithVisibleLeads.has(r.request_id)) completedRequests.push(r)
   }
 
   // === 2. Build industry clusters for completed requests ===
@@ -565,7 +560,12 @@ export function FulfillmentCosmos({
   }, [requests, leads])
 
   useEffect(() => {
-    if (!layout || layout.nodes.length === 0) return
+    if (!layout) return
+    if (layout.nodes.length === 0) {
+      setViewFitted(true)
+      setComputing(false)
+      return
+    }
     if (size.w <= 0 || size.h <= 0) return
     let minX = Infinity,
       maxX = -Infinity,
@@ -1012,6 +1012,19 @@ export function FulfillmentCosmos({
               <div className="text-[10px] uppercase tracking-[0.16em] text-[color:var(--text-tertiary)] font-medium">
                 Mapping cosmos
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!computing && layout && layout.nodes.length === 0 && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="rounded-lg border border-[var(--surface-border)] bg-[rgba(16,16,19,0.72)] px-4 py-3 text-center">
+            <div className="text-xs font-medium text-[color:var(--text-secondary)]">
+              No visible lead relationships for this view.
+            </div>
+            <div className="mt-1 text-[10px] text-[color:var(--text-tertiary)]">
+              Completed requests are shown once consensus rows are available.
             </div>
           </div>
         </div>
