@@ -226,6 +226,13 @@ const MODEL_COMPETITION_REFRESH_INTERVAL = 60 * 1000
 const MODEL_COMPETITION_V2_LIVE_AT =
   process.env.MODEL_COMPETITION_V2_LIVE_AT || '2026-05-14T04:00:00Z'
 const MODEL_COMPETITION_SUBMISSIONS_LIVE_AT = '2026-05-14T00:00:00Z'
+const BASELINE_MODEL_DIRECTORY = 'miner_models/qualification_model'
+const BASELINE_MODEL_SOURCE_URL =
+  `https://github.com/leadpoet/leadpoet/tree/main/${BASELINE_MODEL_DIRECTORY}`
+const BASELINE_MODEL_TREE_API_URL =
+  'https://api.github.com/repos/leadpoet/leadpoet/git/trees/main?recursive=1'
+const BASELINE_MODEL_RAW_BASE_URL =
+  'https://raw.githubusercontent.com/leadpoet/leadpoet/main'
 
 // Get today's 12 AM UTC timestamp
 function getTodayMidnightUTC(): Date {
@@ -239,6 +246,84 @@ function isToday(dateStr: string | null): boolean {
   const date = new Date(dateStr)
   const midnightUTC = getTodayMidnightUTC()
   return date.getTime() >= midnightUTC.getTime()
+}
+
+function normalizeCodeContent(value: unknown, context: string): Record<string, string> | null {
+  if (!value) return null
+
+  try {
+    let parsed: unknown
+    if (typeof value === 'string') {
+      try {
+        parsed = JSON.parse(value)
+      } catch {
+        return value.trim() ? { 'baseline_model.py': value } : null
+      }
+    } else {
+      parsed = value
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+
+    const files: Record<string, string> = {}
+    for (const [filename, content] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof content === 'string') files[filename] = content
+    }
+    return Object.keys(files).length > 0 ? files : null
+  } catch {
+    console.error(`[Cache] Failed to parse code_content for ${context}`)
+    return null
+  }
+}
+
+async function fetchOpenSourceBaselineCode(): Promise<Record<string, string> | null> {
+  try {
+    const treeRes = await fetch(BASELINE_MODEL_TREE_API_URL, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'leadpoet-dashboard',
+      },
+      cache: 'no-store',
+    })
+    if (!treeRes.ok) {
+      console.error(`[Cache] Failed to fetch baseline model tree: ${treeRes.status}`)
+      return null
+    }
+
+    const payload = await treeRes.json() as {
+      tree?: Array<{ path?: string; type?: string }>
+    }
+    const paths = (payload.tree ?? [])
+      .filter((entry) =>
+        entry.type === 'blob' &&
+        typeof entry.path === 'string' &&
+        entry.path.startsWith(`${BASELINE_MODEL_DIRECTORY}/`)
+      )
+      .map((entry) => entry.path as string)
+      .sort((a, b) => a.localeCompare(b))
+
+    if (paths.length === 0) {
+      console.error('[Cache] Baseline model directory contained no files')
+      return null
+    }
+
+    const files: Record<string, string> = {}
+    await Promise.all(paths.map(async (path) => {
+      const rawRes = await fetch(`${BASELINE_MODEL_RAW_BASE_URL}/${path}`, {
+        headers: { Accept: 'text/plain' },
+        cache: 'no-store',
+      })
+      if (!rawRes.ok) {
+        throw new Error(`Failed to fetch ${path}: ${rawRes.status}`)
+      }
+
+      files[path] = await rawRes.text()
+    }))
+
+    return Object.keys(files).length > 0 ? files : null
+  } catch (error) {
+    console.error('[Cache] Failed to fetch baseline model source:', error)
+    return null
+  }
 }
 
 // Fetch model competition data from Supabase
@@ -286,10 +371,50 @@ async function fetchModelCompetitionData(): Promise<unknown> {
   // Fetch reference model baseline score (daily benchmark on today's ICP set)
   const { data: baselineData } = await supabase
     .from('qualification_baselines')
-    .select('baseline_score, set_id, scored_at')
+    .select('*')
     .order('created_at', { ascending: false })
     .limit(1)
     .single()
+
+  const baselineRow = (baselineData ?? null) as Record<string, unknown> | null
+  const baselineCodeSource =
+    baselineRow?.code_content ??
+    baselineRow?.model_code ??
+    baselineRow?.reference_model_code ??
+    baselineRow?.baseline_code ??
+    baselineRow?.source_code ??
+    null
+  const baselineCodeContent =
+    (await fetchOpenSourceBaselineCode()) ??
+    normalizeCodeContent(baselineCodeSource, 'baseline model')
+  const baselineScore = Number(baselineRow?.baseline_score ?? 0)
+  const baselineSetIdRaw = baselineRow?.set_id
+  const baselineSetId =
+    typeof baselineSetIdRaw === 'number'
+      ? baselineSetIdRaw
+      : typeof baselineSetIdRaw === 'string'
+        ? Number(baselineSetIdRaw)
+        : null
+  const baselineModel = baselineRow
+    ? {
+        id: String(baselineRow.id ?? baselineRow.baseline_id ?? `baseline:${baselineRow.set_id ?? 'latest'}`),
+        modelName:
+          typeof baselineRow.model_name === 'string' && baselineRow.model_name.trim()
+            ? baselineRow.model_name
+            : 'Reference implementation',
+        score: baselineScore,
+        setId: Number.isFinite(baselineSetId) ? baselineSetId : null,
+        scoredAt:
+          typeof baselineRow.scored_at === 'string'
+            ? baselineRow.scored_at
+            : typeof baselineRow.created_at === 'string'
+              ? baselineRow.created_at
+              : null,
+        codeContent: baselineCodeContent,
+        canShowCode: Boolean(baselineCodeContent),
+        sourceUrl: BASELINE_MODEL_SOURCE_URL,
+      }
+    : null
 
   // Fetch evaluating models from qualification_models (not always in leaderboard)
   const { data: evaluatingFromModels } = await supabase
@@ -598,9 +723,10 @@ async function fetchModelCompetitionData(): Promise<unknown> {
       totalChampions: championsList.length,
       uniqueChampionMiners,
       currentChampionScore: champModel?.score || 0,
-      baselineScore: baselineData?.baseline_score || 0,
-      baselineSetId: baselineData?.set_id || null,
+      baselineScore,
+      baselineSetId: Number.isFinite(baselineSetId) ? baselineSetId : null,
     },
+    baselineModel,
     fetchedAt: new Date().toISOString(),
   }
 }

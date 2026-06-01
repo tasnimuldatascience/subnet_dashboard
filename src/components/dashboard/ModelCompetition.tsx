@@ -156,10 +156,22 @@ interface Stats {
   baselineSetId: number | null
 }
 
+interface BaselineModel {
+  id: string
+  modelName: string
+  score: number
+  setId: number | null
+  scoredAt: string | null
+  codeContent: Record<string, string> | null
+  canShowCode: boolean
+  sourceUrl?: string
+}
+
 interface ModelCompetitionData {
   championHistory: ChampionHistoryEntry[]
   recentSubmissions: Submission[]
   pastSubmissions?: Submission[]
+  baselineModel?: BaselineModel | null
   stats: Stats
   fetchedAt: string
 }
@@ -740,6 +752,7 @@ function CodeViewer({
             key={filename}
             type="button"
             onClick={() => setActiveFile(filename)}
+            title={filename}
             className={cn(
               'h-7 text-[11px] font-mono px-2.5 rounded transition-colors',
               activeFile === filename
@@ -747,7 +760,7 @@ function CodeViewer({
                 : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/40'
             )}
           >
-            {filename}
+            {getCodeFileLabel(filename)}
           </button>
         ))}
       </div>
@@ -1201,6 +1214,110 @@ function SubmissionDetailDialog({
   )
 }
 
+function BaselineModelDialog({
+  baseline,
+  isOpen,
+  onClose,
+}: {
+  baseline: BaselineModel | null
+  isOpen: boolean
+  onClose: () => void
+}) {
+  const [activeFile, setActiveFile] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!baseline?.codeContent || !isOpen) {
+      setActiveFile(null)
+      return
+    }
+    setActiveFile(getDefaultCodeFile(baseline.codeContent))
+  }, [baseline, isOpen])
+
+  if (!baseline) return null
+
+  const hasCode = Boolean(baseline.codeContent && Object.keys(baseline.codeContent).length > 0)
+  const displayName = getBaselineModelDisplayName(baseline.modelName)
+
+  return (
+    <Dialog open={isOpen} onOpenChange={onClose}>
+      <DialogContent
+        aria-describedby={undefined}
+        className={cn(
+          'bg-slate-950 border-slate-800 text-slate-100 shadow-2xl shadow-black/60',
+          'overflow-hidden flex flex-col p-0 outline-none gap-0',
+          'inset-x-0 bottom-0 w-full max-w-full max-h-[92vh] rounded-t-2xl border-t border-x',
+          'data-[state=open]:slide-in-from-bottom data-[state=closed]:slide-out-to-bottom',
+          'sm:inset-x-auto sm:bottom-auto sm:top-[50%] sm:left-[50%]',
+          'sm:translate-x-[-50%] sm:translate-y-[-50%]',
+          'sm:max-w-4xl sm:w-[calc(100%-2rem)] sm:max-h-[88vh] sm:rounded-xl sm:border'
+        )}
+      >
+        <DialogHeader className="px-5 py-4 border-b border-slate-800/80 space-y-2 text-left">
+          <DialogTitle className="flex items-center gap-2 pr-8">
+            <span className="text-sm font-semibold text-slate-100">{displayName}</span>
+            <span className="ml-auto inline-flex items-center gap-1.5 text-[10px] rounded px-1.5 py-0.5 border bg-slate-800/50 text-slate-300 border-slate-700/60">
+              Baseline
+            </span>
+          </DialogTitle>
+          <div className="flex items-baseline justify-between gap-4 flex-wrap pt-1">
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-400 font-mono">
+              {baseline.scoredAt && (
+                <span>
+                  <span className="text-slate-500">Scored</span>{' '}
+                  <span className="text-slate-200">{formatDate(baseline.scoredAt)}</span>
+                </span>
+              )}
+            </div>
+            <div className="text-right">
+              <span className="text-3xl font-bold text-slate-100 tabular-nums">
+                {baseline.score.toFixed(2)}
+              </span>
+              <span className="text-slate-500 ml-1 text-sm">/ 100</span>
+            </div>
+          </div>
+        </DialogHeader>
+
+        <div className="border-b border-slate-800/70 px-5 py-3">
+          <p className="text-xs text-slate-400">
+            Runs against each day&apos;s benchmark to establish the baseline score miners need to beat.
+          </p>
+          {baseline.sourceUrl && (
+            <a
+              href={baseline.sourceUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-gold hover:text-gold-bright transition-colors"
+            >
+              Open on GitHub
+              <ChevronRight className="h-3 w-3" aria-hidden />
+            </a>
+          )}
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          {hasCode && baseline.codeContent && activeFile ? (
+            <CodeViewer
+              codeContent={baseline.codeContent}
+              loadingCode={false}
+              codeError={null}
+              activeFile={activeFile}
+              setActiveFile={setActiveFile}
+            />
+          ) : (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <Code className="h-10 w-10 text-slate-600 mb-3" aria-hidden />
+              <p className="text-sm font-medium text-slate-100">Baseline code not available</p>
+              <p className="text-xs text-slate-500 mt-1">
+                The baseline score is loaded, but the open-source model could not be fetched.
+              </p>
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 export function ModelCompetition({ onSync }: { onSync?: () => void } = {}) {
   const [data, setData] = useState<ModelCompetitionData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -1209,6 +1326,7 @@ export function ModelCompetition({ onSync }: { onSync?: () => void } = {}) {
   const [isDetailOpen, setIsDetailOpen] = useState(false)
   const [selectedSubmission, setSelectedSubmission] = useState<Submission | null>(null)
   const [isSubmissionDetailOpen, setIsSubmissionDetailOpen] = useState(false)
+  const [isBaselineOpen, setIsBaselineOpen] = useState(false)
 
   // Fetch data + bubble sync events to the page-level indicator.
   const fetchData = useCallback(async () => {
@@ -1275,6 +1393,20 @@ export function ModelCompetition({ onSync }: { onSync?: () => void } = {}) {
   // to dethrone (CHAMPION_DETHRONING_THRESHOLD_POINTS in gateway config).
   const DETHRONE_THRESHOLD = 10
   const baselineScore = data?.stats.baselineScore || 0
+  const baselineModel = data?.baselineModel ?? (
+    baselineScore > 0
+      ? {
+          id: 'baseline',
+          modelName: 'Reference implementation',
+          score: baselineScore,
+          setId: data?.stats.baselineSetId ?? null,
+          scoredAt: null,
+          codeContent: null,
+          canShowCode: false,
+          sourceUrl: 'https://github.com/leadpoet/leadpoet/tree/main/miner_models/qualification_model',
+        }
+      : null
+  )
   const beatToWin = currentChampion
     ? currentChampion.score + DETHRONE_THRESHOLD
     : Math.max(20, baselineScore + DETHRONE_THRESHOLD) // No champion → baseline + 10 or minimum 20
@@ -1371,6 +1503,13 @@ export function ModelCompetition({ onSync }: { onSync?: () => void } = {}) {
         />
       )}
 
+      {baselineModel && (
+        <BaselineModelCard
+          baseline={baselineModel}
+          onOpen={() => setIsBaselineOpen(true)}
+        />
+      )}
+
       {/* ════════════════════════════════════════════════════════════
           Challengers. The board's own header shows miner count and the
           per-row "Evaluating" badge communicates live activity, so the
@@ -1443,6 +1582,11 @@ export function ModelCompetition({ onSync }: { onSync?: () => void } = {}) {
           setIsSubmissionDetailOpen(false)
           setSelectedSubmission(null)
         }}
+      />
+      <BaselineModelDialog
+        baseline={baselineModel}
+        isOpen={isBaselineOpen}
+        onClose={() => setIsBaselineOpen(false)}
       />
     </div>
   )
@@ -1674,7 +1818,7 @@ function VacantThrone({ beatToWin, baselineScore }: { beatToWin: number; baselin
         No active champion right now.
         {baselineScore > 0 && (
           <>
-            {' '}Today&apos;s baseline score is{' '}
+            {' '}The current baseline score is{' '}
             <span className="text-slate-300 tabular-nums font-mono">{baselineScore.toFixed(2)}</span>.
           </>
         )}
@@ -1684,6 +1828,101 @@ function VacantThrone({ beatToWin, baselineScore }: { beatToWin: number; baselin
       </p>
     </section>
   )
+}
+
+function BaselineModelCard({
+  baseline,
+  onOpen,
+}: {
+  baseline: BaselineModel
+  onOpen: () => void
+}) {
+  const hasCode = Boolean(
+    baseline.canShowCode &&
+    baseline.codeContent &&
+    Object.keys(baseline.codeContent).length > 0
+  )
+  const displayName = getBaselineModelDisplayName(baseline.modelName)
+
+  return (
+    <section
+      role="button"
+      tabIndex={0}
+      aria-label="Baseline model. Press Enter to view code."
+      onClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onOpen()
+        }
+      }}
+      className={cn(
+        'group rounded-xl border border-slate-800/70 bg-slate-950/50 overflow-hidden cursor-pointer transition-all',
+        'hover:border-[rgba(201,169,110,0.35)] hover:bg-slate-900/40',
+        'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-soft focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950'
+      )}
+    >
+      <div className="px-5 py-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div className="flex items-start gap-3 min-w-0">
+          <div
+            className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-700/70 bg-slate-900/70 transition-colors group-hover:border-gold/35"
+            aria-hidden
+          >
+            <Code className="h-4 w-4 text-slate-300" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                Baseline model
+              </span>
+            </div>
+            <h3 className="mt-1 text-sm font-medium text-slate-100 truncate">
+              {displayName}
+            </h3>
+            <p className="mt-1 max-w-2xl text-[12px] leading-relaxed text-slate-400">
+              Runs against each day&apos;s benchmark to establish the baseline score miners need to beat.
+            </p>
+          </div>
+        </div>
+
+        <div className="md:ml-auto md:shrink-0">
+          <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-700/70 bg-slate-900/70 px-3 py-2 text-[11px] font-medium text-slate-200 transition-colors group-hover:border-gold/40 group-hover:bg-slate-800/70 group-hover:text-gold">
+            {hasCode ? (
+              <>
+                <Eye className="h-3.5 w-3.5" aria-hidden />
+                View code
+              </>
+            ) : (
+              <>
+                <Code className="h-3.5 w-3.5" aria-hidden />
+                View baseline
+              </>
+            )}
+            <ChevronRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" aria-hidden />
+          </span>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function getBaselineModelDisplayName(modelName: string): string {
+  return modelName.trim().toLowerCase() === 'reference baseline model'
+    ? 'Reference implementation'
+    : modelName.trim().toLowerCase() === 'baseline model'
+      ? 'Reference implementation'
+    : modelName
+}
+
+function getDefaultCodeFile(codeContent: Record<string, string>): string | null {
+  const files = Object.keys(codeContent)
+  return files.find((file) => file.split('/').pop()?.toLowerCase() === 'readme.md')
+    ?? files[0]
+    ?? null
+}
+
+function getCodeFileLabel(filename: string): string {
+  return filename.split('/').pop() || filename
 }
 
 /* ============================================================
