@@ -363,7 +363,7 @@ export function Fulfillment({ onSync }: { onSync?: () => void } = {}) {
   const [data, setData] = useState<FulfillmentData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [filter, setFilter] = useState<FilterMode>('all')
+  const [filter, setFilter] = useState<FilterMode>('completed')
   const [searchQuery, setSearchQuery] = useState('')
   const [dialogRequest, setDialogRequest] = useState<ActiveRequest | null>(null)
   const [inspectedMiner, setInspectedMiner] = useState<string | null>(null)
