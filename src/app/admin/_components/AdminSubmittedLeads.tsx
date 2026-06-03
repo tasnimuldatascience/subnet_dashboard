@@ -489,6 +489,7 @@ export function AdminSubmittedLeads({
     if (!newest) return
     const days = range === '24h' ? 1 : range === '7d' ? 7 : 30
     const end = new Date(`${newest}T00:00:00.000Z`)
+    if (Number.isNaN(end.getTime())) return
     const start = new Date(end)
     start.setUTCDate(end.getUTCDate() - (days - 1))
     setDateFrom(start.toISOString().slice(0, 10))

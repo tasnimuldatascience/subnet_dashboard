@@ -249,19 +249,26 @@ async function fetchConsensusRows(
 ): Promise<{ data: ConsensusRow[]; error: { message: string } | null }> {
   const all: ConsensusRow[] = []
   for (const group of chunks(submissionIds, 100)) {
-    const { data, error } = await supabase
-      .from('fulfillment_score_consensus')
-      .select(
-        'request_id, submission_id, lead_id, miner_hotkey, consensus_final_score, ' +
-          'consensus_intent_signal_final, consensus_rep_score, consensus_icp_fit, ' +
-          'consensus_tier2_passed, is_winner, is_chain_held, intent_details, computed_at',
-      )
-      .in('submission_id', group)
+    let offset = 0
+    while (true) {
+      const { data, error } = await supabase
+        .from('fulfillment_score_consensus')
+        .select(
+          'request_id, submission_id, lead_id, miner_hotkey, consensus_final_score, ' +
+            'consensus_intent_signal_final, consensus_rep_score, consensus_icp_fit, ' +
+            'consensus_tier2_passed, is_winner, is_chain_held, intent_details, computed_at',
+        )
+        .in('submission_id', group)
+        .range(offset, offset + CONSENSUS_BATCH_SIZE - 1)
 
-    if (error) {
-      return { data: all, error: { message: error.message || 'consensus batch failed' } }
+      if (error) {
+        return { data: all, error: { message: error.message || 'consensus batch failed' } }
+      }
+      const batch = (data ?? []) as unknown as ConsensusRow[]
+      all.push(...batch)
+      if (batch.length < CONSENSUS_BATCH_SIZE) break
+      offset += CONSENSUS_BATCH_SIZE
     }
-    all.push(...((data ?? []) as unknown as ConsensusRow[]))
   }
   return { data: all, error: null }
 }

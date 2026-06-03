@@ -189,6 +189,8 @@ ${EMPLOYEE_COUNT_BUCKETS.map((v) => `  - ${v}`).join('\n')}
   - RIGHT: "The contact is a full-time employee of the company with a permanent role, not a contractor, consultant, freelancer, or agency partner."
   - WRONG: "Uses Salesforce"
   - RIGHT: "The company uses Salesforce as its primary CRM platform."
+- Each attribute must describe ONE concrete, verifiable criterion. Do NOT combine multiple criteria with "OR" into a single attribute — split them into separate attributes instead.
+- Every attribute must be objectively verifiable from publicly available information. Do NOT use speculative language like "could plausibly transition into", "may be exploring", "has potential to adopt", or "is in a sector adjacent to". If the operator says a company is "exploring X", require observable evidence of active exploration (e.g., public announcements, partnerships, pilot programs, job postings) — not mere sector adjacency.
 - Only include attributes explicitly stated by the operator; otherwise return {"company":[],"contact":[]}.
 - "product_service" describes what the client sells, not just the buyer pain.
 - "num_leads" defaults to 10 if unspecified.
