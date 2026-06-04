@@ -2732,25 +2732,41 @@ function IcpPanel({ icp }: { icp: IcpDetails | null }) {
       </div>
       <FieldGroup title="Intent signals requested">
         <ul className="space-y-1.5 text-sm">
-          {icpSignals(icp).map((s, i) => (
-            <li
-              key={i}
-              className="flex gap-2 items-start"
-              style={{ color: 'var(--text-primary)' }}
-            >
-              <span
-                className="inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] flex-shrink-0 mt-0.5 border"
-                style={{
-                  borderColor: 'var(--surface-border-strong)',
-                  background: 'var(--surface-elevated)',
-                  color: 'var(--text-secondary)',
-                }}
+          {(icp.intent_signals ?? []).map((entry, i) => {
+            const text = typeof entry === 'string' ? entry : entry?.text ?? ''
+            if (!text) return null
+            const cap = typeof entry === 'object' && entry?.recency_cap_days != null
+              ? entry.recency_cap_days
+              : null
+            const required = typeof entry === 'object' && entry?.required === true
+            return (
+              <li
+                key={i}
+                className="flex gap-2 items-start"
+                style={{ color: 'var(--text-primary)' }}
               >
-                {i + 1}
-              </span>
-              <span>{s}</span>
-            </li>
-          ))}
+                <span
+                  className="inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] flex-shrink-0 mt-0.5 border"
+                  style={{
+                    borderColor: 'var(--surface-border-strong)',
+                    background: 'var(--surface-elevated)',
+                    color: 'var(--text-secondary)',
+                  }}
+                >
+                  {i + 1}
+                </span>
+                <span className="flex flex-col gap-0.5">
+                  <span>{text}</span>
+                  <span className="flex gap-2 text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+                    {cap != null && <span>{cap}d max age</span>}
+                    {required && (
+                      <span className="text-gold uppercase tracking-wider font-medium">Required</span>
+                    )}
+                  </span>
+                </span>
+              </li>
+            )
+          })}
         </ul>
       </FieldGroup>
       <FieldGroup title="Required attributes">
