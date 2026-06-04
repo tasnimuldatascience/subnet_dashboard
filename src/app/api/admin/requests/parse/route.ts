@@ -189,13 +189,50 @@ ${EMPLOYEE_COUNT_BUCKETS.map((v) => `  - ${v}`).join('\n')}
          "this year" / "since YYYY"                      -> compute from text
          "this quarter"                                  -> 105
          "recently"                                      -> 180
-      2. TYPE DEFAULT (only when no explicit window):
-         active-hiring claims (hiring/recruiting/open roles)        -> 200
-         event claims (funding, acquisition, launch, partnership,
-                       expansion, M&A, IPO, certification)           -> 400
-         timeless attributes (tech stack, headcount, geography,
-                              industry, role title)                  -> null
-      3. Bias toward null when claim is a STATE not an EVENT. State = no implicit recency. Event = always has one.
+      2. TYPE DEFAULT (only when no explicit window).  Apply these as
+         HARD OVERRIDES — if any verb/noun trigger below matches the
+         signal text, the corresponding cap WINS over rule 3 state-bias.
+
+         a) ACTIVE-HIRING -> 200.  Triggers (case-insensitive, any form):
+              hire | hired | hiring | recruit | recruiting | recruited
+              | "job posting" | "job listing" | "open role"
+              | "growth in <team>" | "adding to the team"
+              | "new hire" | "team expansion"
+            Examples:
+              "LinkedIn hire of Head of Quant"        -> 200
+              "posting job listings for X"            -> 200
+              "advertising growth in conveyancing team" -> 200
+
+         b) EVENT -> 400.  Triggers:
+              announced | announcing | announcement | launch | launched
+              | launching | expansion | expanding | merger | merged
+              | acquisition | acquired | "fund close" | raised | IPO
+              | completed | opened | partnership | partnered | certified
+              | certification | awarded | grant | "new branch"
+              | relocation | restructure | restructuring | "speaking at"
+              | "attending [conference]" | onboarding | selection
+              | "new-build completion"
+            Examples:
+              "Recent fund close announcement"        -> 400 (event verb wins)
+              "Custody onboarding announcement"       -> 400
+              "Publicly announced expansion of quarry"-> 400
+              "New housing development launched"      -> 400
+
+         c) TIMELESS state -> null.  Tech stack, headcount, geography,
+            industry, role title, "uses X CRM", "is HQ in NYC", etc.
+
+      3. HISTORICAL-STATE OVERRIDE — even when an event verb is present,
+         if the signal is framed as past/historical participation
+         ("prior", "previously", "has participated in past", "has been
+         an investor in", "historical involvement in"), return null.
+         A historical participation claim is a STATE about who they are,
+         not an event with implicit recency.
+            Example:
+              "Has participated in prior DePIN launches"  -> null
+              "Has previously invested in tokenization"   -> null
+
+      4. Otherwise bias toward null when claim is a STATE not an EVENT.
+         State = no implicit recency. Event = always has one.
 - "required_attributes" is optional fail-closed criteria. This is the ONLY place for must-have criteria / required attributes / required criteria / hard requirements that are not already covered by role, role type, industry, company_country, company_region, contact_country, contact_region, employee_count, or intent_signals.
 - Use required_attributes.company for company-level gates, use required_attributes.contact for person-level gates.
 - Each attribute MUST be written as a clear, descriptive explanation that defines exactly what the criterion means in plain language. A validator who has never seen the original request should be able to read the attribute and understand precisely what qualifies. Do NOT use shorthand labels. Instead, write a full description:
