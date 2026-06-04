@@ -149,7 +149,7 @@ Schema:
   "target_role_types": string[],
   "target_seniority": string,
   "employee_count": string[],
-  "intent_signals": string[],
+  "intent_signals": [{"text": string, "recency_cap_days": number | null}],
   "required_attributes": {"company": string[], "contact": string[]},
   "product_service": string,
   "num_leads": number,
@@ -177,7 +177,25 @@ ${EMPLOYEE_COUNT_BUCKETS.map((v) => `  - ${v}`).join('\n')}
 - Use "contact_country" for the person/contact countries. Empty array means any contact country.
 - Use "contact_region" for person/contact region/state/city requirements.
 - Do NOT put company HQ, company region, contact region, country, geography, employee count, company size, or headcount rules into required_attributes. Use the dedicated fields above.
-- "intent_signals" must be a list of plain strings — each one a concrete observable event miners can verify from web content. Avoid vague signals like "has budget" or "high intent". Do NOT infer required-vs-optional; the operator will toggle "Required" per signal in the admin UI after reviewing your draft.
+- "intent_signals" is a list of objects, one per signal:
+  - "text": a concrete observable event miners can verify from web content. Avoid vague signals like "has budget" or "high intent". Do NOT infer required-vs-optional; the operator will toggle "Required" per signal in the admin UI after reviewing your draft.
+  - "recency_cap_days": maximum age in days of supporting evidence. CRITICAL: if the operator's original wording for THIS signal contained a time window (even if you rewrite the "text" to omit it), the cap MUST come from that window. Only fall back to type defaults when the original wording had NO time window at all. Pick using this priority order:
+      1. EXPLICIT WINDOW in the operator's original wording wins (even after rewrite). Convert to days:
+         "in the last N days" / "past N days"           -> N + ~15
+         "in the last N weeks" / "past N weeks"          -> N*7 + ~7
+         "in the last few weeks" / "past few weeks"      -> 60
+         "in the last N months" / "past N months"        -> N*30 + ~5%
+         "in the last N years" / "past N years"          -> N*365 (round up ~5%)
+         "this year" / "since YYYY"                      -> compute from text
+         "this quarter"                                  -> 105
+         "recently"                                      -> 180
+      2. TYPE DEFAULT (only when no explicit window):
+         active-hiring claims (hiring/recruiting/open roles)        -> 200
+         event claims (funding, acquisition, launch, partnership,
+                       expansion, M&A, IPO, certification)           -> 400
+         timeless attributes (tech stack, headcount, geography,
+                              industry, role title)                  -> null
+      3. Bias toward null when claim is a STATE not an EVENT. State = no implicit recency. Event = always has one.
 - "required_attributes" is optional fail-closed criteria. This is the ONLY place for must-have criteria / required attributes / required criteria / hard requirements that are not already covered by role, role type, industry, company_country, company_region, contact_country, contact_region, employee_count, or intent_signals.
 - Use required_attributes.company for company-level gates, use required_attributes.contact for person-level gates.
 - Each attribute MUST be written as a clear, descriptive explanation that defines exactly what the criterion means in plain language. A validator who has never seen the original request should be able to read the attribute and understand precisely what qualifies. Do NOT use shorthand labels. Instead, write a full description:
