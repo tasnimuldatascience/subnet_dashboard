@@ -67,6 +67,17 @@ export interface IntentSignalSpec {
    * attribute like tech stack or headcount).  Set by the admin parser
    * from the operator's wording, overridable in the UI. */
   recency_cap_days: number | null
+  /** Evidence category, picked by the parser from the signal text.  Lets
+   * the gateway pick the right URL-shape gate (e.g. SOCIAL_POSTING ->
+   * require a /posts/ or tweet permalink) and route the right author-role
+   * verification.  null when the parser cannot classify confidently. */
+  evidence_type?:
+    | 'HIRING'
+    | 'FUNDING'
+    | 'SOCIAL_POSTING'
+    | 'CASE_STUDY'
+    | 'OTHER'
+    | null
 }
 
 export interface RequiredAttributes {

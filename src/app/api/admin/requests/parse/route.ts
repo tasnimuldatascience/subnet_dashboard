@@ -149,7 +149,7 @@ Schema:
   "target_role_types": string[],
   "target_seniority": string,
   "employee_count": string[],
-  "intent_signals": [{"text": string, "recency_cap_days": number | null}],
+  "intent_signals": [{"text": string, "recency_cap_days": number | null, "evidence_type": "HIRING" | "FUNDING" | "SOCIAL_POSTING" | "CASE_STUDY" | "OTHER" | null}],
   "required_attributes": {"company": string[], "contact": string[]},
   "product_service": string,
   "num_leads": number,
@@ -233,6 +233,36 @@ ${EMPLOYEE_COUNT_BUCKETS.map((v) => `  - ${v}`).join('\n')}
 
       4. Otherwise bias toward null when claim is a STATE not an EVENT.
          State = no implicit recency. Event = always has one.
+  - "evidence_type": classifies what KIND of web evidence the gateway should
+    require for this signal. Pick the SINGLE best match for the signal text;
+    return null only when no category fits. Used downstream to pick URL-shape
+    rules + author checks. One of:
+       a) HIRING — signal asks for an open job posting / active recruiting /
+          job listings / open roles / hiring for X. Examples:
+            "Company is actively hiring for SDR roles"             -> HIRING
+            "Has open positions for AI/ML engineers"                -> HIRING
+            "Currently recruiting Series A operating roles"         -> HIRING
+       b) FUNDING — signal asks for a funding round / capital raise /
+          investor announcement / IPO. Examples:
+            "Raised a Series B in the last 12 months"               -> FUNDING
+            "Closed a seed round"                                   -> FUNDING
+            "Announced funding from <investor>"                     -> FUNDING
+       c) SOCIAL_POSTING — signal asks for a specific social-media post BY
+          a named person role (CEO, Founder, sales leader, etc.) on
+          LinkedIn / X about a topic. The author identity matters as much
+          as the topic. Examples:
+            "Founder or CEO is publicly posting on LinkedIn about
+             company milestones, product launches, or fundraising"  -> SOCIAL_POSTING
+            "Head of Sales is posting on LinkedIn about pipeline
+             goals or hiring within the past 60 days"               -> SOCIAL_POSTING
+            "Founder posts a tweet about expansion"                 -> SOCIAL_POSTING
+       d) CASE_STUDY — signal asks for a customer-success story /
+          published case study. Example:
+            "Company published a customer case study in the last
+             quarter"                                               -> CASE_STUDY
+       e) OTHER — recognisable but not one of the above (acquisitions,
+          partnerships, product launches, etc.).
+       f) null — cannot classify confidently.
 - "required_attributes" is optional fail-closed criteria. This is the ONLY place for must-have criteria / required attributes / required criteria / hard requirements that are not already covered by role, role type, industry, company_country, company_region, contact_country, contact_region, employee_count, or intent_signals.
 - Use required_attributes.company for company-level gates, use required_attributes.contact for person-level gates.
 - Each attribute MUST be written as a clear, descriptive explanation that defines exactly what the criterion means in plain language. A validator who has never seen the original request should be able to read the attribute and understand precisely what qualifies. Do NOT use shorthand labels. Instead, write a full description:

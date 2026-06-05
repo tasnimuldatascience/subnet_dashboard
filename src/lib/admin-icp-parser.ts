@@ -54,6 +54,25 @@ function coerceRecencyCap(value: unknown): number | null {
   return Math.trunc(n)
 }
 
+const VALID_EVIDENCE_TYPES = new Set([
+  'HIRING',
+  'FUNDING',
+  'SOCIAL_POSTING',
+  'CASE_STUDY',
+  'OTHER',
+])
+
+function coerceEvidenceType(
+  value: unknown,
+): IntentSignalSpec['evidence_type'] {
+  if (value === null || value === undefined) return null
+  if (typeof value !== 'string') return null
+  const v = value.trim().toUpperCase()
+  if (!v) return null
+  if (!VALID_EVIDENCE_TYPES.has(v)) return null
+  return v as IntentSignalSpec['evidence_type']
+}
+
 export function normalizeIntentSignals(
   value: unknown,
 ): IntentSignalSpec[] {
@@ -64,7 +83,12 @@ export function normalizeIntentSignals(
     if (typeof entry === 'string') {
       const t = entry.trim()
       if (!t) continue
-      out.push({ text: t, required: false, recency_cap_days: null })
+      out.push({
+        text: t,
+        required: false,
+        recency_cap_days: null,
+        evidence_type: null,
+      })
       continue
     }
     if (entry && typeof entry === 'object') {
@@ -80,6 +104,7 @@ export function normalizeIntentSignals(
         text: t,
         required: typeof obj.required === 'boolean' ? obj.required : false,
         recency_cap_days: coerceRecencyCap(obj.recency_cap_days),
+        evidence_type: coerceEvidenceType(obj.evidence_type),
       })
     }
   }

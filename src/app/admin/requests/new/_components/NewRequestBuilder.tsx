@@ -395,7 +395,15 @@ function IntentSignalEditor({
     onChange(value.filter((_, i) => i !== idx))
   }
   function addRow() {
-    onChange([...value, { text: '', required: false, recency_cap_days: null }])
+    onChange([
+      ...value,
+      {
+        text: '',
+        required: false,
+        recency_cap_days: null,
+        evidence_type: null,
+      },
+    ])
   }
 
   return (
