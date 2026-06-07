@@ -1,8 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { createHash } from 'node:crypto'
 import { NextRequest, NextResponse } from 'next/server'
-import { buildChainViews } from '@/lib/admin-format'
-import type { AdminFulfillmentRequest } from '@/lib/admin-supabase'
 
 function getSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!
@@ -39,7 +37,6 @@ const CACHE_TTL = 60_000
 const LEADERBOARD_WINDOW_DAYS = 7
 const LEADERBOARD_ROW_LIMIT = 10_000
 const CONSENSUS_ROW_LIMIT = 25_000
-const FULFILLMENT_CHAIN_ROW_LIMIT = 800
 const SCORE_ROW_BATCH_SIZE = 1000
 const TOP_MINER_BONUS_PCTS = [5, 3, 1.5] as const
 
@@ -47,15 +44,6 @@ type CachedResponse = {
   data: unknown
   etag: string
   ts: number
-}
-
-type DeliveredLeadCountRow = {
-  request_id: string
-  lead_id: string
-  computed_at: string
-  consensus_final_score: number | null
-  is_winner: boolean
-  is_chain_held: boolean
 }
 
 type ScoreReasonRow = {
@@ -90,58 +78,6 @@ function chunks<T>(items: T[], size: number): T[][] {
   return out
 }
 
-async function countDeliveredLeadsForChains(
-  supabase: ReturnType<typeof getSupabase>,
-  requests: AdminFulfillmentRequest[],
-): Promise<number> {
-  const chains = buildChainViews(requests)
-  const allChainRequestIds = chains.flatMap((c) => [
-    ...c.predecessors.map((p) => p.request_id),
-    c.leaf.request_id,
-  ])
-
-  if (allChainRequestIds.length === 0) return 0
-
-  const reqIdToRoot = new Map<string, string>()
-  for (const c of chains) {
-    for (const r of c.predecessors) reqIdToRoot.set(r.request_id, c.rootId)
-    reqIdToRoot.set(c.leaf.request_id, c.rootId)
-  }
-
-  const seenLeadsByRoot = new Map<string, Set<string>>()
-  for (const group of chunks(allChainRequestIds, 25)) {
-    const { data, error } = await supabase
-      .from('fulfillment_score_consensus')
-      .select('request_id, lead_id, computed_at, consensus_final_score, is_winner, is_chain_held')
-      .in('request_id', group)
-      .or('is_winner.eq.true,is_chain_held.eq.true,consensus_final_score.gt.0')
-
-    if (error) {
-      console.error('[Fulfillment API] delivered count query failed:', error)
-      continue
-    }
-
-    for (const row of (data ?? []) as DeliveredLeadCountRow[]) {
-      if (!(row.is_winner || row.is_chain_held)) continue
-      const root = reqIdToRoot.get(row.request_id)
-      if (!root) continue
-      let set = seenLeadsByRoot.get(root)
-      if (!set) {
-        set = new Set()
-        seenLeadsByRoot.set(root, set)
-      }
-      set.add(row.lead_id)
-    }
-  }
-
-  let total = 0
-  for (const c of chains) {
-    const root = c.predecessors[0] ?? c.leaf
-    const target = root.num_leads ?? c.leaf.num_leads
-    total += Math.min(seenLeadsByRoot.get(c.rootId)?.size ?? 0, target)
-  }
-  return total
-}
 
 async function fetchScoreReasonsForRequests(
   supabase: ReturnType<typeof getSupabase>,
@@ -199,38 +135,37 @@ function rejectionReasonFromScore(row: ScoreReasonRow | undefined): string {
 async function fetchFulfillmentData() {
   const supabase = getSupabase()
 
-  const [reqResult, countResult, chainRowsResult] = await Promise.all([
+  // Cumulative stats via DB COUNT — no row limits, always accurate.
+  const [reqResult, fulfilledCountResult, recycledCountResult, totalConsensusResult, totalWinnersResult, totalDeliveredResult] = await Promise.all([
     supabase.from('fulfillment_requests')
       .select('request_id, icp_details, num_leads, window_start, window_end, status, created_at')
       .in('status', ['pending', 'open', 'continued_open', 'commit_closed', 'scoring', 'fulfilled'])
       .order('created_at', { ascending: false })
       .limit(100),
     supabase.from('fulfillment_requests')
-      .select('status')
-      .limit(1000),
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'fulfilled'),
     supabase.from('fulfillment_requests')
-      .select('request_id, internal_label, company, status, num_leads, icp_details, created_at, window_start, window_end, successor_request_id')
-      .order('created_at', { ascending: false })
-      .limit(FULFILLMENT_CHAIN_ROW_LIMIT),
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'recycled'),
+    supabase.from('fulfillment_score_consensus')
+      .select('*', { count: 'exact', head: true }),
+    supabase.from('fulfillment_score_consensus')
+      .select('*', { count: 'exact', head: true })
+      .eq('is_winner', true),
+    supabase.from('fulfillment_score_consensus')
+      .select('*', { count: 'exact', head: true })
+      .or('is_winner.eq.true,is_chain_held.eq.true'),
   ])
 
   if (reqResult.error) console.error('[Fulfillment API] Error fetching requests:', reqResult.error)
-  if (chainRowsResult.error) console.error('[Fulfillment API] Error fetching chain rows:', chainRowsResult.error)
 
   const activeRequests = reqResult.data || []
-  const allCounts = countResult.data || []
-  const chainRows: AdminFulfillmentRequest[] = (chainRowsResult.data || []).map((r) => ({
-    request_id: r.request_id,
-    internal_label: r.internal_label,
-    company: r.company,
-    status: r.status,
-    num_leads: r.num_leads,
-    icp_details: r.icp_details,
-    created_at: r.created_at,
-    window_start: r.window_start,
-    window_end: r.window_end,
-    successor_request_id: r.successor_request_id,
-  }))
+  const fulfilledCount = fulfilledCountResult.count ?? 0
+  const recycledCount = recycledCountResult.count ?? 0
+  const dbTotalConsensus = totalConsensusResult.count ?? 0
+  const dbTotalWinners = totalWinnersResult.count ?? 0
+  const dbTotalDelivered = totalDeliveredResult.count ?? 0
 
   // Fetch consensus data + chain-side metadata for ALL active requests.
   const allRequestIds = activeRequests.map(r => r.request_id)
@@ -375,13 +310,7 @@ async function fetchFulfillmentData() {
       }
     }
   }
-  // The public dashboard treats "Submitted" as the evaluated lead universe.
-  // Raw submitted payloads can include unrevealed or stuck-in-processing rows,
-  // which makes the topline diverge from the not-fulfilled breakdown.
-  const totalSubmittedLeads = consensusData.length
-  const totalDeliveredLeads = await countDeliveredLeadsForChains(supabase, chainRows)
-  const fulfilledCount = allCounts.filter(r => r.status === 'fulfilled').length
-  const recycledCount = allCounts.filter(r => r.status === 'recycled').length
+  // Cumulative stats come from DB COUNT queries above — no row limits.
 
   const rejectionRequestIds = Array.from(new Set(consensusData.map(c => c.request_id)))
   const scoreByLead = await fetchScoreReasonsForRequests(supabase, rejectionRequestIds)
@@ -469,10 +398,10 @@ async function fetchFulfillmentData() {
     },
     stats: {
       activeRequestCount: activeRequests.filter(r => r.status !== 'fulfilled').length,
-      totalSubmittedLeads,
-      totalDeliveredLeads,
-      totalConsensus: consensusData.length,
-      totalWinners: consensusData.filter(c => c.is_winner).length,
+      totalSubmittedLeads: dbTotalConsensus,
+      totalDeliveredLeads: dbTotalDelivered,
+      totalConsensus: dbTotalConsensus,
+      totalWinners: dbTotalWinners,
       fulfilledCount,
       recycledCount,
       // leaderboardWindowDays surfaces the window the API used so the

@@ -6,7 +6,7 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 const SUBMISSION_BATCH_SIZE = 100
-const MAX_SUBMISSIONS = 2000
+const MAX_SUBMISSIONS = 10000
 const CONSENSUS_BATCH_SIZE = 1000
 const SCORE_BATCH_SIZE = 1000
 const MAX_SCORE_ROWS = 10000
@@ -103,6 +103,14 @@ type TransparencyCommitRow = {
 
 type SubmittedLeadStatus = 'committed' | 'pending' | 'approved' | 'denied'
 
+type CumulativeStats = {
+  totalSubmitted: number
+  totalApproved: number
+  totalDenied: number
+  totalFulfilled: number
+  totalPending: number
+}
+
 type FulfillmentAnalyticsDataset = {
   submissions: FulfillmentSubmissionRow[]
   commitAtBySubmission: Map<string, string>
@@ -111,6 +119,7 @@ type FulfillmentAnalyticsDataset = {
   requestOptions: RequestOption[]
   chartConsensusRows: ChartConsensusRow[]
   scoreByLead: Map<string, ScoreRow>
+  cumulativeStats: CumulativeStats
   loadedAt: number
 }
 
@@ -450,6 +459,31 @@ async function loadAnalyticsDataset(
       }
     }
 
+    // Global cumulative stats via DB COUNT — no row limits, always accurate.
+    // All counts use { count: 'exact', head: true } which transfers zero rows.
+    const [totalConsensusResult, totalApprovedResult, totalWinnersResult] = await Promise.all([
+      supabase.from('fulfillment_score_consensus')
+        .select('*', { count: 'exact', head: true }),
+      supabase.from('fulfillment_score_consensus')
+        .select('*', { count: 'exact', head: true })
+        .or('is_winner.eq.true,is_chain_held.eq.true'),
+      supabase.from('fulfillment_score_consensus')
+        .select('*', { count: 'exact', head: true })
+        .eq('is_winner', true),
+    ])
+    const totalConsensus = totalConsensusResult.count ?? 0
+    const totalApproved = totalApprovedResult.count ?? 0
+    const totalFulfilled = totalWinnersResult.count ?? 0
+    const totalDenied = totalConsensus - totalApproved
+
+    const cumulativeStats: CumulativeStats = {
+      totalSubmitted: totalConsensus,
+      totalApproved,
+      totalDenied,
+      totalFulfilled,
+      totalPending: 0,
+    }
+
     const dataset: FulfillmentAnalyticsDataset = {
       submissions,
       commitAtBySubmission,
@@ -458,6 +492,7 @@ async function loadAnalyticsDataset(
       requestOptions,
       chartConsensusRows,
       scoreByLead,
+      cumulativeStats,
       loadedAt: Date.now(),
     }
     cachedDataset = dataset
@@ -513,6 +548,7 @@ export async function GET(request: NextRequest) {
     requestOptions,
     chartConsensusRows,
     scoreByLead,
+    cumulativeStats,
   } = dataset
   const bucketKey = (value: string | null | undefined): string => {
     const day = dateKey(value)
@@ -924,6 +960,7 @@ export async function GET(request: NextRequest) {
         to: searchParams.get('to') ?? '',
         bucket,
       },
+      cumulativeStats,
       maxSubmissions: MAX_SUBMISSIONS,
       fetchedAt: new Date().toISOString(),
     },
