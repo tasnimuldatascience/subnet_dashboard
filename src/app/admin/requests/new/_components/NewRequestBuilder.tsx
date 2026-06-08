@@ -801,7 +801,18 @@ export function NewRequestBuilder({
             </div>
             <div>
               <FieldLabel>Target seniority</FieldLabel>
-              <TextInput value={draft.target_seniority} onChange={(v) => update('target_seniority', v)} placeholder="Leave blank unless uniform" />
+              <select
+                value={draft.target_seniority}
+                onChange={(e) => update('target_seniority', e.target.value)}
+                className="premium-focus w-full rounded-md border border-slate-800/70 bg-slate-950/60 px-3 py-2 text-sm text-slate-100"
+              >
+                <option value="">Any seniority</option>
+                <option value="C-Suite">C-Suite</option>
+                <option value="VP">VP</option>
+                <option value="Director">Director</option>
+                <option value="Manager">Manager</option>
+                <option value="Individual Contributor">Individual Contributor</option>
+              </select>
             </div>
           </div>
 

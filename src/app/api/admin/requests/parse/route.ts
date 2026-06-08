@@ -21,7 +21,24 @@ export const dynamic = 'force-dynamic'
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
 const DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6'
 
+const VALID_SENIORITIES = ['C-Suite', 'VP', 'Director', 'Manager', 'Individual Contributor'] as const
+
 type MaybeDraft = Partial<Record<keyof ParsedIcpDraft, unknown>>
+
+function seniorityValue(value: unknown): string {
+  const s = typeof value === 'string' ? value.trim() : ''
+  if (!s) return ''
+  // Exact match
+  if ((VALID_SENIORITIES as readonly string[]).includes(s)) return s
+  // Common LLM mistakes → map to correct values
+  const lower = s.toLowerCase()
+  if (lower.includes('c-level') || lower.includes('c level') || lower.includes('csuite') || lower === 'executive') return 'C-Suite'
+  if (lower === 'vice president' || lower === 'svp' || lower === 'evp') return 'VP'
+  if (lower === 'senior director' || lower === 'head') return 'Director'
+  if (lower === 'senior manager' || lower === 'team lead') return 'Manager'
+  if (lower === 'ic' || lower === 'entry level' || lower === 'associate' || lower === 'analyst') return 'Individual Contributor'
+  return ''
+}
 
 function stringValue(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
@@ -87,7 +104,7 @@ function sanitizeDraft(input: MaybeDraft, rawText: string): ParsedIcpDraft {
     geography: stringValue(input.company_region ?? input.geography),
     target_roles: stringArray(input.target_roles).slice(0, 20),
     target_role_types: roleTypes(input.target_role_types),
-    target_seniority: stringValue(input.target_seniority),
+    target_seniority: seniorityValue(input.target_seniority),
     employee_count: employeeBuckets(input.employee_count),
     // ``normalizeIntentSignals`` accepts both legacy ``string[]`` and
     // structured shapes; stray legacy keys like ``is_scored`` drop out.
@@ -170,7 +187,7 @@ ${VALID_INDUSTRIES.map((v) => `  - ${v}`).join('\n')}
 - "target_role_types" must use ONLY these values:
 ${VALID_ROLE_TYPES.map((v) => `  - ${v}`).join('\n')}
 - IMPORTANT: "C-Level Executive" is a valid role_type but miners usually classify C-suite contacts by their FUNCTIONAL role type (Sales, Marketing, Finance, Engineering, etc.), not as "C-Level Executive". If the operator targets C-level people, include the relevant functional role types (e.g. Sales, Marketing, Finance, Operations) AND "C-Level Executive" together — never "C-Level Executive" alone. Similarly "VP" and "Director" should be paired with functional types.
-- "target_seniority" should usually be "" unless the target is a single uniform seniority.
+- "target_seniority" should usually be "" unless the target is a single uniform seniority. If set, must be EXACTLY one of: "C-Suite", "VP", "Director", "Manager", "Individual Contributor". Do NOT use variants like "C-Level", "Senior", "Entry Level", "Senior Leadership" — the gateway rejects non-exact matches.
 - "employee_count" must use ONLY these canonical buckets:
 ${EMPLOYEE_COUNT_BUCKETS.map((v) => `  - ${v}`).join('\n')}
 - Use "company_country" for company HQ countries, e.g. "United States", "France". Empty array means any company country.
