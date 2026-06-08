@@ -169,6 +169,7 @@ ${VALID_INDUSTRIES.map((v) => `  - ${v}`).join('\n')}
 - "target_roles" should be 5-15 specific titles when possible.
 - "target_role_types" must use ONLY these values:
 ${VALID_ROLE_TYPES.map((v) => `  - ${v}`).join('\n')}
+- IMPORTANT: "C-Level Executive" is a valid role_type but miners usually classify C-suite contacts by their FUNCTIONAL role type (Sales, Marketing, Finance, Engineering, etc.), not as "C-Level Executive". If the operator targets C-level people, include the relevant functional role types (e.g. Sales, Marketing, Finance, Operations) AND "C-Level Executive" together — never "C-Level Executive" alone. Similarly "VP" and "Director" should be paired with functional types.
 - "target_seniority" should usually be "" unless the target is a single uniform seniority.
 - "employee_count" must use ONLY these canonical buckets:
 ${EMPLOYEE_COUNT_BUCKETS.map((v) => `  - ${v}`).join('\n')}
