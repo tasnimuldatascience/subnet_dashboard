@@ -491,6 +491,32 @@ function IntentSignalEditor({
                     <option value="770">2 years</option>
                   </datalist>
                 </label>
+                <label
+                  className="inline-flex items-center gap-1.5 text-[11px] text-slate-300"
+                  title="What kind of web evidence the gateway should require. Auto-classifies HIRING / FUNDING / SOCIAL_POSTING from text if left on auto. Pick explicitly to override."
+                >
+                  Evidence type
+                  <select
+                    value={spec.evidence_type ?? ''}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      updateRow(idx, {
+                        evidence_type:
+                          v === ''
+                            ? null
+                            : (v as IntentSignalSpec['evidence_type']),
+                      })
+                    }}
+                    className="premium-focus rounded-md border border-slate-800/70 bg-slate-950/60 px-2 py-1 text-[11px] text-slate-100"
+                  >
+                    <option value="">auto-classify</option>
+                    <option value="HIRING">HIRING</option>
+                    <option value="FUNDING">FUNDING</option>
+                    <option value="SOCIAL_POSTING">SOCIAL_POSTING</option>
+                    <option value="CASE_STUDY">CASE_STUDY</option>
+                    <option value="OTHER">OTHER</option>
+                  </select>
+                </label>
                 {spec.required ? (
                   <span className="rounded-full border border-gold-soft bg-gold-soft px-2 py-0.5 text-[10px] uppercase tracking-wider text-gold">
                     Mandatory
