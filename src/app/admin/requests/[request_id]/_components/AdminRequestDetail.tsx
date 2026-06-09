@@ -2757,7 +2757,10 @@ function IcpPanel({ icp }: { icp: IcpDetails | null }) {
                 </span>
                 <span className="flex flex-col gap-0.5">
                   <span>{text}</span>
-                  <span className="flex gap-2 text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+                  <span className="flex flex-wrap gap-2 text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+                    {typeof entry === 'object' && entry?.evidence_type && (
+                      <span className="rounded border px-1 py-0.5" style={{ borderColor: 'var(--surface-border)' }}>{entry.evidence_type}</span>
+                    )}
                     {cap != null && <span>{cap}d max age</span>}
                     {required && (
                       <span className="text-gold uppercase tracking-wider font-medium">Required</span>
