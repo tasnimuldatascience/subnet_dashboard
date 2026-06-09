@@ -40,7 +40,7 @@ interface IcpDetails {
   target_role_types?: string[]
   company_stage?: string
   employee_count?: string
-  intent_signals?: string[]
+  intent_signals?: Array<string | { text?: string; evidence_type?: string | null; recency_cap_days?: number | null; required?: boolean }>
   product_service?: string
   target_seniority?: string
   num_leads?: number
@@ -1578,6 +1578,35 @@ function RequestDetailDialog({
                   {r}
                 </Badge>
               ))}
+            </div>
+          )}
+          {Array.isArray(icp?.intent_signals) && icp.intent_signals.length > 0 && (
+            <div className="pt-2 space-y-1">
+              <div className="text-[10px] text-slate-500 uppercase tracking-wider">Intent signals</div>
+              <ul className="space-y-1">
+                {icp.intent_signals.map((signal, i) => {
+                  const text = typeof signal === 'string' ? signal : signal?.text ?? ''
+                  if (!text) return null
+                  const evidenceType = typeof signal === 'object' ? signal?.evidence_type : null
+                  const recencyCap = typeof signal === 'object' ? signal?.recency_cap_days : null
+                  return (
+                    <li key={i} className="text-[11px] text-slate-300 flex gap-2 items-start">
+                      <span className="text-slate-600 font-mono shrink-0">{i + 1}.</span>
+                      <span className="flex-1">{text}</span>
+                      {(evidenceType || recencyCap != null) && (
+                        <span className="shrink-0 flex gap-1.5 text-[9px] text-slate-500">
+                          {evidenceType && (
+                            <span className="rounded border border-slate-800 px-1 py-0.5">{evidenceType}</span>
+                          )}
+                          {recencyCap != null && (
+                            <span className="rounded border border-slate-800 px-1 py-0.5">{recencyCap}d</span>
+                          )}
+                        </span>
+                      )}
+                    </li>
+                  )
+                })}
+              </ul>
             </div>
           )}
         </DialogHeader>

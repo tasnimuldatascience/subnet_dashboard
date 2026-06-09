@@ -22,7 +22,7 @@ interface IcpDetails {
   target_role_types?: string[]
   company_stage?: string
   employee_count?: string
-  intent_signals?: string[]
+  intent_signals?: Array<string | { text?: string; evidence_type?: string | null; recency_cap_days?: number | null; required?: boolean }>
   product_service?: string
   target_seniority?: string
   num_leads?: number
