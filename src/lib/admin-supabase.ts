@@ -77,6 +77,7 @@ export interface IntentSignalSpec {
     | 'SOCIAL_POSTING'
     | 'CASE_STUDY'
     | 'OTHER'
+    | 'PODCAST_APPEARANCE'
     | null
 }
 

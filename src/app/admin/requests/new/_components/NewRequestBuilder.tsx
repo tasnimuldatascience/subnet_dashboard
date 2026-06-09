@@ -513,6 +513,7 @@ function IntentSignalEditor({
                     <option value="HIRING">HIRING</option>
                     <option value="FUNDING">FUNDING</option>
                     <option value="SOCIAL_POSTING">SOCIAL_POSTING</option>
+                    <option value="PODCAST_APPEARANCE">PODCAST_APPEARANCE</option>
                     <option value="CASE_STUDY">CASE_STUDY</option>
                     <option value="OTHER">OTHER</option>
                   </select>

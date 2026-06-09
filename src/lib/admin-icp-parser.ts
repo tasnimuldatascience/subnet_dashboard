@@ -60,6 +60,7 @@ const VALID_EVIDENCE_TYPES = new Set([
   'SOCIAL_POSTING',
   'CASE_STUDY',
   'OTHER',
+  'PODCAST_APPEARANCE',
 ])
 
 function coerceEvidenceType(

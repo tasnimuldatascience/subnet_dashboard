@@ -166,7 +166,7 @@ Schema:
   "target_role_types": string[],
   "target_seniority": string,
   "employee_count": string[],
-  "intent_signals": [{"text": string, "recency_cap_days": number | null, "evidence_type": "HIRING" | "FUNDING" | "SOCIAL_POSTING" | "CASE_STUDY" | "OTHER" | null}],
+  "intent_signals": [{"text": string, "recency_cap_days": number | null, "evidence_type": "HIRING" | "FUNDING" | "SOCIAL_POSTING" | "CASE_STUDY" | "OTHER" | "PODCAST_APPEARANCE" | null}],
   "required_attributes": {"company": string[], "contact": string[]},
   "product_service": string,
   "num_leads": number,
@@ -278,9 +278,19 @@ ${EMPLOYEE_COUNT_BUCKETS.map((v) => `  - ${v}`).join('\n')}
           published case study. Example:
             "Company published a customer case study in the last
              quarter"                                               -> CASE_STUDY
-       e) OTHER — recognisable but not one of the above (acquisitions,
+       e) PODCAST_APPEARANCE — signal asks for a podcast / video
+          interview appearance by a named person role (CEO, Founder,
+          VP of X, etc.) from the company.  The verifier currently
+          supports YouTube URLs only; other podcast platforms (Apple
+          Podcasts, Spotify) are accepted as the evidence_type but
+          will be rejected at URL precheck.  Examples:
+            "CEO appeared on a podcast discussing AML strategy"     -> PODCAST_APPEARANCE
+            "Founder interviewed on YouTube about Q3 expansion"     -> PODCAST_APPEARANCE
+            "Head of Sales was a guest on the Sales Engagement
+             podcast within the past 90 days"                       -> PODCAST_APPEARANCE
+       f) OTHER — recognisable but not one of the above (acquisitions,
           partnerships, product launches, etc.).
-       f) null — cannot classify confidently.
+       g) null — cannot classify confidently.
 - "required_attributes" is optional fail-closed criteria. This is the ONLY place for must-have criteria / required attributes / required criteria / hard requirements that are not already covered by role, role type, industry, company_country, company_region, contact_country, contact_region, employee_count, or intent_signals.
 - Use required_attributes.company for company-level gates, use required_attributes.contact for person-level gates.
 - Each attribute MUST be written as a clear, descriptive explanation that defines exactly what the criterion means in plain language. A validator who has never seen the original request should be able to read the attribute and understand precisely what qualifies. Do NOT use shorthand labels. Instead, write a full description:
