@@ -28,7 +28,9 @@ import { buildChainViews } from '@/lib/admin-format'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-const LIST_LIMIT = 200
+const LIST_LIMIT = 500
+const REQUESTS_PAGE_SIZE = 1000
+const COUNT_CHUNK_SIZE = 100
 
 interface ChainSummary {
   // Stable identifier for the chain. Always equals the LEAF request_id
@@ -132,21 +134,40 @@ export async function GET() {
     return NextResponse.json({ error: msg }, { status: 503 })
   }
 
-  // Pull a generous window. We bound by row count (not by date) so the
-  // operator can still find a chain that started weeks ago via recycle.
-  const { data: requestsData, error: requestsErr } = await supabase
-    .from('fulfillment_requests')
-    .select(
-      'request_id, internal_label, company, status, num_leads, icp_details, created_at, window_start, window_end, successor_request_id',
-    )
-    .order('created_at', { ascending: false })
-    .limit(LIST_LIMIT * 4) // budget for chain expansion before folding
-
-  if (requestsErr) {
-    return NextResponse.json(
-      { error: `Supabase error: ${requestsErr.message}` },
-      { status: 502 },
-    )
+  // Pull EVERY request row, paginated past PostgREST's per-query cap.
+  // Recycle chains run dozens of cycles deep, so a fixed "newest N
+  // rows" window silently drops whole chains whose leaf falls outside
+  // it (the operator then can't find requests they know exist). Row
+  // shape is small and the table is bounded by real client demand, so
+  // a full scan is fine here.
+  const requestsData: Array<{
+    request_id: string
+    internal_label: string | null
+    company: string | null
+    status: string
+    num_leads: number
+    icp_details: IcpDetails | null
+    created_at: string
+    window_start: string | null
+    window_end: string | null
+    successor_request_id: string | null
+  }> = []
+  for (let offset = 0; ; offset += REQUESTS_PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from('fulfillment_requests')
+      .select(
+        'request_id, internal_label, company, status, num_leads, icp_details, created_at, window_start, window_end, successor_request_id',
+      )
+      .order('created_at', { ascending: false })
+      .range(offset, offset + REQUESTS_PAGE_SIZE - 1)
+    if (error) {
+      return NextResponse.json(
+        { error: `Supabase error: ${error.message}` },
+        { status: 502 },
+      )
+    }
+    requestsData.push(...((data ?? []) as typeof requestsData))
+    if (!data || data.length < REQUESTS_PAGE_SIZE) break
   }
 
   const rows: AdminFulfillmentRequest[] = (requestsData || []).map((r) => ({
@@ -181,26 +202,34 @@ export async function GET() {
   let winnerCounts: Map<string, number> = new Map()
   const latestWinnerAt: Map<string, string> = new Map()
   if (allChainRequestIds.length > 0) {
-    const winnerRows: Array<{
+    type WinnerRow = {
       request_id: string
       lead_id: string
       computed_at: string
       consensus_final_score: number | null
       is_winner: boolean
       is_chain_held: boolean
-    }> = []
+    }
+    const winnerRows: WinnerRow[] = []
     let winnersErr: { message: string } | null = null
-    for (const group of chunks(allChainRequestIds, 25)) {
-      const { data, error } = await supabase
-        .from('fulfillment_score_consensus')
-        .select('request_id, lead_id, computed_at, consensus_final_score, is_winner, is_chain_held')
-        .in('request_id', group)
-        .or('is_winner.eq.true,is_chain_held.eq.true,consensus_final_score.gt.0')
+    // The id list now spans the whole table (thousands of request
+    // rows), so the chunked .in() queries run concurrently instead of
+    // serially — otherwise this loop alone would add tens of seconds.
+    const winnerResults = await Promise.all(
+      chunks(allChainRequestIds, COUNT_CHUNK_SIZE).map((group) =>
+        supabase
+          .from('fulfillment_score_consensus')
+          .select('request_id, lead_id, computed_at, consensus_final_score, is_winner, is_chain_held')
+          .in('request_id', group)
+          .or('is_winner.eq.true,is_chain_held.eq.true,consensus_final_score.gt.0'),
+      ),
+    )
+    for (const { data, error } of winnerResults) {
       if (error) {
         winnersErr = { message: error.message || 'winner batch failed' }
         break
       }
-      winnerRows.push(...((data ?? []) as typeof winnerRows))
+      winnerRows.push(...((data ?? []) as WinnerRow[]))
     }
     if (winnersErr) {
       console.error('[admin] winners count query failed', winnersErr)
@@ -234,11 +263,15 @@ export async function GET() {
   const submittedLeadCounts = new Map<string, number>()
   if (allChainRequestIds.length > 0) {
     let submissionsErr: { message: string } | null = null
-    for (const group of chunks(allChainRequestIds, 25)) {
-      const { data, error } = await supabase
-        .from('fulfillment_submissions')
-        .select('request_id, submission_id, lead_hashes, lead_data')
-        .in('request_id', group)
+    const submissionResults = await Promise.all(
+      chunks(allChainRequestIds, COUNT_CHUNK_SIZE).map((group) =>
+        supabase
+          .from('fulfillment_submissions')
+          .select('request_id, submission_id, lead_hashes, lead_data')
+          .in('request_id', group),
+      ),
+    )
+    for (const { data, error } of submissionResults) {
       if (error) {
         submissionsErr = { message: error.message || 'submission batch failed' }
         break
