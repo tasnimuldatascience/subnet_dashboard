@@ -103,6 +103,8 @@ type NormalizedBenchmark = {
   aggregateScore: number
   aggregateScoreBand: string
   itemCount: number
+  publicIcpCount: number
+  privateHoldoutIcpCount: number
   scoreBandCounts: Record<string, number>
   failureCategoryCounts: Record<string, number>
   issues: BenchmarkIssue[]
@@ -215,7 +217,15 @@ async function fetchLatestBenchmark(supabase: ReturnType<typeof getSupabase>): P
   if (!row) return null
   const doc = row.report_doc ?? {}
   const publicIcps = stripInternalIcpFields(Array.isArray(doc.public_icps) ? doc.public_icps : [])
-  const itemCount = numberOr(doc.item_count, publicIcps.length + numberOr(doc.private_holdout_icp_count, 0))
+  const publicIcpCount = numberOr(
+    doc.public_icp_count,
+    numberOr(doc.visibility_split?.public_count, publicIcps.length)
+  )
+  const privateHoldoutIcpCount = numberOr(
+    doc.private_holdout_icp_count,
+    numberOr(doc.visibility_split?.private_count, 0)
+  )
+  const itemCount = numberOr(doc.item_count, publicIcpCount + privateHoldoutIcpCount)
 
   return {
     reportId: row.report_id,
@@ -224,6 +234,8 @@ async function fetchLatestBenchmark(supabase: ReturnType<typeof getSupabase>): P
     aggregateScore: numberOr(doc.aggregate_score, row.aggregate_score),
     aggregateScoreBand: String(doc.aggregate_score_band || scoreBand(numberOr(doc.aggregate_score, row.aggregate_score))),
     itemCount,
+    publicIcpCount,
+    privateHoldoutIcpCount,
     scoreBandCounts: doc.score_band_counts ?? {},
     failureCategoryCounts: doc.failure_category_counts ?? {},
     issues: buildBenchmarkIssues(doc, publicIcps),

@@ -23,6 +23,8 @@ type BenchmarkReport = {
   aggregateScore: number
   aggregateScoreBand: string
   itemCount: number
+  publicIcpCount: number
+  privateHoldoutIcpCount: number
   scoreBandCounts: Record<string, number>
   failureCategoryCounts: Record<string, number>
   issues: BenchmarkIssue[]
@@ -203,6 +205,11 @@ function Hero({ benchmark }: { benchmark: BenchmarkReport | null }) {
 
   const score = numberOr(benchmark.aggregateScore, 0)
   const tone = scoreTone(score)
+  const splitSummary = benchmark.itemCount > 0
+    ? benchmark.publicIcpCount > 0 || benchmark.privateHoldoutIcpCount > 0
+      ? `${benchmark.itemCount} ICP benchmark, ${benchmark.publicIcpCount} shown and ${benchmark.privateHoldoutIcpCount} withheld`
+      : `${benchmark.itemCount} ICP benchmark`
+    : ''
 
   return (
     <section className="pt-12 pb-14">
@@ -228,11 +235,10 @@ function Hero({ benchmark }: { benchmark: BenchmarkReport | null }) {
 
       <p className="mt-7 max-w-[560px] text-[14px] leading-[1.7] text-[var(--muted)]">
         The current benchmark score for Leadpoet&apos;s sales agent
-        {benchmark.itemCount > 0 ? (
+        {splitSummary ? (
           <>
-            , measured across{' '}
-            <b className="font-medium text-[var(--platinum)]">{benchmark.itemCount}</b> ideal
-            customer profiles
+            , measured on a{' '}
+            <b className="font-medium text-[var(--platinum)]">{splitSummary}</b>
           </>
         ) : null}
         . Research loops are scored against this baseline.
@@ -282,12 +288,15 @@ function KpiRail({ stats }: { stats: ResearchLabData['stats'] }) {
  * ============================================================ */
 function BenchmarkSection({ benchmark }: { benchmark: BenchmarkReport | null }) {
   const publicIcps = benchmark?.publicIcps ?? []
+  const detailSub = benchmark
+    ? `${formatDate(benchmark.benchmarkDate)} · ${benchmark.itemCount} ICPs`
+    : 'no report'
   return (
     <section className="pt-16">
       <SecLabel
         index="01"
         title="Benchmark detail"
-        sub={benchmark ? formatDate(benchmark.benchmarkDate) : 'no report'}
+        sub={detailSub}
       />
       {!benchmark ? (
         <p className="text-[14px] text-[var(--muted)]">
@@ -295,6 +304,17 @@ function BenchmarkSection({ benchmark }: { benchmark: BenchmarkReport | null }) 
         </p>
       ) : (
         <>
+          <div className="mb-6 flex flex-wrap gap-x-6 gap-y-2 border-l-2 border-l-[var(--line-2)] pl-4 font-mono text-[10.5px] uppercase tracking-[0.12em] text-[var(--muted-2)]">
+            <span>
+              <span className="text-[var(--platinum)]">{benchmark.itemCount}</span> total
+            </span>
+            <span>
+              <span className="text-[var(--platinum)]">{benchmark.publicIcpCount}</span> shown
+            </span>
+            <span>
+              <span className="text-[var(--platinum)]">{benchmark.privateHoldoutIcpCount}</span> withheld
+            </span>
+          </div>
           {benchmark.scoreBandCounts && <DistributionStrip counts={benchmark.scoreBandCounts} />}
           <div className="grid grid-cols-[28px_minmax(0,1fr)_132px_64px] gap-4 border-b border-[var(--line)] pb-3 pl-3 font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--muted-2)]">
             <span>#</span>

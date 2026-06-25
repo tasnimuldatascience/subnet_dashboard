@@ -2405,7 +2405,7 @@ function HowToChallenge({
         <ChallengeStep
           num={2}
           title="Submit your model"
-          description="Validators benchmark it against the current champion on the same 100 ICPs."
+          description="Validators benchmark it against the current champion on the same benchmark set."
         />
         <ChallengeStep
           num={3}
