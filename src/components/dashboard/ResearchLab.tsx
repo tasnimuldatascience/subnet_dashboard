@@ -620,7 +620,7 @@ function MethodologyFooter() {
     {
       n: 'I',
       title: 'Loops',
-      body: 'Miners fund hosted auto-research loops that try to improve Leadpoet’s sales agent.',
+      body: 'Miners direct and fund auto-research loops that try to improve Leadpoet’s sales agent.',
     },
     {
       n: 'II',
@@ -630,7 +630,7 @@ function MethodologyFooter() {
     {
       n: 'III',
       title: 'Rewards',
-      body: 'Verified compute is reimbursed; candidates that beat the benchmark earn improvement rewards.',
+      body: 'Verified compute is partially reimbursed; candidates that beat the benchmark earn improvement rewards.',
     },
   ]
   return (
