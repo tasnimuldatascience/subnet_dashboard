@@ -8,6 +8,7 @@ import {
   EpochAnalysis,
   SubmissionTracker,
   ModelCompetition,
+  ResearchLab,
   FAQ,
 } from '@/components/dashboard'
 import { Fulfillment } from '@/components/dashboard/Fulfillment'
@@ -22,6 +23,7 @@ import { cn } from '@/lib/utils'
 // Tab routing config
 // =================================================================
 type TabKey =
+  | 'research-lab'
   | 'fulfillment'
   | 'model-competition'
   | 'overview'
@@ -32,7 +34,7 @@ type TabKey =
 // Single source of truth for the public dashboard tabs. Legacy tab code stays
 // in this file for now, but tabs not listed here cannot be opened from the UI
 // or by an old ?tab=... URL.
-const VISIBLE_TABS: readonly TabKey[] = ['fulfillment', 'faq'] as const
+const VISIBLE_TABS: readonly TabKey[] = ['research-lab', 'fulfillment', 'faq'] as const
 const DEFAULT_TAB: TabKey = VISIBLE_TABS[0]
 
 function isValidTab(value: string | null): value is TabKey {
@@ -331,6 +333,13 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
               'flex w-full overflow-x-auto bg-slate-900/40 border border-slate-800/70 backdrop-blur-sm h-auto p-1 gap-1'
             )}
           >
+            {VISIBLE_TABS.includes('research-lab') && (
+              <DashboardTabTrigger
+                value="research-lab"
+                label="Research Lab"
+                shortLabel="Lab"
+              />
+            )}
             {VISIBLE_TABS.includes('fulfillment') && (
               <DashboardTabTrigger
                 value="fulfillment"
@@ -381,6 +390,18 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
           </TabsList>
 
           {/* Launch tabs stay mounted so switching tabs does not flash loading states. */}
+          {VISIBLE_TABS.includes('research-lab') && mountedTabs.has('research-lab') && (
+            <TabsContent
+              value="research-lab"
+              keepMounted
+              className="data-[state=active]:animate-in data-[state=active]:fade-in-0 data-[state=active]:duration-300"
+            >
+              <ErrorBoundary label="ResearchLab">
+                <ResearchLab onSync={handleSync} />
+              </ErrorBoundary>
+            </TabsContent>
+          )}
+
           {VISIBLE_TABS.includes('fulfillment') && mountedTabs.has('fulfillment') && (
             <TabsContent
               value="fulfillment"
