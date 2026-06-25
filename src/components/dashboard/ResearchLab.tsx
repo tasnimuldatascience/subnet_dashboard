@@ -35,8 +35,17 @@ type BenchmarkReport = {
   itemCount: number
   scoreBandCounts: Record<string, number>
   failureCategoryCounts: Record<string, number>
+  issues: BenchmarkIssue[]
   publicIcps: PublicIcp[]
   currentStatusAt: string | null
+}
+
+type BenchmarkIssue = {
+  key: string
+  label: string
+  count: number
+  severity: 'high' | 'medium' | 'low'
+  description: string
 }
 
 type PublicIcp = {
@@ -147,17 +156,12 @@ export function ResearchLab({ onSync }: { onSync?: () => void } = {}) {
         </div>
       </header>
 
-      <section className="grid gap-3 md:grid-cols-4">
+      <section className="grid gap-3 md:grid-cols-3">
         <MetricPanel
           label="Current model score"
           value={benchmark ? formatScore(benchmark.aggregateScore) : 'Pending'}
-          detail={benchmark ? `${benchmark.itemCount} ICP benchmark` : 'No published benchmark'}
+          detail={benchmark ? 'Latest published benchmark' : 'No published benchmark'}
           tone="gold"
-        />
-        <MetricPanel
-          label="Benchmark ICPs"
-          value={`${benchmark?.itemCount ?? 0}`}
-          detail={benchmark ? 'Latest benchmark window' : 'No published benchmark'}
         />
         <MetricPanel
           label="Active loops"
@@ -173,7 +177,7 @@ export function ResearchLab({ onSync }: { onSync?: () => void } = {}) {
 
       <section className="grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(380px,0.9fr)]">
         <BenchmarkPanel benchmark={benchmark} />
-        <ActivityPanel loops={data?.loops ?? []} topicGroups={data?.topicGroups ?? []} />
+        <ActivityPanel benchmark={benchmark} loops={data?.loops ?? []} topicGroups={data?.topicGroups ?? []} />
       </section>
     </div>
   )
@@ -246,9 +250,7 @@ function BenchmarkPanel({ benchmark }: { benchmark: BenchmarkReport | null }) {
                     Visible rows include exact ICP criteria and model scores. Blurred rows are withheld.
                   </div>
                 </div>
-                <div className="text-right text-xs text-slate-500">
-                  {benchmark.itemCount} total rows
-                </div>
+                <div className="text-right text-xs text-slate-500">Latest report</div>
               </div>
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {Object.entries(benchmark.failureCategoryCounts).slice(0, 4).map(([key, count]) => (
@@ -365,9 +367,19 @@ function HiddenIcpRow() {
   )
 }
 
-function ActivityPanel({ loops, topicGroups }: { loops: ResearchLoop[]; topicGroups: TopicGroup[] }) {
+function ActivityPanel({
+  benchmark,
+  loops,
+  topicGroups,
+}: {
+  benchmark: BenchmarkReport | null
+  loops: ResearchLoop[]
+  topicGroups: TopicGroup[]
+}) {
   return (
     <div className="space-y-5">
+      <ModelIssuesPanel issues={benchmark?.issues ?? []} />
+
       <div className="rounded-xl border border-slate-800/70 bg-slate-950/40 overflow-hidden">
         <div className="flex items-center justify-between gap-3 border-b border-slate-800/70 px-4 py-3">
           <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
@@ -399,6 +411,60 @@ function ActivityPanel({ loops, topicGroups }: { loops: ResearchLoop[]; topicGro
         </div>
       </div>
     </div>
+  )
+}
+
+function ModelIssuesPanel({ issues }: { issues: BenchmarkIssue[] }) {
+  return (
+    <div className="rounded-xl border border-slate-800/70 bg-slate-950/40 overflow-hidden">
+      <div className="flex items-center justify-between gap-3 border-b border-slate-800/70 px-4 py-3">
+        <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
+          <AlertCircle className="h-4 w-4 text-gold" />
+          Model issues
+        </div>
+        <span className="text-xs text-slate-500">{issues.length} categories</span>
+      </div>
+      <div className="divide-y divide-slate-800/50">
+        {issues.length === 0 ? (
+          <div className="p-5 text-sm text-slate-400">No repeated benchmark issues recorded yet.</div>
+        ) : (
+          issues.slice(0, 6).map((issue) => <IssueRow key={issue.key} issue={issue} />)
+        )}
+      </div>
+    </div>
+  )
+}
+
+function IssueRow({ issue }: { issue: BenchmarkIssue }) {
+  return (
+    <div className="px-4 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-slate-100">{issue.label}</div>
+          <p className="mt-1 text-xs leading-relaxed text-slate-500">{issue.description}</p>
+        </div>
+        <div className="shrink-0 text-right">
+          <div className="text-sm font-semibold tabular-nums text-slate-100">{issue.count}</div>
+          <div className="mt-1">
+            <IssueSeverityBadge severity={issue.severity} />
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function IssueSeverityBadge({ severity }: { severity: BenchmarkIssue['severity'] }) {
+  const className =
+    severity === 'high'
+      ? 'border-burgundy-soft bg-burgundy-soft text-slate-300'
+      : severity === 'medium'
+        ? 'border-amber-warm-soft bg-amber-warm-soft text-amber-warm'
+        : 'border-slate-700/70 bg-slate-900/70 text-slate-300'
+  return (
+    <Badge className={cn('capitalize', className)}>
+      {severity}
+    </Badge>
   )
 }
 

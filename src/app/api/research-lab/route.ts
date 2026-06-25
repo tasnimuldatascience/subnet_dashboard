@@ -105,8 +105,17 @@ type NormalizedBenchmark = {
   itemCount: number
   scoreBandCounts: Record<string, number>
   failureCategoryCounts: Record<string, number>
+  issues: BenchmarkIssue[]
   publicIcps: PublicIcpEntry[]
   currentStatusAt: string | null
+}
+
+type BenchmarkIssue = {
+  key: string
+  label: string
+  count: number
+  severity: 'high' | 'medium' | 'low'
+  description: string
 }
 
 type NormalizedLoop = {
@@ -217,9 +226,138 @@ async function fetchLatestBenchmark(supabase: ReturnType<typeof getSupabase>): P
     itemCount,
     scoreBandCounts: doc.score_band_counts ?? {},
     failureCategoryCounts: doc.failure_category_counts ?? {},
+    issues: buildBenchmarkIssues(doc, publicIcps),
     publicIcps,
     currentStatusAt: row.current_status_at || row.created_at,
   }
+}
+
+function buildBenchmarkIssues(doc: PublicBenchmarkReportDoc, publicIcps: PublicIcpEntry[]): BenchmarkIssue[] {
+  const counts = new Map<string, number>()
+
+  const aggregateFailureCounts = doc.failure_category_counts ?? {}
+  for (const [key, count] of Object.entries(aggregateFailureCounts)) {
+    addIssueCount(counts, key, count)
+  }
+
+  if (Object.keys(aggregateFailureCounts).length === 0) {
+    for (const icp of publicIcps) {
+      for (const key of icp.diagnostics?.failure_categories ?? []) {
+        addIssueCount(counts, key, 1)
+      }
+    }
+  }
+
+  addIssueCount(counts, 'zero_company_results', doc.zero_lead_icp_count ?? 0)
+  addIssueCount(counts, 'low_intent_fit', doc.low_intent_fit_icp_count ?? 0)
+  addIssueCount(counts, 'low_icp_fit', doc.low_icp_fit_count ?? 0)
+
+  return Array.from(counts.entries())
+    .map(([key, count]) => issueForKey(key, count))
+    .filter((issue) => issue.count > 0)
+    .sort((a, b) => b.count - a.count || severityRank(a.severity) - severityRank(b.severity) || a.label.localeCompare(b.label))
+    .slice(0, 8)
+}
+
+function addIssueCount(counts: Map<string, number>, key: string, value: unknown) {
+  const count = Math.max(0, Math.round(numberOr(value, 0)))
+  if (!key || count <= 0) return
+  counts.set(key, (counts.get(key) ?? 0) + count)
+}
+
+function issueForKey(key: string, count: number): BenchmarkIssue {
+  const normalized = key.toLowerCase()
+  if (normalized.includes('hallucinated') || normalized.includes('generic_intent')) {
+    return {
+      key,
+      count,
+      label: 'Generic or hallucinated intent',
+      severity: 'high',
+      description: 'Intent evidence looked fabricated, generic, hardcoded, or not tied closely enough to the ICP.',
+    }
+  }
+  if (normalized.includes('stale') || normalized.includes('date') || normalized.includes('freshness')) {
+    return {
+      key,
+      count,
+      label: 'Stale or invalid timing',
+      severity: 'high',
+      description: 'Intent evidence did not appear recent enough or had invalid/future-dated timing.',
+    }
+  }
+  if (normalized.includes('low_intent')) {
+    return {
+      key,
+      count,
+      label: 'Weak intent match',
+      severity: 'medium',
+      description: 'The model found companies, but the buying-intent signal was too weak or indirect.',
+    }
+  }
+  if (normalized.includes('low_icp') || normalized.includes('icp_or_geo')) {
+    return {
+      key,
+      count,
+      label: 'ICP mismatch',
+      severity: 'medium',
+      description: 'The returned company did not match the target industry, geography, company size, or role profile closely enough.',
+    }
+  }
+  if (normalized.includes('zero')) {
+    return {
+      key,
+      count,
+      label: 'No companies returned',
+      severity: 'medium',
+      description: 'The model returned no usable companies for that ICP.',
+    }
+  }
+  if (normalized.includes('company_verification')) {
+    return {
+      key,
+      count,
+      label: 'Company verification failed',
+      severity: 'medium',
+      description: 'The company identity or website could not be verified reliably.',
+    }
+  }
+  if (normalized.includes('source') || normalized.includes('url') || normalized.includes('fetch')) {
+    return {
+      key,
+      count,
+      label: 'Source fetch failed',
+      severity: 'low',
+      description: 'The model relied on a source that could not be fetched or verified cleanly.',
+    }
+  }
+  if (normalized.includes('parser') || normalized.includes('json') || normalized.includes('llm')) {
+    return {
+      key,
+      count,
+      label: 'Scoring format issue',
+      severity: 'low',
+      description: 'The response could not be parsed or scored cleanly.',
+    }
+  }
+  return {
+    key,
+    count,
+    label: readableIssueLabel(key),
+    severity: 'low',
+    description: 'A sanitized benchmark issue was recorded for this model run.',
+  }
+}
+
+function severityRank(severity: BenchmarkIssue['severity']): number {
+  if (severity === 'high') return 0
+  if (severity === 'medium') return 1
+  return 2
+}
+
+function readableIssueLabel(value: string): string {
+  return value
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (char) => char.toUpperCase())
 }
 
 function stripInternalIcpFields(icps: PublicIcpEntry[]): PublicIcpEntry[] {
