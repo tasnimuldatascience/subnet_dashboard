@@ -37,11 +37,8 @@ type PublicBenchmarkReportDoc = {
   score_band_counts?: Record<string, number>
   failure_category_counts?: Record<string, number>
   visibility_split?: {
-    split_policy?: string
     public_count?: number
     private_count?: number
-    public_strength_counts?: Record<string, number>
-    private_strength_counts?: Record<string, number>
   }
   public_icps?: PublicIcpEntry[]
   icp_buckets?: unknown[]
@@ -213,7 +210,7 @@ async function fetchLatestBenchmark(supabase: ReturnType<typeof getSupabase>): P
   const row = (data?.[0] ?? null) as PublicBenchmarkReportRow | null
   if (!row) return null
   const doc = row.report_doc ?? {}
-  const publicIcps = Array.isArray(doc.public_icps) ? doc.public_icps : []
+  const publicIcps = stripInternalIcpFields(Array.isArray(doc.public_icps) ? doc.public_icps : [])
   const itemCount = numberOr(doc.item_count, publicIcps.length + numberOr(doc.private_holdout_icp_count, 0))
 
   return {
@@ -227,10 +224,21 @@ async function fetchLatestBenchmark(supabase: ReturnType<typeof getSupabase>): P
     privateHoldoutIcpCount: numberOr(doc.private_holdout_icp_count, Math.max(0, itemCount - publicIcps.length)),
     scoreBandCounts: doc.score_band_counts ?? {},
     failureCategoryCounts: doc.failure_category_counts ?? {},
-    visibilitySplit: doc.visibility_split ?? {},
+    visibilitySplit: {
+      public_count: numberOr(doc.visibility_split?.public_count, publicIcps.length),
+      private_count: numberOr(doc.visibility_split?.private_count, Math.max(0, itemCount - publicIcps.length)),
+    },
     publicIcps,
     currentStatusAt: row.current_status_at || row.created_at,
   }
+}
+
+function stripInternalIcpFields(icps: PublicIcpEntry[]): PublicIcpEntry[] {
+  return icps.map((icp) => {
+    const publicIcp = { ...icp }
+    delete publicIcp.strength_label
+    return publicIcp
+  })
 }
 
 async function fetchPublicLoops(supabase: ReturnType<typeof getSupabase>): Promise<NormalizedLoop[]> {

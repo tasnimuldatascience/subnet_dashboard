@@ -39,11 +39,8 @@ type BenchmarkReport = {
   scoreBandCounts: Record<string, number>
   failureCategoryCounts: Record<string, number>
   visibilitySplit: {
-    splitPolicy?: string
     public_count?: number
     private_count?: number
-    public_strength_counts?: Record<string, number>
-    private_strength_counts?: Record<string, number>
   }
   publicIcps: PublicIcp[]
   currentStatusAt: string | null
@@ -58,7 +55,6 @@ type PublicIcp = {
   day_rank?: number
   score?: number
   company_count?: number
-  strength_label?: string
   icp?: Record<string, unknown>
   diagnostics?: {
     failure_categories?: string[]
@@ -228,8 +224,6 @@ function MetricPanel({
 
 function BenchmarkPanel({ benchmark }: { benchmark: BenchmarkReport | null }) {
   const publicIcps = benchmark?.publicIcps ?? []
-  const publicStrength = benchmark?.visibilitySplit?.public_strength_counts ?? {}
-  const privateStrength = benchmark?.visibilitySplit?.private_strength_counts ?? {}
 
   return (
     <div className="rounded-xl border border-slate-800/70 bg-slate-950/40 overflow-hidden">
@@ -255,8 +249,16 @@ function BenchmarkPanel({ benchmark }: { benchmark: BenchmarkReport | null }) {
       ) : (
         <>
           <div className="grid gap-3 border-b border-slate-800/70 p-4 md:grid-cols-3">
-            <SplitBlock label="Public split" weak={numberOr(publicStrength.weak, 0)} strong={numberOr(publicStrength.strong, 0)} />
-            <SplitBlock label="Private holdout" weak={numberOr(privateStrength.weak, 0)} strong={numberOr(privateStrength.strong, 0)} />
+            <CountBlock
+              label="Public ICPs"
+              value={benchmark.publicIcpCount}
+              detail="Exact ICP criteria and scores shown below"
+            />
+            <CountBlock
+              label="Private holdout"
+              value={benchmark.privateHoldoutIcpCount}
+              detail="Used in the total score, not displayed"
+            />
             <div className="rounded-lg border border-slate-800/60 bg-slate-900/35 p-3">
               <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">Failures</div>
               <div className="mt-2 flex flex-wrap gap-1.5">
@@ -288,19 +290,15 @@ function BenchmarkPanel({ benchmark }: { benchmark: BenchmarkReport | null }) {
   )
 }
 
-function SplitBlock({ label, weak, strong }: { label: string; weak: number; strong: number }) {
+function CountBlock({ label, value, detail }: { label: string; value: number; detail: string }) {
   return (
     <div className="rounded-lg border border-slate-800/60 bg-slate-900/35 p-3">
       <div className="text-[10px] uppercase tracking-[0.14em] text-slate-500">{label}</div>
       <div className="mt-2 flex items-baseline gap-3">
-        <span className="text-xl font-semibold text-slate-100 tabular-nums">{weak + strong}</span>
+        <span className="text-xl font-semibold text-slate-100 tabular-nums">{value}</span>
         <span className="text-xs text-slate-500">ICPs</span>
       </div>
-      <div className="mt-2 flex gap-2 text-xs">
-        <span className="text-amber-warm">{weak} weak</span>
-        <span className="text-slate-600">/</span>
-        <span className="text-gold">{strong} strong</span>
-      </div>
+      <div className="mt-2 text-xs text-slate-500">{detail}</div>
     </div>
   )
 }
@@ -323,11 +321,11 @@ function PublicIcpRow({ icp }: { icp: PublicIcp }) {
   return (
     <div className="grid grid-cols-[88px_minmax(0,1fr)_96px] gap-3 border-b border-slate-800/45 px-4 py-3 last:border-b-0">
       <div>
-        <div className={cn('text-lg font-semibold tabular-nums', icp.strength_label === 'weak' ? 'text-amber-warm' : 'text-gold')}>
+        <div className="text-lg font-semibold tabular-nums text-gold">
           {formatScore(numberOr(icp.score, 0))}
         </div>
         <div className="mt-1 text-[10px] uppercase tracking-[0.12em] text-slate-500">
-          {icp.strength_label || 'public'}
+          score
         </div>
       </div>
       <div className="min-w-0">
