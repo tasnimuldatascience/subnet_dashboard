@@ -9,6 +9,7 @@ import {
   SubmissionTracker,
   ModelCompetition,
   ResearchLab,
+  FailureBoard,
   FAQ,
 } from '@/components/dashboard'
 import { Fulfillment } from '@/components/dashboard/Fulfillment'
@@ -22,19 +23,25 @@ import { cn } from '@/lib/utils'
 // =================================================================
 // Tab routing config
 // =================================================================
-type TabKey =
-  | 'research-lab'
-  | 'fulfillment'
-  | 'model-competition'
-  | 'overview'
-  | 'miner-tracker'
-  | 'epoch-analysis'
-  | 'submission-tracker'
-  | 'faq'
-// Single source of truth for the public dashboard tabs. Legacy tab code stays
-// in this file for now, but tabs not listed here cannot be opened from the UI
-// or by an old ?tab=... URL.
-const VISIBLE_TABS: readonly TabKey[] = ['research-lab', 'fulfillment', 'faq'] as const
+// Single source of truth for which tabs exist, their valid URL keys,
+// and which subset is live in the launch product. Set
+// `NEXT_PUBLIC_LAUNCH_MODE=full` in dev to expose all tabs.
+const LAUNCH_TABS = ['research-lab', 'fulfillment', 'faq'] as const
+const FULL_TABS = [
+  'research-lab',
+  'fulfillment',
+  'model-competition',
+  'failure-board',
+  'overview',
+  'miner-tracker',
+  'epoch-analysis',
+  'submission-tracker',
+  'faq',
+] as const
+type TabKey = (typeof FULL_TABS)[number]
+const LAUNCH_MODE = process.env.NEXT_PUBLIC_LAUNCH_MODE ?? 'launch'
+const VISIBLE_TABS: readonly TabKey[] =
+  LAUNCH_MODE === 'full' ? FULL_TABS : LAUNCH_TABS
 const DEFAULT_TAB: TabKey = VISIBLE_TABS[0]
 
 function isValidTab(value: string | null): value is TabKey {
@@ -370,7 +377,13 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
                 shortLabel="Model"
               />
             )}
-            {/* Legacy tabs stay registered in code, but are not publicly visible. */}
+            {VISIBLE_TABS.includes('failure-board') && (
+              <DashboardTabTrigger
+                value="failure-board"
+                label="Failure Board"
+                shortLabel="Failures"
+              />
+            )}
             {VISIBLE_TABS.includes('overview') && (
               <DashboardTabTrigger
                 value="overview"
@@ -445,6 +458,18 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
             >
               <ErrorBoundary label="ModelCompetition">
                 <ModelCompetition />
+              </ErrorBoundary>
+            </TabsContent>
+          )}
+
+          {VISIBLE_TABS.includes('failure-board') && mountedTabs.has('failure-board') && (
+            <TabsContent
+              value="failure-board"
+              keepMounted
+              className="data-[state=active]:animate-in data-[state=active]:fade-in-0 data-[state=active]:duration-300"
+            >
+              <ErrorBoundary label="FailureBoard">
+                <FailureBoard minerHotkey={selectedMinerHotkey ?? undefined} />
               </ErrorBoundary>
             </TabsContent>
           )}
