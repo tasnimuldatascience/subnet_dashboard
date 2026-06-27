@@ -253,33 +253,27 @@ async function fetchLatestBenchmark(supabase: ReturnType<typeof getSupabase>): P
     privateHoldoutIcpCount,
     scoreBandCounts: doc.score_band_counts ?? {},
     failureCategoryCounts: doc.failure_category_counts ?? {},
-    issues: buildBenchmarkIssues(doc, publicIcps),
+    issues: buildBenchmarkIssues(doc),
     publicIcps,
     currentStatusAt: row.current_status_at || row.created_at,
   }
 }
 
-function buildBenchmarkIssues(doc: PublicBenchmarkReportDoc, publicIcps: PublicIcpEntry[]): BenchmarkIssue[] {
+function buildBenchmarkIssues(doc: PublicBenchmarkReportDoc): BenchmarkIssue[] {
   const counts = new Map<string, number>()
   const icpsByIssue = new Map<string, ModelIssueIcpEntry[]>()
 
   const explicitIssueCounts = doc.model_issue_counts
-  if (explicitIssueCounts && Object.keys(explicitIssueCounts).length > 0) {
-    for (const [key, count] of Object.entries(explicitIssueCounts)) {
-      addIssueCount(counts, key, count)
-      const rows = Array.isArray(doc.model_issue_public_icps?.[key])
-        ? doc.model_issue_public_icps[key]
-        : []
-      for (const row of rows) {
-        appendIssueIcp(icpsByIssue, key, issueIcpEntry(row))
-      }
-    }
-  } else {
-    for (const icp of publicIcps) {
-      for (const key of issueKeysForPublicIcp(icp)) {
-        addIssueCount(counts, key, 1)
-        appendIssueIcp(icpsByIssue, key, issueIcpEntry(icp))
-      }
+  if (!explicitIssueCounts || Object.keys(explicitIssueCounts).length === 0) {
+    return []
+  }
+  for (const [key, count] of Object.entries(explicitIssueCounts)) {
+    addIssueCount(counts, key, count)
+    const rows = Array.isArray(doc.model_issue_public_icps?.[key])
+      ? doc.model_issue_public_icps[key]
+      : []
+    for (const row of rows) {
+      appendIssueIcp(icpsByIssue, key, issueIcpEntry(row))
     }
   }
 
@@ -294,30 +288,6 @@ function addIssueCount(counts: Map<string, number>, key: string, value: unknown)
   const count = Math.max(0, Math.round(numberOr(value, 0)))
   if (!key || count <= 0) return
   counts.set(key, (counts.get(key) ?? 0) + count)
-}
-
-function issueKeysForPublicIcp(icp: PublicIcpEntry): string[] {
-  const keys = new Set(normalizedFailureCategories(icp.diagnostics?.failure_categories ?? []))
-  const companyCount = numberOr(icp.company_count, 0)
-  if (companyCount <= 0) {
-    keys.add('zero_company_results')
-  } else if (keys.size === 0 && numberOr(icp.diagnostics?.avg_intent_signal_final, 0) < 15) {
-    keys.add('low_intent_fit')
-  }
-  return Array.from(keys).sort()
-}
-
-function normalizedFailureCategories(value: unknown): string[] {
-  const raw = typeof value === 'string'
-    ? [value]
-    : Array.isArray(value)
-      ? value.map((item) => String(item))
-      : []
-  const categories = new Set(raw.map((item) => item.trim()).filter(Boolean))
-  if (categories.has('provider_http_4xx') || categories.has('provider_http_5xx')) {
-    categories.delete('runtime_provider_error')
-  }
-  return Array.from(categories).sort()
 }
 
 function appendIssueIcp(
