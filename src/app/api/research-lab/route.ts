@@ -61,7 +61,102 @@ type PublicIcpEntry = {
     failure_categories?: string[]
     avg_icp_fit?: number
     avg_intent_signal_final?: number
+    // Per-stage funnel + per-signal coverage, sourced from the private
+    // benchmark bundle and attached only for already-revealed public ICPs.
+    sourcing_failed?: boolean
+    funnel?: LeadFunnel
+    per_signal?: Record<string, PerSignalStat>
+    rejection_reasons?: Record<string, number>
   }
+}
+
+// Lead funnel: how many of the model's discovered companies survive each
+// scoring stage. Stored per ICP in the private benchmark bundle's
+// score_summary_doc.per_icp_summaries[].diagnostics.
+type LeadFunnel = {
+  sourced: number
+  fit_pass: number
+  verified: number
+  intent_valid: number
+  scored: number
+}
+
+type PerSignalStat = {
+  signal_index: number
+  evidence_type: string
+  companies_submitted: number
+  companies_passed: number
+  signals_submitted: number
+  signals_passed: number
+  avg_score: number
+  sum_score: number
+  max_score: number
+}
+
+type EvidenceTypeStat = {
+  signals?: number
+  companies_passed?: number
+  avg_after_decay?: number
+  fresh_rate?: number
+}
+
+// Run-wide rollup of one required intent/evidence type.
+// icp_count = number of benchmark ICPs (across ALL 20, incl. sourcing failures)
+// that required this intent type, taken from the ICP definitions.
+// expected = HEALTHY_DISCOVERY_FLOOR x icp_count; fulfilled = companies whose
+// evidence of this type passed; pass_pct = fulfilled / expected.
+type IntentTypeRollup = {
+  evidence_type: string
+  fulfilled: number
+  icp_count: number
+  expected: number
+  pass_pct: number
+  avg_score: number
+}
+
+type PrivateIcpDiagnostics = {
+  sourcing_failed?: boolean
+  funnel?: Partial<LeadFunnel>
+  per_signal?: Record<string, PerSignalStat>
+  rejection_reasons?: Record<string, number>
+  evidence_types?: Record<string, EvidenceTypeStat>
+}
+
+type PrivateIcpSummary = {
+  icp_ref?: string
+  icp_hash?: string
+  diagnostics?: PrivateIcpDiagnostics
+}
+
+type PrivateBundleRow = {
+  benchmark_date: string
+  created_at: string
+  benchmark_quality: string | null
+  score_summary_doc: { per_icp_summaries?: PrivateIcpSummary[] } | null
+}
+
+// Per-ICP discovery health: how many ICPs the model could find companies for.
+// The benchmark sets no hard per-ICP quota, so HEALTHY_DISCOVERY_FLOOR is a
+// labeled reporting threshold, not a contract.
+const HEALTHY_DISCOVERY_FLOOR = 5
+
+type DiscoverySummary = {
+  totalIcps: number
+  noCompanies: number // 0 sourced (sourcing failed / infra)
+  weak: number // 1..floor-1 discovered
+  healthy: number // >= floor discovered
+  totalDiscovered: number // sum sourced across all ICPs
+  totalScored: number // sum scored across all ICPs
+  floor: number
+}
+
+type PrivateDiagnosticsBundle = {
+  aggregateFunnel: LeadFunnel
+  sourcingFailedCount: number
+  scoredIcpCount: number
+  intentTypes: IntentTypeRollup[]
+  discovery: DiscoverySummary
+  byRef: Map<string, PrivateIcpDiagnostics>
 }
 
 type ModelIssueIcpEntry = {
@@ -123,6 +218,10 @@ type NormalizedBenchmark = {
   failureCategoryCounts: Record<string, number>
   issues: BenchmarkIssue[]
   publicIcps: PublicIcpEntry[]
+  aggregateFunnel: LeadFunnel | null
+  sourcingFailedCount: number
+  intentTypes: IntentTypeRollup[]
+  discovery: DiscoverySummary | null
   currentStatusAt: string | null
 }
 
@@ -231,7 +330,14 @@ async function fetchLatestBenchmark(supabase: ReturnType<typeof getSupabase>): P
   const row = (data?.[0] ?? null) as PublicBenchmarkReportRow | null
   if (!row) return null
   const doc = row.report_doc ?? {}
-  const publicIcps = stripInternalIcpFields(Array.isArray(doc.public_icps) ? doc.public_icps : [])
+  const benchmarkDate = String(doc.benchmark_date || row.benchmark_date)
+  // Pull per-stage funnel + per-signal coverage from the private bundle and
+  // attach it ONLY to the already-revealed public ICPs (no holdout leak).
+  const privateDiag = await fetchPrivateDiagnostics(supabase, benchmarkDate)
+  const publicIcps = attachPrivateDiagnostics(
+    stripInternalIcpFields(Array.isArray(doc.public_icps) ? doc.public_icps : []),
+    privateDiag,
+  )
   const publicIcpCount = numberOr(
     doc.public_icp_count,
     numberOr(doc.visibility_split?.public_count, publicIcps.length)
@@ -255,7 +361,235 @@ async function fetchLatestBenchmark(supabase: ReturnType<typeof getSupabase>): P
     failureCategoryCounts: doc.failure_category_counts ?? {},
     issues: buildBenchmarkIssues(doc),
     publicIcps,
+    aggregateFunnel: privateDiag?.aggregateFunnel ?? null,
+    sourcingFailedCount: privateDiag?.sourcingFailedCount ?? 0,
+    intentTypes: privateDiag?.intentTypes ?? [],
+    discovery: privateDiag?.discovery ?? null,
     currentStatusAt: row.current_status_at || row.created_at,
+  }
+}
+
+// Read the matching private benchmark bundle (service-role only) and reduce it
+// to: an anonymized aggregate funnel across ALL ICPs, a sourcing-failure count,
+// and a per-ICP diagnostics map keyed by icp_ref (consumed only for revealed
+// public ICPs). Returns null if unavailable — the rest of the report still works.
+async function fetchPrivateDiagnostics(
+  supabase: ReturnType<typeof getSupabase>,
+  benchmarkDate: string,
+): Promise<PrivateDiagnosticsBundle | null> {
+  let query = supabase
+    .from('research_lab_private_model_benchmark_current')
+    .select('benchmark_date, created_at, benchmark_quality, score_summary_doc')
+    .eq('benchmark_quality', 'passed')
+    .order('created_at', { ascending: false })
+    .limit(1)
+  if (benchmarkDate) query = query.eq('benchmark_date', benchmarkDate)
+
+  const { data, error } = await query
+  if (error) {
+    console.error('[Research Lab API] private bundle query failed:', error)
+    return null
+  }
+  const row = (data?.[0] ?? null) as PrivateBundleRow | null
+  if (!row?.score_summary_doc) return null
+
+  const summaries = Array.isArray(row.score_summary_doc.per_icp_summaries)
+    ? row.score_summary_doc.per_icp_summaries
+    : []
+
+  const aggregateFunnel: LeadFunnel = { sourced: 0, fit_pass: 0, verified: 0, intent_valid: 0, scored: 0 }
+  let sourcingFailedCount = 0
+  let scoredIcpCount = 0
+  const byRef = new Map<string, PrivateIcpDiagnostics>()
+  // Companies that PASSED each intent type (numerator), from per_signal.
+  const fulfilledAcc = new Map<string, { fulfilled: number; signalsPassed: number; scoreSum: number }>()
+
+  const discovery: DiscoverySummary = {
+    totalIcps: 0, noCompanies: 0, weak: 0, healthy: 0,
+    totalDiscovered: 0, totalScored: 0, floor: HEALTHY_DISCOVERY_FLOOR,
+  }
+
+  for (const summary of summaries) {
+    const diag = summary?.diagnostics
+    if (!diag) continue
+    const ref = summary.icp_ref ? String(summary.icp_ref) : ''
+    if (ref) byRef.set(ref, diag)
+
+    // Discovery health counts every ICP, including sourcing failures.
+    discovery.totalIcps += 1
+    const srcCount = diag.sourcing_failed ? 0 : numberOr(diag.funnel?.sourced, 0)
+    discovery.totalDiscovered += srcCount
+    discovery.totalScored += diag.sourcing_failed ? 0 : numberOr(diag.funnel?.scored, 0)
+    if (srcCount <= 0) discovery.noCompanies += 1
+    else if (srcCount < HEALTHY_DISCOVERY_FLOOR) discovery.weak += 1
+    else discovery.healthy += 1
+
+    if (diag.sourcing_failed) {
+      sourcingFailedCount += 1
+      continue
+    }
+    scoredIcpCount += 1
+    const f = diag.funnel ?? {}
+    aggregateFunnel.sourced += numberOr(f.sourced, 0)
+    aggregateFunnel.fit_pass += numberOr(f.fit_pass, 0)
+    aggregateFunnel.verified += numberOr(f.verified, 0)
+    aggregateFunnel.intent_valid += numberOr(f.intent_valid, 0)
+    aggregateFunnel.scored += numberOr(f.scored, 0)
+
+    for (const stat of Object.values(diag.per_signal ?? {})) {
+      const type = (stat.evidence_type || 'UNSPECIFIED').toUpperCase()
+      const entry = fulfilledAcc.get(type) ?? { fulfilled: 0, signalsPassed: 0, scoreSum: 0 }
+      entry.fulfilled += numberOr(stat.companies_passed, 0)
+      entry.signalsPassed += numberOr(stat.signals_passed, 0)
+      entry.scoreSum += numberOr(stat.sum_score, 0)
+      fulfilledAcc.set(type, entry)
+    }
+  }
+
+  // Denominator: how many of ALL benchmark ICPs (incl. sourcing failures)
+  // required each intent type — taken from the ICP definitions, so types the
+  // model never passed (or only had in failed ICPs) still appear at their true %.
+  const requiredByType = await fetchRequiredIntentCounts(
+    supabase,
+    summaries.map((s) => (s?.icp_ref ? String(s.icp_ref) : '')).filter(Boolean),
+  )
+
+  const allTypes = new Set<string>([...requiredByType.keys(), ...fulfilledAcc.keys()])
+  const intentTypes: IntentTypeRollup[] = Array.from(allTypes)
+    .map((evidence_type) => {
+      const icpCount = requiredByType.get(evidence_type) ?? 0
+      const f = fulfilledAcc.get(evidence_type) ?? { fulfilled: 0, signalsPassed: 0, scoreSum: 0 }
+      const expected = HEALTHY_DISCOVERY_FLOOR * icpCount
+      return {
+        evidence_type,
+        fulfilled: f.fulfilled,
+        icp_count: icpCount,
+        expected,
+        pass_pct: expected > 0 ? Math.round((f.fulfilled / expected) * 100) : 0,
+        avg_score: f.signalsPassed > 0 ? Math.round((f.scoreSum / f.signalsPassed) * 10) / 10 : 0,
+      }
+    })
+    .sort((a, b) => b.pass_pct - a.pass_pct || b.icp_count - a.icp_count)
+
+  return { aggregateFunnel, sourcingFailedCount, scoredIcpCount, intentTypes, discovery, byRef }
+}
+
+// Count, per intent/evidence type, how many benchmark ICPs required it — read
+// from the ICP definitions (intent_category + bonus_intents) for ALL ICPs in
+// the run, so the pass-rate denominator reflects every ICP, not just scored ones.
+async function fetchRequiredIntentCounts(
+  supabase: ReturnType<typeof getSupabase>,
+  icpRefs: string[],
+): Promise<Map<string, number>> {
+  const setIds = new Set<string>()
+  const refToIcpId = new Map<string, string>()
+  for (const ref of icpRefs) {
+    const parts = ref.split(':') // qualification_private_icp_sets:<set_id>:<icp_id>
+    if (parts.length >= 3) {
+      setIds.add(parts[1])
+      refToIcpId.set(ref, parts[2])
+    }
+  }
+  const counts = new Map<string, number>()
+  if (setIds.size === 0) return counts
+
+  const { data, error } = await supabase
+    .from('qualification_private_icp_sets')
+    .select('set_id, icps')
+    .in('set_id', Array.from(setIds))
+  if (error) {
+    console.error('[Research Lab API] icp set query failed:', error)
+    return counts
+  }
+
+  type RawIcp = { icp_id?: string; intent_category?: string; bonus_intents?: { intent_category?: string }[] }
+  const icpIdToTypes = new Map<string, Set<string>>()
+  for (const row of (data ?? []) as { icps?: RawIcp[] }[]) {
+    for (const icp of row.icps ?? []) {
+      const id = String(icp.icp_id || '')
+      if (!id) continue
+      const types = new Set<string>()
+      const primary = String(icp.intent_category || '').toUpperCase().trim()
+      if (primary) types.add(primary)
+      for (const bonus of icp.bonus_intents ?? []) {
+        const bc = String(bonus?.intent_category || '').toUpperCase().trim()
+        if (bc) types.add(bc)
+      }
+      icpIdToTypes.set(id, types)
+    }
+  }
+
+  // Each ICP contributes +1 to every distinct intent type it requires.
+  for (const icpId of refToIcpId.values()) {
+    for (const type of icpIdToTypes.get(icpId) ?? []) {
+      counts.set(type, (counts.get(type) ?? 0) + 1)
+    }
+  }
+  return counts
+}
+
+function attachPrivateDiagnostics(
+  icps: PublicIcpEntry[],
+  privateDiag: PrivateDiagnosticsBundle | null,
+): PublicIcpEntry[] {
+  if (!privateDiag) return icps
+  return icps.map((icp) => {
+    const ref = icp.icp_ref ? String(icp.icp_ref) : ''
+    const diag = ref ? privateDiag.byRef.get(ref) : undefined
+    if (!diag) return icp
+    return {
+      ...icp,
+      diagnostics: {
+        ...icp.diagnostics,
+        sourcing_failed: diag.sourcing_failed,
+        funnel: normalizeFunnel(diag.funnel),
+        per_signal: normalizePerSignal(diag.per_signal),
+        rejection_reasons: normalizeReasons(diag.rejection_reasons),
+      },
+    }
+  })
+}
+
+// Apply numeric defaults so the UI never renders "undefined" if the stored
+// per-signal blob is missing fields (mirrors normalizeFunnel for funnel).
+function normalizePerSignal(
+  per: Record<string, PerSignalStat> | undefined,
+): Record<string, PerSignalStat> | undefined {
+  if (!per) return undefined
+  const out: Record<string, PerSignalStat> = {}
+  for (const [key, stat] of Object.entries(per)) {
+    out[key] = {
+      signal_index: numberOr(stat?.signal_index, Number(key) || 0),
+      evidence_type: String(stat?.evidence_type || 'UNSPECIFIED'),
+      companies_submitted: numberOr(stat?.companies_submitted, 0),
+      companies_passed: numberOr(stat?.companies_passed, 0),
+      signals_submitted: numberOr(stat?.signals_submitted, 0),
+      signals_passed: numberOr(stat?.signals_passed, 0),
+      avg_score: numberOr(stat?.avg_score, 0),
+      sum_score: numberOr(stat?.sum_score, 0),
+      max_score: numberOr(stat?.max_score, 0),
+    }
+  }
+  return out
+}
+
+function normalizeReasons(
+  reasons: Record<string, number> | undefined,
+): Record<string, number> | undefined {
+  if (!reasons) return undefined
+  const out: Record<string, number> = {}
+  for (const [key, value] of Object.entries(reasons)) out[key] = numberOr(value, 0)
+  return out
+}
+
+function normalizeFunnel(funnel: Partial<LeadFunnel> | undefined): LeadFunnel | undefined {
+  if (!funnel) return undefined
+  return {
+    sourced: numberOr(funnel.sourced, 0),
+    fit_pass: numberOr(funnel.fit_pass, 0),
+    verified: numberOr(funnel.verified, 0),
+    intent_valid: numberOr(funnel.intent_valid, 0),
+    scored: numberOr(funnel.scored, 0),
   }
 }
 

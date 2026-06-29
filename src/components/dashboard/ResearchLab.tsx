@@ -29,7 +29,50 @@ type BenchmarkReport = {
   failureCategoryCounts: Record<string, number>
   issues: BenchmarkIssue[]
   publicIcps: PublicIcp[]
+  aggregateFunnel: LeadFunnel | null
+  sourcingFailedCount: number
+  intentTypes: IntentTypeRollup[]
+  discovery: DiscoverySummary | null
   currentStatusAt: string | null
+}
+
+type DiscoverySummary = {
+  totalIcps: number
+  noCompanies: number
+  weak: number
+  healthy: number
+  totalDiscovered: number
+  totalScored: number
+  floor: number
+}
+
+type IntentTypeRollup = {
+  evidence_type: string
+  fulfilled: number
+  icp_count: number
+  expected: number
+  pass_pct: number
+  avg_score: number
+}
+
+type LeadFunnel = {
+  sourced: number
+  fit_pass: number
+  verified: number
+  intent_valid: number
+  scored: number
+}
+
+type PerSignalStat = {
+  signal_index: number
+  evidence_type: string
+  companies_submitted: number
+  companies_passed: number
+  signals_submitted: number
+  signals_passed: number
+  avg_score: number
+  sum_score: number
+  max_score: number
 }
 
 type BenchmarkIssue = {
@@ -67,6 +110,10 @@ type PublicIcp = {
     failure_categories?: string[]
     avg_icp_fit?: number
     avg_intent_signal_final?: number
+    sourcing_failed?: boolean
+    funnel?: LeadFunnel
+    per_signal?: Record<string, PerSignalStat>
+    rejection_reasons?: Record<string, number>
   }
 }
 
@@ -334,10 +381,291 @@ function BenchmarkSection({ benchmark }: { benchmark: BenchmarkReport | null }) 
               <LeaderboardRow key={icp.icp_ref || icp.icp_hash || i} icp={icp} rank={i + 1} />
             ))
           )}
+          {(benchmark.aggregateFunnel || (benchmark.intentTypes && benchmark.intentTypes.length > 0)) && (
+            <div className="mt-12 border-t border-[var(--line)] pt-10">
+              <div className="mb-7 font-mono text-[10.5px] uppercase tracking-[0.16em] text-[var(--muted-2)]">
+                Where leads drop off
+              </div>
+              {benchmark.discovery && <DiscoveryHealth discovery={benchmark.discovery} />}
+              {benchmark.aggregateFunnel && (
+                <AggregateFunnel funnel={benchmark.aggregateFunnel} sourcingFailedCount={benchmark.sourcingFailedCount} />
+              )}
+              {benchmark.intentTypes && benchmark.intentTypes.length > 0 && (
+                <IntentTypeChart rows={benchmark.intentTypes} />
+              )}
+            </div>
+          )}
         </>
       )}
     </section>
   )
+}
+
+/* ============================================================
+ * Lead funnel — stage-by-stage drop-off of the model's leads.
+ * Helps miners see WHERE leads fall out, not just the final score.
+ * ============================================================ */
+const FUNNEL_STAGES: { key: keyof LeadFunnel; label: string }[] = [
+  { key: 'sourced', label: 'Discovered' },
+  { key: 'fit_pass', label: 'Passed fit' },
+  { key: 'verified', label: 'Verified' },
+  { key: 'intent_valid', label: 'Valid intent' },
+  { key: 'scored', label: 'Scored' },
+]
+
+/* ============================================================
+ * Discovery health — per-ICP, how often the model could find
+ * companies at all. Surfaces where DISCOVERY (not scoring) is weak.
+ * ============================================================ */
+function DiscoveryHealth({ discovery }: { discovery: DiscoverySummary }) {
+  const { totalIcps, noCompanies, weak, healthy, totalDiscovered, totalScored, floor } = discovery
+  if (totalIcps <= 0) return null
+  const segments = [
+    { key: 'healthy', label: `Healthy (${floor}+)`, value: healthy, color: 'var(--platinum)' },
+    { key: 'weak', label: `Weak (1–${floor - 1})`, value: weak, color: 'var(--muted)' },
+    { key: 'none', label: 'No companies', value: noCompanies, color: 'rgba(236,234,230,0.16)' },
+  ]
+  return (
+    <div className="mb-10">
+      <div className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--muted-2)]">
+        Discovery health · companies found per ICP
+      </div>
+      <p className="mb-4 text-[11.5px] leading-relaxed text-[var(--muted-2)]">
+        How many of the {totalIcps} benchmark ICPs the model could source companies for.
+        &ldquo;No companies&rdquo; is an infrastructure/sourcing failure, not model skill.
+      </p>
+      <div className="flex h-2 w-full gap-[2px] overflow-hidden rounded-[3px]">
+        {segments.map((s) =>
+          s.value > 0 ? (
+            <span
+              key={s.key}
+              className="rounded-[2px]"
+              style={{ width: `${(s.value / totalIcps) * 100}%`, background: s.color }}
+            />
+          ) : null
+        )}
+      </div>
+      <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1.5 font-mono text-[10.5px] text-[var(--muted-2)]">
+        {segments.map((s) => (
+          <span key={s.key} className="inline-flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-[2px]" style={{ background: s.color }} />
+            <span className="text-[var(--platinum)]">{s.value}</span> {s.label}
+          </span>
+        ))}
+      </div>
+      <div className="mt-3 font-mono text-[10.5px] text-[var(--muted-2)]">
+        <span className="text-[var(--platinum)]">{totalDiscovered}</span> companies discovered ·{' '}
+        <span className="text-[var(--platinum)]">{totalScored}</span> scored across all ICPs
+      </div>
+    </div>
+  )
+}
+
+function AggregateFunnel({ funnel, sourcingFailedCount }: { funnel: LeadFunnel; sourcingFailedCount: number }) {
+  const top = Math.max(1, funnel.sourced)
+  const conversion = funnel.sourced > 0 ? Math.round((funnel.scored / funnel.sourced) * 100) : 0
+  // All-zero funnel (every ICP failed sourcing) — show a note, not empty bars.
+  if (funnel.sourced === 0) {
+    return (
+      <div className="mb-10">
+        <div className="mb-3 font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--muted-2)]">
+          Lead funnel · across scored ICPs
+        </div>
+        <p className="font-mono text-[11px] text-[var(--muted-2)]">
+          No companies were sourced in this run
+          {sourcingFailedCount > 0
+            ? ` — ${sourcingFailedCount} ICP${sourcingFailedCount === 1 ? '' : 's'} failed sourcing (infra, not model skill).`
+            : '.'}
+        </p>
+      </div>
+    )
+  }
+  return (
+    <div className="mb-10">
+      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--muted-2)]">
+          Lead funnel · across scored ICPs
+        </span>
+        <span className="font-mono text-[10.5px] text-[var(--muted-2)]">
+          <span className="text-[var(--platinum)]">{funnel.scored}</span> of {funnel.sourced} discovered scored
+          <span className="ml-1.5 text-[var(--faint)]">({conversion}%)</span>
+        </span>
+      </div>
+      <div className="space-y-2">
+        {FUNNEL_STAGES.map((stage, i) => {
+          const value = funnel[stage.key]
+          const prev = i === 0 ? value : funnel[FUNNEL_STAGES[i - 1].key]
+          const dropped = Math.max(0, prev - value)
+          return (
+            <div key={stage.key} className="grid grid-cols-[88px_minmax(0,1fr)_88px] items-center gap-3">
+              <span className="font-mono text-[10.5px] text-[var(--muted)]">{stage.label}</span>
+              <span className="h-[6px] overflow-hidden rounded-full bg-[rgba(236,234,230,0.06)]">
+                <span
+                  className="block h-full rounded-full bg-[var(--muted)]"
+                  style={{ width: `${(value / top) * 100}%` }}
+                />
+              </span>
+              <span className="text-right font-mono text-[11px] tabular-nums text-[var(--platinum)]">
+                {value}
+                {i > 0 && dropped > 0 ? (
+                  <span className="ml-1.5 text-[var(--faint)]">−{dropped}</span>
+                ) : null}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+      {sourcingFailedCount > 0 ? (
+        <div className="mt-3 font-mono text-[10px] text-[var(--muted-2)]">
+          {sourcingFailedCount} ICP{sourcingFailedCount === 1 ? '' : 's'} excluded — sourcing failed (infra, not model skill)
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+/* ============================================================
+ * Intent type performance — run-wide companies passed per intent
+ * type, so miners see which intent categories the model is strong
+ * or weak at. Anonymized: intent-type level, no ICP identity.
+ * ============================================================ */
+function IntentTypeChart({ rows }: { rows: IntentTypeRollup[] }) {
+  const floor = rows.find((r) => r.icp_count > 0 && r.expected > 0)
+    ? Math.round((rows[0]?.expected ?? 0) / Math.max(1, rows[0]?.icp_count ?? 1))
+    : 5
+  return (
+    <div className="mb-2">
+      <div className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--muted-2)]">
+        Intent pass rate by type
+      </div>
+      <p className="mb-4 text-[11.5px] leading-relaxed text-[var(--muted-2)]">
+        Percentage of companies that passed each required intent type, measured against an
+        expectation of {floor} per ICP (fulfilled ÷ {floor} × ICPs requiring that intent).
+      </p>
+      <div className="space-y-3">
+        {rows.map((row) => {
+          const pct = Math.max(0, Math.min(100, row.pass_pct))
+          const tone = pct >= 80 ? 'var(--platinum)' : pct >= 40 ? 'var(--muted)' : 'var(--muted-2)'
+          return (
+            <div
+              key={row.evidence_type}
+              className="grid grid-cols-[150px_minmax(0,1fr)_172px] items-center gap-3"
+            >
+              <span
+                className="truncate font-mono text-[10.5px] uppercase tracking-[0.06em] text-[var(--muted)]"
+                title={readableTag(row.evidence_type)}
+              >
+                {readableTag(row.evidence_type)}
+              </span>
+              <span className="h-[7px] w-full overflow-hidden rounded-full bg-[rgba(236,234,230,0.06)]">
+                <span className="block h-full rounded-full" style={{ width: `${pct}%`, background: tone }} />
+              </span>
+              <span className="text-right font-mono text-[10.5px] tabular-nums text-[var(--muted-2)]">
+                <span style={{ color: tone }}>{row.pass_pct}%</span>
+                <span className="ml-1.5 text-[var(--faint)]">{row.fulfilled}/{row.expected}</span>
+                <span className="ml-1.5 text-[var(--faint)]">· {row.icp_count} ICP{row.icp_count === 1 ? '' : 's'}</span>
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function IcpFunnelStrip({
+  funnel,
+  perSignal,
+  rejectionReasons,
+  sourcingFailed,
+}: {
+  funnel?: LeadFunnel
+  perSignal?: Record<string, PerSignalStat>
+  rejectionReasons?: Record<string, number>
+  sourcingFailed?: boolean
+}) {
+  if (sourcingFailed) {
+    return (
+      <div className="mt-3 font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--muted-2)]">
+        Sourcing failed — infra, not model skill
+      </div>
+    )
+  }
+  if (!funnel) return null
+  const top = Math.max(1, funnel.sourced)
+  const reasons = Object.entries(rejectionReasons ?? {}).filter(([, n]) => n > 0)
+  const signals = Object.values(perSignal ?? {}).sort((a, b) => a.signal_index - b.signal_index)
+  return (
+    <div className="mt-3 border-l border-[var(--line)] pl-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10px] text-[var(--muted-2)]">
+        {FUNNEL_STAGES.map((stage, i) => (
+          <span key={stage.key} className="inline-flex items-center gap-1">
+            {i > 0 ? <span className="text-[var(--faint)]">→</span> : null}
+            <span className="text-[var(--muted)]">{stage.label.toLowerCase()}</span>
+            <span className="tabular-nums text-[var(--platinum)]">{funnel[stage.key]}</span>
+          </span>
+        ))}
+      </div>
+      <div className="mt-2 h-[4px] w-full max-w-[260px] overflow-hidden rounded-full bg-[rgba(236,234,230,0.06)]">
+        <span
+          className="block h-full rounded-full bg-[var(--muted)]"
+          style={{ width: `${(funnel.scored / top) * 100}%` }}
+        />
+      </div>
+      {reasons.length > 0 ? (
+        <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 font-mono text-[10px] text-[var(--muted-2)]">
+          {reasons.map(([key, n]) => (
+            <span key={key}>
+              {humanizeRejectionReason(key)} <span className="text-[var(--muted)]">{n}</span>
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {signals.length > 0 ? (
+        <div className="mt-2 space-y-1">
+          {signals.map((s) => {
+            const failed = s.companies_passed === 0 && s.companies_submitted > 0
+            return (
+              <div
+                key={s.signal_index}
+                className="flex flex-wrap items-center gap-x-2 font-mono text-[10px]"
+                style={{ color: failed ? 'var(--muted-2)' : 'var(--muted)' }}
+              >
+                <span className="uppercase tracking-[0.08em] text-[var(--muted-2)]">
+                  {readableTag(s.evidence_type || 'unspecified')}
+                </span>
+                <span className="tabular-nums text-[var(--platinum)]">
+                  {s.companies_passed}/{s.companies_submitted}
+                </span>
+                <span>companies</span>
+                {s.companies_passed > 0 ? (
+                  <span className="text-[var(--faint)]">avg {s.avg_score}</span>
+                ) : (
+                  <span className="text-[var(--faint)]">no evidence passed</span>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function humanizeRejectionReason(key: string): string {
+  const map: Record<string, string> = {
+    employee_count_mismatch: 'Wrong employee size',
+    employee_count_missing: 'Missing employee size',
+    company_stage_mismatch: 'Wrong company stage',
+    company_stage_missing: 'Missing company stage',
+    company_unverifiable: 'Company unverifiable',
+    intent_fabricated: 'Fabricated intent',
+    scoring_error: 'Scoring error',
+    failed_prechecks: 'Failed pre-checks',
+    duplicate_company: 'Duplicate company',
+    other: 'Other',
+  }
+  return map[key] ?? readableTag(key)
 }
 
 function DistributionStrip({ counts }: { counts: Record<string, number> }) {
@@ -439,6 +767,12 @@ function LeaderboardRow({ icp, rank }: { icp: PublicIcp; rank: number }) {
             ))}
           </div>
         )}
+        <IcpFunnelStrip
+          funnel={icp.diagnostics?.funnel}
+          perSignal={icp.diagnostics?.per_signal}
+          rejectionReasons={icp.diagnostics?.rejection_reasons}
+          sourcingFailed={icp.diagnostics?.sourcing_failed}
+        />
       </div>
       <div className="flex flex-col gap-1.5 pt-0.5">
         <span
