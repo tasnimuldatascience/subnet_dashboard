@@ -236,14 +236,6 @@ function Hero({ benchmark }: { benchmark: BenchmarkReport | null }) {
             /100
           </span>
         </div>
-        <div className="pb-3">
-          <span
-            className="inline-block rounded-[3px] border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.16em]"
-            style={{ color: tone, borderColor: 'var(--line-2)' }}
-          >
-            {readableTag(benchmark.aggregateScoreBand)}
-          </span>
-        </div>
       </div>
 
       <p className="mt-7 max-w-[560px] text-[14px] leading-[1.7] text-[var(--muted)]">
