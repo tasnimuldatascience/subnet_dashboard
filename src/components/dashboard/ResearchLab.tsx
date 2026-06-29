@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Activity, Check, ChevronLeft, ChevronRight, Copy, Search, X } from 'lucide-react'
+import { Check, ChevronLeft, ChevronRight, Copy, Search, X } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -213,7 +213,7 @@ export function ResearchLab({ onSync }: { onSync?: () => void } = {}) {
 
   if (error && !data) {
     return (
-      <div className="mx-auto max-w-[1080px]">
+      <div className="w-full">
         <div className="border-l-2 border-l-[var(--line-3)] pl-5 py-6">
           <div className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-[var(--muted-2)]">
             Research Lab
@@ -225,8 +225,22 @@ export function ResearchLab({ onSync }: { onSync?: () => void } = {}) {
   }
 
   return (
-    <div className="mx-auto max-w-[1080px]">
-      <header className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+    <div className="w-full">
+      <div className="mb-10 flex flex-col gap-3 md:flex-row md:items-center">
+        <div className="md:ml-auto flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setActivityOpen(true)}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] font-medium text-slate-300 bg-slate-900/60 border border-slate-700/50 hover:bg-slate-800/60 hover:text-slate-100 hover:border-slate-600 transition-colors"
+            title="Open research activity panel"
+            aria-label="Open research activity panel"
+          >
+            <span>Activity panel</span>
+          </button>
+        </div>
+      </div>
+
+      <header>
         <div>
           <div className="font-mono text-[11px] uppercase tracking-[0.2em] text-[var(--muted-2)]">
             Research Lab
@@ -234,26 +248,6 @@ export function ResearchLab({ onSync }: { onSync?: () => void } = {}) {
           <h2 className="mt-3 font-display text-[26px] md:text-[30px] font-medium leading-[1.12] tracking-[-0.025em] text-[var(--platinum)] max-w-[600px]">
             Current model benchmark and research directions
           </h2>
-        </div>
-        <div className="flex shrink-0 flex-col items-start gap-3 sm:items-end">
-          {data?.fetchedAt ? (
-            <div className="font-mono text-[11px] text-[var(--muted-2)]">
-              Updated {formatRelative(data.fetchedAt)}
-            </div>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => setActivityOpen(true)}
-            className="inline-flex h-9 items-center gap-2 rounded-md border border-[var(--line-2)] bg-[rgba(236,234,230,0.025)] px-3 font-mono text-[11px] text-[var(--muted)] transition-colors hover:border-[var(--line-3)] hover:bg-[rgba(236,234,230,0.045)] hover:text-[var(--platinum)]"
-            title="Open live research activity"
-            aria-label="Open live research activity panel"
-          >
-            <Activity className="h-3.5 w-3.5" />
-            <span>Activity panel</span>
-            <span className="rounded-[3px] border border-[var(--line)] px-1.5 py-0.5 text-[10px] text-[var(--muted-2)]">
-              {loops.length}
-            </span>
-          </button>
         </div>
       </header>
 
@@ -285,7 +279,7 @@ export function ResearchLab({ onSync }: { onSync?: () => void } = {}) {
  * ============================================================ */
 function ResearchLabLoading() {
   return (
-    <div className="mx-auto max-w-[1080px]">
+    <div className="w-full">
       <div className="font-mono text-[11px] uppercase tracking-[0.2em] text-[var(--muted-2)]">
         Research Lab
       </div>
