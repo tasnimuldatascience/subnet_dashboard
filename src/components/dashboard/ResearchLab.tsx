@@ -1,6 +1,20 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Activity, Search, X } from 'lucide-react'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 
 type ResearchLabData = {
@@ -159,6 +173,7 @@ export function ResearchLab({ onSync }: { onSync?: () => void } = {}) {
   const [data, setData] = useState<ResearchLabData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [activityOpen, setActivityOpen] = useState(false)
 
   const fetchData = useCallback(async () => {
     try {
@@ -183,6 +198,14 @@ export function ResearchLab({ onSync }: { onSync?: () => void } = {}) {
   }, [fetchData])
 
   const benchmark = data?.benchmark ?? null
+  const loops = data?.loops ?? []
+  const topicGroups = data?.topicGroups ?? []
+  const stats = data?.stats ?? {
+    activeLoopCount: 0,
+    scoredLoopCount: 0,
+    promisingLoopCount: 0,
+    totalBenchmarkIcpCount: 0,
+  }
 
   if (loading && !data) return <ResearchLabLoading />
 
@@ -201,33 +224,54 @@ export function ResearchLab({ onSync }: { onSync?: () => void } = {}) {
 
   return (
     <div className="mx-auto max-w-[1080px]">
-      <header className="flex items-end justify-between gap-4">
+      <header className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="font-mono text-[11px] uppercase tracking-[0.2em] text-[var(--muted-2)]">
             Research Lab
           </div>
           <h2 className="mt-3 font-display text-[26px] md:text-[30px] font-medium leading-[1.12] tracking-[-0.025em] text-[var(--platinum)] max-w-[600px]">
-            Current model benchmark and live research activity
+            Current model benchmark and research directions
           </h2>
         </div>
-        {data?.fetchedAt ? (
-          <div className="font-mono text-[11px] text-[var(--muted-2)] shrink-0">
-            Updated {formatRelative(data.fetchedAt)}
-          </div>
-        ) : null}
+        <div className="flex shrink-0 flex-col items-start gap-3 sm:items-end">
+          {data?.fetchedAt ? (
+            <div className="font-mono text-[11px] text-[var(--muted-2)]">
+              Updated {formatRelative(data.fetchedAt)}
+            </div>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => setActivityOpen(true)}
+            className="inline-flex h-9 items-center gap-2 rounded-md border border-[var(--line-2)] bg-[rgba(236,234,230,0.025)] px-3 font-mono text-[11px] text-[var(--muted)] transition-colors hover:border-[var(--line-3)] hover:bg-[rgba(236,234,230,0.045)] hover:text-[var(--platinum)]"
+            title="Open live research activity"
+            aria-label="Open live research activity panel"
+          >
+            <Activity className="h-3.5 w-3.5" />
+            <span>Activity panel</span>
+            <span className="rounded-[3px] border border-[var(--line)] px-1.5 py-0.5 text-[10px] text-[var(--muted-2)]">
+              {loops.length}
+            </span>
+          </button>
+        </div>
       </header>
 
       <Hero benchmark={benchmark} />
 
-      <KpiRail stats={data?.stats ?? { activeLoopCount: 0, scoredLoopCount: 0, promisingLoopCount: 0, totalBenchmarkIcpCount: 0 }} />
+      <KpiRail stats={stats} />
 
       <BenchmarkSection benchmark={benchmark} />
 
       <ModelIssuesSection issues={benchmark?.issues ?? []} />
 
-      <ActivitySection loops={data?.loops ?? []} activeCount={data?.stats.activeLoopCount ?? 0} />
+      <DirectionsSection groups={topicGroups} />
 
-      <DirectionsSection groups={data?.topicGroups ?? []} />
+      <ResearchActivityDialog
+        open={activityOpen}
+        loops={loops}
+        activeCount={stats.activeLoopCount}
+        topicGroups={topicGroups}
+        onOpenChange={setActivityOpen}
+      />
 
       <MethodologyFooter />
     </div>
@@ -860,82 +904,298 @@ function IssueRow({ issue }: { issue: BenchmarkIssue }) {
 }
 
 /* ============================================================
- * Live research activity
+ * Live research activity panel
  * ============================================================ */
-function ActivitySection({ loops, activeCount }: { loops: ResearchLoop[]; activeCount: number }) {
+function ResearchActivityDialog({
+  open,
+  loops,
+  activeCount,
+  topicGroups,
+  onOpenChange,
+}: {
+  open: boolean
+  loops: ResearchLoop[]
+  activeCount: number
+  topicGroups: TopicGroup[]
+  onOpenChange: (open: boolean) => void
+}) {
+  const [minerQuery, setMinerQuery] = useState('')
+  const [direction, setDirection] = useState('all')
+
+  useEffect(() => {
+    if (!open) {
+      setMinerQuery('')
+      setDirection('all')
+    }
+  }, [open])
+
+  const directionOptions = useMemo(
+    () => buildDirectionOptions(topicGroups, loops),
+    [topicGroups, loops]
+  )
+
+  const minerCount = useMemo(() => {
+    const miners = new Set<string>()
+    for (const loop of loops) {
+      if (loop.minerHotkey) miners.add(loop.minerHotkey)
+    }
+    return miners.size
+  }, [loops])
+
+  const filteredLoops = useMemo(() => {
+    const q = minerQuery.trim().toLowerCase()
+    return loops
+      .filter((loop) => {
+        if (direction !== 'all' && loopDirectionKey(loop) !== direction) return false
+        if (!q) return true
+        return loop.minerHotkey.toLowerCase().includes(q)
+      })
+      .slice()
+      .sort((a, b) => new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime())
+  }, [loops, minerQuery, direction])
+
   return (
-    <section className="pt-16">
-      <SecLabel index="03" title="Live research activity" />
-      {activeCount > 0 ? (
-        <div className="-mt-3 mb-6 inline-flex items-center gap-2 font-mono text-[11px] text-[var(--muted)]">
-          <span className="live-ring inline-block h-1.5 w-1.5 rounded-full bg-[var(--white)]" />
-          {activeCount} running
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        aria-describedby={undefined}
+        className="sm:w-[calc(100vw-3rem)] sm:max-w-[1180px] sm:max-h-[90vh] overflow-hidden flex flex-col gap-0 bg-[var(--canvas)] border-[var(--line-2)] p-0 sm:p-0 text-[var(--platinum)]"
+      >
+        <DialogHeader className="border-b border-[var(--line)] px-5 py-4 text-left">
+          <div className="flex items-center gap-2 pr-8">
+            <DialogTitle className="font-mono text-[12px] uppercase tracking-[0.16em] text-[var(--platinum)]">
+              Live research activity
+            </DialogTitle>
+            {activeCount > 0 ? (
+              <span className="ml-auto inline-flex items-center gap-2 font-mono text-[10.5px] text-[var(--muted)]">
+                <span className="live-pulse inline-block h-1.5 w-1.5 rounded-full bg-[var(--white)]" />
+                {activeCount} running
+              </span>
+            ) : null}
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <ActivityPanelStat label="Visible" value={filteredLoops.length} />
+            <ActivityPanelStat label="Runs" value={loops.length} />
+            <ActivityPanelStat label="Miners" value={minerCount} />
+            <ActivityPanelStat label="Directions" value={directionOptions.length} />
+          </div>
+
+          <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="relative sm:max-w-sm sm:flex-1">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--muted-2)]" />
+              <input
+                type="text"
+                value={minerQuery}
+                onChange={(e) => setMinerQuery(e.target.value)}
+                placeholder="Filter miner hotkey"
+                className="h-8 w-full rounded-md border border-[var(--line-2)] bg-[rgba(236,234,230,0.025)] pl-8 pr-12 font-mono text-[11px] text-[var(--platinum)] outline-none transition-colors placeholder:text-[var(--faint)] premium-focus"
+              />
+              <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1.5">
+                {minerQuery.trim() ? (
+                  <button
+                    type="button"
+                    onClick={() => setMinerQuery('')}
+                    className="text-[var(--muted-2)] transition-colors hover:text-[var(--platinum)]"
+                    aria-label="Clear miner filter"
+                    title="Clear miner filter"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                ) : (
+                  <span className="font-mono text-[10px] text-[var(--muted-2)]">
+                    {filteredLoops.length}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <Select value={direction} onValueChange={setDirection}>
+              <SelectTrigger
+                size="sm"
+                className="h-8 w-full border-[var(--line-2)] bg-[rgba(236,234,230,0.025)] font-mono text-[11px] text-[var(--muted)] shadow-none hover:border-[var(--line-3)] hover:text-[var(--platinum)] sm:w-[280px]"
+                aria-label="Filter by research direction"
+              >
+                <SelectValue placeholder="All directions" />
+              </SelectTrigger>
+              <SelectContent className="z-[70] border-[var(--line-2)] bg-[var(--canvas-2)] text-[var(--platinum)]">
+                <SelectItem
+                  value="all"
+                  className="font-mono text-[11px] text-[var(--muted)] focus:bg-[rgba(236,234,230,0.06)] focus:text-[var(--platinum)]"
+                >
+                  All directions
+                </SelectItem>
+                {directionOptions.map((option) => (
+                  <SelectItem
+                    key={option.value}
+                    value={option.value}
+                    className="font-mono text-[11px] text-[var(--muted)] focus:bg-[rgba(236,234,230,0.06)] focus:text-[var(--platinum)]"
+                  >
+                    {option.label} ({option.count})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </DialogHeader>
+
+        <div className="flex-1 overflow-y-auto overflow-x-hidden">
+          {filteredLoops.length === 0 ? (
+            <div className="px-5 py-16 text-center text-[13px] text-[var(--muted-2)]">
+              No research loop activity matches the current filters.
+            </div>
+          ) : (
+            <div>
+              <div className="sticky top-0 z-10 hidden grid-cols-[minmax(170px,1.05fr)_minmax(0,1.65fr)_86px_122px_86px] gap-4 border-b border-[var(--line)] bg-[var(--canvas)] px-5 py-2 font-mono text-[9.5px] uppercase tracking-[0.12em] text-[var(--muted-2)] backdrop-blur md:grid">
+                <span>Miner / direction</span>
+                <span>Focus</span>
+                <span className="text-right">Candidates</span>
+                <span className="text-center">Outcome</span>
+                <span>Activity</span>
+              </div>
+              {filteredLoops.map((loop) => (
+                <ActivityPanelRow key={loop.cardId} loop={loop} />
+              ))}
+            </div>
+          )}
         </div>
-      ) : null}
-      {loops.length === 0 ? (
-        <p className="text-[13px] text-[var(--muted-2)]">No research loop activity yet.</p>
-      ) : (
-        <div>
-          {loops.map((loop) => (
-            <LoopRow key={loop.cardId} loop={loop} />
-          ))}
-        </div>
-      )}
-    </section>
+      </DialogContent>
+    </Dialog>
   )
 }
 
-function LoopRow({ loop }: { loop: ResearchLoop }) {
+function ActivityPanelStat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-md border border-[var(--line)] bg-[rgba(236,234,230,0.018)] px-3 py-2">
+      <div className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-[var(--muted-2)]">
+        {label}
+      </div>
+      <div className="mt-1 font-display text-[20px] font-medium leading-none tabular-nums text-[var(--platinum)]">
+        {value.toLocaleString()}
+      </div>
+    </div>
+  )
+}
+
+function ActivityPanelRow({ loop }: { loop: ResearchLoop }) {
   const statusTone = loop.statusNote ? statusNoteTone(loop.statusNote.tone) : null
   return (
-    <div className="border-b border-[var(--line)] py-4 transition-colors last:border-b-0 hover-bg-warm">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="min-w-0">
-          <span className="break-all font-mono text-[11px] text-[var(--muted)]">{loop.minerHotkey}</span>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {loop.topicTags.slice(0, 3).map((tag) => (
-              <Tag key={tag}>{readableTag(tag)}</Tag>
-            ))}
-          </div>
-        </div>
-        <OutcomeBadge label={loop.outcomeLabel} band={loop.outcomeBand} />
-      </div>
-      {loop.researchFocusSummary && (
-        <p className="mt-2.5 line-clamp-2 text-[13px] leading-relaxed text-[var(--muted)]">
-          {loop.researchFocusSummary}
-        </p>
-      )}
-      {loop.bestCandidatePublicSummary && (
-        <p className="mt-2 line-clamp-2 text-[12px] leading-relaxed text-[var(--muted-2)]">
-          {loop.bestCandidatePublicSummary}
-        </p>
-      )}
-      {loop.statusNote && statusTone ? (
-        <div
-          className="mt-3 border-l-2 py-2 pl-3"
-          style={{ borderColor: statusTone.border, background: statusTone.bg }}
+    <div className="grid gap-3 border-b border-[var(--line)] px-5 py-4 transition-colors last:border-b-0 hover-bg-warm md:grid-cols-[minmax(170px,1.05fr)_minmax(0,1.65fr)_86px_122px_86px] md:items-start md:gap-4">
+      <div className="min-w-0">
+        <code
+          className="block truncate font-mono text-[11px] text-[var(--platinum)]"
+          title={loop.minerHotkey}
         >
-          <div className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: statusTone.color }}>
-            {loop.statusNote.label}
-          </div>
-          <p className="mt-1 text-[11.5px] leading-relaxed text-[var(--muted-2)]">
-            <span className="font-mono text-[var(--muted)]">Ticket {shortId(loop.ticketId)}</span>
-            <span className="text-[var(--faint)]"> · </span>
-            {loop.statusNote.detail}
-          </p>
+          {shortHotkey(loop.minerHotkey)}
+        </code>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {loop.topicTags.length > 0 ? (
+            loop.topicTags.slice(0, 3).map((tag) => (
+              <Tag key={tag}>{readableTag(tag)}</Tag>
+            ))
+          ) : (
+            <Tag>{readableTag(loop.researchArea || 'generalist')}</Tag>
+          )}
         </div>
-      ) : null}
-      <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[10.5px] text-[var(--muted-2)]">
+      </div>
+
+      <div className="min-w-0">
+        {loop.researchFocusSummary ? (
+          <p className="line-clamp-2 text-[13px] leading-relaxed text-[var(--muted)]">
+            {loop.researchFocusSummary}
+          </p>
+        ) : (
+          <p className="text-[13px] text-[var(--muted-2)]">No focus summary published.</p>
+        )}
+        {loop.bestCandidatePublicSummary ? (
+          <p className="mt-1.5 line-clamp-2 text-[12px] leading-relaxed text-[var(--muted-2)]">
+            {loop.bestCandidatePublicSummary}
+          </p>
+        ) : null}
+        {loop.statusNote && statusTone ? (
+          <div
+            className="mt-3 border-l-2 py-2 pl-3"
+            style={{ borderColor: statusTone.border, background: statusTone.bg }}
+          >
+            <div className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: statusTone.color }}>
+              {loop.statusNote.label}
+            </div>
+            <p className="mt-1 text-[11.5px] leading-relaxed text-[var(--muted-2)]">
+              <span className="font-mono text-[var(--muted)]">Ticket {shortId(loop.ticketId)}</span>
+              <span className="text-[var(--faint)]"> · </span>
+              {loop.statusNote.detail}
+            </p>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="flex gap-4 font-mono text-[10.5px] text-[var(--muted-2)] md:block md:text-right">
         <span>
           <span className="text-[var(--muted)]">{loop.candidateCount}</span> candidates
         </span>
-        <span>
+        <span className="md:mt-1 md:block">
           <span className="text-[var(--muted)]">{loop.scoredCandidateCount}</span> scored
         </span>
+      </div>
+
+      <div className="flex md:justify-center">
+        <OutcomeBadge label={loop.outcomeLabel} band={loop.outcomeBand} />
+      </div>
+
+      <div className="font-mono text-[10.5px] text-[var(--muted-2)]">
         <span>{formatRelative(loop.lastActivityAt)}</span>
       </div>
     </div>
   )
+}
+
+type DirectionOption = {
+  value: string
+  label: string
+  count: number
+}
+
+function buildDirectionOptions(groups: TopicGroup[], loops: ResearchLoop[]): DirectionOption[] {
+  const options = new Map<string, DirectionOption>()
+
+  for (const group of groups) {
+    const value = groupDirectionKey(group)
+    options.set(value, {
+      value,
+      label: directionLabel(group.topicTags),
+      count: group.total,
+    })
+  }
+
+  for (const loop of loops) {
+    const value = loopDirectionKey(loop)
+    if (options.has(value)) continue
+    const matchingLoops = loops.filter((item) => loopDirectionKey(item) === value)
+    options.set(value, {
+      value,
+      label: directionLabel(loop.topicTags, loop.researchArea),
+      count: matchingLoops.length,
+    })
+  }
+
+  return Array.from(options.values()).sort((a, b) => {
+    if (b.count !== a.count) return b.count - a.count
+    return a.label.localeCompare(b.label)
+  })
+}
+
+function loopDirectionKey(loop: ResearchLoop): string {
+  return loop.topicSignatureHash || loop.topicTags.join('|') || loop.researchArea || 'generalist'
+}
+
+function groupDirectionKey(group: TopicGroup): string {
+  return group.topicSignatureHash || group.topicTags.join('|') || 'generalist'
+}
+
+function directionLabel(tags: string[], fallback = 'generalist'): string {
+  const visible = tags.filter(Boolean).slice(0, 2).map(readableTag)
+  if (visible.length === 0) return readableTag(fallback)
+  const suffix = tags.length > visible.length ? ` +${tags.length - visible.length}` : ''
+  return `${visible.join(' / ')}${suffix}`
 }
 
 function OutcomeBadge({ label, band }: { label: string; band: string }) {
@@ -956,7 +1216,7 @@ function OutcomeBadge({ label, band }: { label: string; band: string }) {
 function DirectionsSection({ groups }: { groups: TopicGroup[] }) {
   return (
     <section className="pt-16">
-      <SecLabel index="04" title="Research directions" sub="grouped by topic" />
+      <SecLabel index="03" title="Research directions" sub="grouped by topic" />
       {groups.length === 0 ? (
         <p className="text-[13px] text-[var(--muted-2)]">No grouped research directions yet.</p>
       ) : (
@@ -1203,6 +1463,11 @@ function compactParts(parts: string[]): string {
 
 function shortId(value: string): string {
   return value ? value.slice(0, 8) : 'unknown'
+}
+
+function shortHotkey(value: string): string {
+  if (value.length <= 16) return value
+  return `${value.slice(0, 6)}...${value.slice(-6)}`
 }
 
 function intentSignals(value: unknown): string[] {
