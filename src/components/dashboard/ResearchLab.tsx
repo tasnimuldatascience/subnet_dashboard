@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Activity, Search, X } from 'lucide-react'
+import { Activity, Check, ChevronLeft, ChevronRight, Copy, Search, X } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -168,6 +168,8 @@ type TopicGroup = {
   noGainOrFailed: number
   latestActivityAt: string
 }
+
+const ACTIVITY_PAGE_SIZE = 20
 
 export function ResearchLab({ onSync }: { onSync?: () => void } = {}) {
   const [data, setData] = useState<ResearchLabData | null>(null)
@@ -921,13 +923,19 @@ function ResearchActivityDialog({
 }) {
   const [minerQuery, setMinerQuery] = useState('')
   const [direction, setDirection] = useState('all')
+  const [currentPage, setCurrentPage] = useState(1)
 
   useEffect(() => {
     if (!open) {
       setMinerQuery('')
       setDirection('all')
+      setCurrentPage(1)
     }
   }, [open])
+
+  useEffect(() => {
+    if (open) setCurrentPage(1)
+  }, [open, minerQuery, direction])
 
   const directionOptions = useMemo(
     () => buildDirectionOptions(topicGroups, loops),
@@ -953,6 +961,16 @@ function ResearchActivityDialog({
       .slice()
       .sort((a, b) => new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime())
   }, [loops, minerQuery, direction])
+
+  const totalPages = Math.max(1, Math.ceil(filteredLoops.length / ACTIVITY_PAGE_SIZE))
+  const safePage = Math.min(currentPage, totalPages)
+  const pageStart = (safePage - 1) * ACTIVITY_PAGE_SIZE
+  const pageEnd = Math.min(filteredLoops.length, pageStart + ACTIVITY_PAGE_SIZE)
+  const paginatedLoops = filteredLoops.slice(pageStart, pageEnd)
+
+  useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages)
+  }, [currentPage, totalPages])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1052,12 +1070,22 @@ function ResearchActivityDialog({
                 <span className="text-center">Outcome</span>
                 <span>Activity</span>
               </div>
-              {filteredLoops.map((loop) => (
+              {paginatedLoops.map((loop) => (
                 <ActivityPanelRow key={loop.cardId} loop={loop} />
               ))}
             </div>
           )}
         </div>
+        {filteredLoops.length > 0 ? (
+          <ActivityPagination
+            page={safePage}
+            totalPages={totalPages}
+            start={pageStart + 1}
+            end={pageEnd}
+            total={filteredLoops.length}
+            onPageChange={setCurrentPage}
+          />
+        ) : null}
       </DialogContent>
     </Dialog>
   )
@@ -1076,17 +1104,64 @@ function ActivityPanelStat({ label, value }: { label: string; value: number }) {
   )
 }
 
+function ActivityPagination({
+  page,
+  totalPages,
+  start,
+  end,
+  total,
+  onPageChange,
+}: {
+  page: number
+  totalPages: number
+  start: number
+  end: number
+  total: number
+  onPageChange: (page: number) => void
+}) {
+  const canPrev = page > 1
+  const canNext = page < totalPages
+  return (
+    <div className="flex flex-col gap-3 border-t border-[var(--line)] px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="font-mono text-[10.5px] text-[var(--muted-2)]">
+        Showing <span className="text-[var(--platinum)]">{start}</span>–<span className="text-[var(--platinum)]">{end}</span> of{' '}
+        <span className="text-[var(--platinum)]">{total}</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => canPrev && onPageChange(page - 1)}
+          disabled={!canPrev}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[var(--line-2)] bg-[rgba(236,234,230,0.02)] text-[var(--muted)] transition-colors hover:border-[var(--line-3)] hover:bg-[rgba(236,234,230,0.045)] hover:text-[var(--platinum)] disabled:cursor-not-allowed disabled:opacity-35"
+          aria-label="Previous activity page"
+          title="Previous page"
+        >
+          <ChevronLeft className="h-3.5 w-3.5" />
+        </button>
+        <div className="min-w-20 text-center font-mono text-[10.5px] text-[var(--muted-2)]">
+          <span className="text-[var(--platinum)]">{page}</span> / {totalPages}
+        </div>
+        <button
+          type="button"
+          onClick={() => canNext && onPageChange(page + 1)}
+          disabled={!canNext}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[var(--line-2)] bg-[rgba(236,234,230,0.02)] text-[var(--muted)] transition-colors hover:border-[var(--line-3)] hover:bg-[rgba(236,234,230,0.045)] hover:text-[var(--platinum)] disabled:cursor-not-allowed disabled:opacity-35"
+          aria-label="Next activity page"
+          title="Next page"
+        >
+          <ChevronRight className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function ActivityPanelRow({ loop }: { loop: ResearchLoop }) {
   const statusTone = loop.statusNote ? statusNoteTone(loop.statusNote.tone) : null
   return (
     <div className="grid gap-3 border-b border-[var(--line)] px-5 py-4 transition-colors last:border-b-0 hover-bg-warm md:grid-cols-[minmax(170px,1.05fr)_minmax(0,1.65fr)_86px_122px_86px] md:items-start md:gap-4">
       <div className="min-w-0">
-        <code
-          className="block truncate font-mono text-[11px] text-[var(--platinum)]"
-          title={loop.minerHotkey}
-        >
-          {shortHotkey(loop.minerHotkey)}
-        </code>
+        <HotkeyCopyButton hotkey={loop.minerHotkey} />
         <div className="mt-2 flex flex-wrap gap-1.5">
           {loop.topicTags.length > 0 ? (
             loop.topicTags.slice(0, 3).map((tag) => (
@@ -1145,6 +1220,50 @@ function ActivityPanelRow({ loop }: { loop: ResearchLoop }) {
         <span>{formatRelative(loop.lastActivityAt)}</span>
       </div>
     </div>
+  )
+}
+
+function HotkeyCopyButton({ hotkey }: { hotkey: string }) {
+  const [copied, setCopied] = useState(false)
+  const timeoutRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) window.clearTimeout(timeoutRef.current)
+    }
+  }, [])
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await copyToClipboard(hotkey)
+      setCopied(true)
+      if (timeoutRef.current) window.clearTimeout(timeoutRef.current)
+      timeoutRef.current = window.setTimeout(() => setCopied(false), 1400)
+    } catch {
+      setCopied(false)
+    }
+  }, [hotkey])
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className="group inline-flex max-w-full items-center gap-1.5 rounded-[4px] border border-transparent py-0.5 pr-1.5 font-mono text-[11px] text-[var(--platinum)] transition-colors hover:border-[var(--line-2)] hover:bg-[rgba(236,234,230,0.035)]"
+      title={copied ? 'Copied full hotkey' : hotkey}
+      aria-label={`Copy miner hotkey ${hotkey}`}
+    >
+      <code className="truncate">{shortHotkey(hotkey)}</code>
+      {copied ? (
+        <Check className="h-3 w-3 shrink-0 text-[var(--white)]" />
+      ) : (
+        <Copy className="h-3 w-3 shrink-0 text-[var(--muted-2)] transition-colors group-hover:text-[var(--muted)]" />
+      )}
+      {copied ? (
+        <span className="shrink-0 text-[9.5px] uppercase tracking-[0.1em] text-[var(--muted-2)]">
+          Copied
+        </span>
+      ) : null}
+    </button>
   )
 }
 
@@ -1468,6 +1587,26 @@ function shortId(value: string): string {
 function shortHotkey(value: string): string {
   if (value.length <= 16) return value
   return `${value.slice(0, 6)}...${value.slice(-6)}`
+}
+
+async function copyToClipboard(value: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value)
+    return
+  }
+
+  const textarea = document.createElement('textarea')
+  textarea.value = value
+  textarea.setAttribute('readonly', '')
+  textarea.style.position = 'fixed'
+  textarea.style.left = '-9999px'
+  document.body.appendChild(textarea)
+  textarea.select()
+  try {
+    document.execCommand('copy')
+  } finally {
+    document.body.removeChild(textarea)
+  }
 }
 
 function intentSignals(value: unknown): string[] {
