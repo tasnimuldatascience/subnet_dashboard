@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -17,11 +21,9 @@ jobs:
           script: |
             cd subnet_dashboard
             git pull origin main
-            pm2 delete subnet-dashboard 2>/dev/null || true
-            rm -rf .next
             export BUILD_TIME="$(date -u +%Y%m%d%H%M%S)"
             NODE_OPTIONS='--max-old-space-size=512' npm run build
-            NODE_OPTIONS='--max-old-space-size=512' pm2 start npm --name subnet-dashboard --max-memory-restart 700M -- start
+            NODE_OPTIONS='--max-old-space-size=512' pm2 restart subnet-dashboard --update-env || NODE_OPTIONS='--max-old-space-size=512' pm2 start npm --name subnet-dashboard --max-memory-restart 700M -- start
             pm2 save
             echo "Deploy complete: $(date)"
           script_stop: true
