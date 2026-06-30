@@ -291,9 +291,10 @@ function Sidebar() {
           About Leadpoet
         </h3>
         <p className="text-[12px] text-slate-400 leading-relaxed">
-          Leadpoet is Subnet 71 on Bittensor. A live fulfillment market and
-          validator network make the leads delivered to sales teams fresher,
-          more relevant, and easier to trust.
+          Leadpoet is Subnet 71 on Bittensor, building the intelligence layer
+          for modern sales. The subnet powers a continuously improving AI sales
+          agent. Its purpose is to turn decentralized research and validation
+          into the world&apos;s first full-funnel sales LLM.
         </p>
       </section>
 
