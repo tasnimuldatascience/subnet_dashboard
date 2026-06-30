@@ -192,7 +192,22 @@ type PublicLoopRow = {
   current_last_activity_at: string | null
   current_run_id: string | null
   current_receipt_id: string | null
+  current_event_doc: PublicLoopEventDoc | null
   created_at: string
+}
+
+// Subset of the public activity event payload we rely on to derive an
+// honest outcome label. `projection_reason` explains WHY a card sits at its
+// current label — e.g. a "candidate_generation_complete" card whose reason is
+// `stale_parent_needs_rescore` is really a rejected/stale candidate, and a
+// "submitted" card whose reason is `ticket_created` with an empty queue_status
+// never entered the autoresearch queue at all.
+type PublicLoopEventDoc = {
+  projection_reason?: string
+  queue_status?: string
+  receipt_status?: string
+  score_bundle_count?: number
+  candidate_status_counts?: Record<string, number>
 }
 
 type ResearchLabPayload = {
@@ -782,7 +797,7 @@ function stripInternalIcpFields(icps: PublicIcpEntry[]): PublicIcpEntry[] {
 async function fetchPublicLoops(supabase: ReturnType<typeof getSupabase>): Promise<NormalizedLoop[]> {
   const { data, error } = await supabase
     .from('research_lab_public_loop_card_current')
-    .select('card_id, ticket_id, miner_hotkey, research_area, research_focus_summary, topic_tags, topic_signature_hash, current_topic_tags, current_topic_signature_hash, current_outcome_label, current_outcome_band, current_candidate_count, current_scored_candidate_count, current_best_candidate_public_summary, current_last_activity_at, current_run_id, current_receipt_id, created_at')
+    .select('card_id, ticket_id, miner_hotkey, research_area, research_focus_summary, topic_tags, topic_signature_hash, current_topic_tags, current_topic_signature_hash, current_outcome_label, current_outcome_band, current_candidate_count, current_scored_candidate_count, current_best_candidate_public_summary, current_last_activity_at, current_run_id, current_receipt_id, current_event_doc, created_at')
     .order('current_last_activity_at', { ascending: false, nullsFirst: false })
     .order('created_at', { ascending: false })
     .limit(LOOP_FETCH_LIMIT)
@@ -796,8 +811,7 @@ async function fetchPublicLoops(supabase: ReturnType<typeof getSupabase>): Promi
     .filter(isVisiblePublicLoop)
     .slice(0, LOOP_LIMIT)
     .map((row) => {
-      const outcomeLabel = row.current_outcome_label || 'submitted'
-      const outcomeBand = row.current_outcome_band || 'pending'
+      const { outcomeLabel, outcomeBand } = refineLoopOutcome(row)
       const lastActivityAt = row.current_last_activity_at || row.created_at
       return {
         cardId: row.card_id,
@@ -825,6 +839,39 @@ function isVisiblePublicLoop(row: PublicLoopRow): boolean {
   return !HIDDEN_LOOP_MINER_PREFIXES.some((prefix) => row.miner_hotkey.startsWith(prefix))
 }
 
+// Translate the raw public-card label into one that matches what actually
+// happened, using the event payload's projection_reason. Two cases the raw
+// label gets wrong:
+//   1. `candidate_generation_complete` with reason `stale_parent_needs_rescore`
+//      and nothing scored — the candidate was rejected/stale because the
+//      parent (model) changed before it could be scored, NOT a finished run.
+//   2. `submitted` with reason `ticket_created` and an empty queue_status —
+//      a ticket that was opened but never entered the autoresearch queue.
+function refineLoopOutcome(row: PublicLoopRow): { outcomeLabel: string; outcomeBand: string } {
+  const rawLabel = row.current_outcome_label || 'submitted'
+  const rawBand = row.current_outcome_band || 'pending'
+  const doc = row.current_event_doc ?? {}
+  const reason = doc.projection_reason ?? ''
+  const queueStatus = doc.queue_status ?? ''
+  const scored = numberOr(row.current_scored_candidate_count, 0)
+
+  if (reason === 'stale_parent_needs_rescore' && rawLabel !== 'failed' && scored === 0) {
+    return { outcomeLabel: 'needs_rescore', outcomeBand: 'stale' }
+  }
+
+  if (
+    rawLabel === 'submitted' &&
+    reason === 'ticket_created' &&
+    !queueStatus &&
+    !row.current_run_id &&
+    !row.current_receipt_id
+  ) {
+    return { outcomeLabel: 'not_started', outcomeBand: 'pending' }
+  }
+
+  return { outcomeLabel: rawLabel, outcomeBand: rawBand }
+}
+
 function loopStatusNote(
   row: PublicLoopRow,
   outcomeLabel: string,
@@ -836,6 +883,22 @@ function loopStatusNote(
       tone: 'error',
       label: 'Run failed',
       detail: 'The public log marked this loop as failed before a scored candidate was produced.',
+    }
+  }
+
+  if (outcomeLabel === 'needs_rescore') {
+    return {
+      tone: 'warning',
+      label: 'Stale — needs rescore',
+      detail: 'The parent model changed, so this candidate went stale and was rejected before it could be scored. It is awaiting a rescore.',
+    }
+  }
+
+  if (outcomeLabel === 'not_started') {
+    return {
+      tone: 'info',
+      label: 'Not started',
+      detail: 'The ticket was opened but never entered the autoresearch queue, so no run has begun.',
     }
   }
 
