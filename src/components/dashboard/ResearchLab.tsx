@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronLeft, ChevronRight, Copy, Search, X } from 'lucide-react'
+import { Activity, Check, ChevronLeft, ChevronRight, Copy, Search, X } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -227,29 +227,25 @@ export function ResearchLab({ onSync }: { onSync?: () => void } = {}) {
 
   return (
     <div className="w-full">
-      <div className="mb-10 flex flex-col gap-3 md:flex-row md:items-center">
-        <div className="md:ml-auto flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => setActivityOpen(true)}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[11px] font-medium text-slate-300 bg-slate-900/60 border border-slate-700/50 hover:bg-slate-800/60 hover:text-slate-100 hover:border-slate-600 transition-colors"
-            title="Open research activity panel"
-            aria-label="Open research activity panel"
-          >
-            <span>Activity panel</span>
-          </button>
-        </div>
-      </div>
-
-      <header>
-        <div>
+      <header className="pt-8 md:pt-10">
+        <div className="flex items-center justify-between gap-3">
           <div className="font-mono text-[11px] uppercase tracking-[0.2em] text-[var(--muted-2)]">
             Research Lab
           </div>
-          <h2 className="mt-3 font-display text-[26px] md:text-[30px] font-medium leading-[1.12] tracking-[-0.025em] text-[var(--platinum)] max-w-[600px]">
-            Current model benchmark and research directions
-          </h2>
+          <button
+            type="button"
+            onClick={() => setActivityOpen(true)}
+            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-[var(--line-2)] bg-[rgba(236,234,230,0.025)] px-2.5 font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--muted)] transition-colors hover:border-[var(--line-3)] hover:bg-[rgba(236,234,230,0.045)] hover:text-[var(--platinum)] premium-focus"
+            title="Open research activity panel"
+            aria-label="Open research activity panel"
+          >
+            <Activity className="h-3.5 w-3.5" />
+            <span>Activity</span>
+          </button>
         </div>
+        <h2 className="mt-3 max-w-[600px] font-display text-[26px] font-medium leading-[1.12] tracking-[-0.025em] text-[var(--platinum)] md:text-[30px]">
+          Current model benchmark and research directions
+        </h2>
       </header>
 
       <Hero benchmark={benchmark} />
@@ -971,22 +967,34 @@ function ResearchActivityDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         aria-describedby={undefined}
+        showCloseButton={false}
         className="sm:w-[calc(100vw-3rem)] sm:max-w-[1180px] sm:max-h-[90vh] overflow-hidden flex flex-col gap-0 bg-[var(--canvas)] border-[var(--line-2)] p-0 sm:p-0 text-[var(--platinum)]"
       >
-        <DialogHeader className="border-b border-[var(--line)] px-5 py-4 text-left">
-          <div className="flex items-center gap-2 pr-8">
-            <DialogTitle className="font-mono text-[12px] uppercase tracking-[0.16em] text-[var(--platinum)]">
+        <DialogHeader className="shrink-0 border-b border-[var(--line)] px-4 py-3 text-left sm:px-5 sm:py-4">
+          <div className="flex min-w-0 items-center gap-2">
+            <DialogTitle className="truncate font-mono text-[12px] uppercase tracking-[0.16em] text-[var(--platinum)]">
               Live research activity
             </DialogTitle>
-            {activeCount > 0 ? (
-              <span className="ml-auto inline-flex items-center gap-2 font-mono text-[10.5px] text-[var(--muted)]">
-                <span className="live-pulse inline-block h-1.5 w-1.5 rounded-full bg-[var(--white)]" />
-                {activeCount} running
-              </span>
-            ) : null}
+            <div className="ml-auto flex shrink-0 items-center gap-2">
+              {activeCount > 0 ? (
+                <span className="inline-flex items-center gap-2 font-mono text-[10.5px] text-[var(--muted)]">
+                  <span className="live-pulse inline-block h-1.5 w-1.5 rounded-full bg-[var(--white)]" />
+                  {activeCount} running
+                </span>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => onOpenChange(false)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[var(--line-2)] bg-[rgba(236,234,230,0.025)] text-[var(--muted)] transition-colors hover:border-[var(--line-3)] hover:bg-[rgba(236,234,230,0.045)] hover:text-[var(--platinum)] premium-focus"
+                aria-label="Close activity panel"
+                title="Close activity panel"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
 
-          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:mt-4 sm:grid-cols-4">
             <ActivityPanelStat label="Visible" value={filteredLoops.length} />
             <ActivityPanelStat label="Runs" value={loops.length} />
             <ActivityPanelStat label="Miners" value={minerCount} />
@@ -1051,7 +1059,7 @@ function ResearchActivityDialog({
           </div>
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto overflow-x-hidden">
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
           {filteredLoops.length === 0 ? (
             <div className="px-5 py-16 text-center text-[13px] text-[var(--muted-2)]">
               No research loop activity matches the current filters.
