@@ -16,7 +16,10 @@ export const dynamic = 'force-dynamic'
 const CACHE_TTL = 60_000
 const LOOP_LIMIT = 50
 const LOOP_FETCH_LIMIT = LOOP_LIMIT + 100
-const HIDDEN_LOOP_MINER_PREFIXES = ['5FEtvB']
+const HIDDEN_LOOP_MINER_PREFIXES = [
+  '5FEtvB',
+  '5FBhsXVWpezSHcpogXo4CjMcgTBctLcZ7VnNoKzn3oEGST44',
+]
 
 type CachedResponse = {
   data: ResearchLabPayload
