@@ -969,7 +969,7 @@ function ResearchActivityDialog({
       <DialogContent
         aria-describedby={undefined}
         showCloseButton={false}
-        className="sm:w-[calc(100vw-3rem)] sm:max-w-[1180px] sm:max-h-[90vh] overflow-hidden flex flex-col gap-0 bg-[var(--canvas)] border-[var(--line-2)] p-0 sm:p-0 text-[var(--platinum)]"
+        className="h-[82vh] max-h-[82vh] supports-[height:100svh]:h-[calc(100svh-0.75rem)] supports-[height:100svh]:max-h-[calc(100svh-0.75rem)] sm:h-auto sm:w-[calc(100vw-3rem)] sm:max-w-[1180px] sm:max-h-[90vh] overflow-hidden flex flex-col gap-0 bg-[var(--canvas)] border-[var(--line-2)] p-0 sm:p-0 text-[var(--platinum)]"
       >
         <DialogHeader className="shrink-0 border-b border-[var(--line)] px-4 py-3 text-left sm:px-5 sm:py-4">
           <div className="mb-3 flex items-center justify-end">
@@ -977,11 +977,11 @@ function ResearchActivityDialog({
             <DialogClose asChild>
               <button
                 type="button"
-                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[var(--line-2)] bg-[rgba(236,234,230,0.045)] text-[var(--platinum)] transition-colors hover:border-[var(--line-3)] hover:bg-[rgba(236,234,230,0.07)] premium-focus"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-[var(--line-2)] bg-[rgba(236,234,230,0.055)] text-[var(--platinum)] transition-colors hover:border-[var(--line-3)] hover:bg-[rgba(236,234,230,0.08)] premium-focus"
                 aria-label="Close activity panel"
                 title="Close activity panel"
               >
-                <X className="h-3.5 w-3.5" />
+                <X className="h-4 w-4" />
               </button>
             </DialogClose>
           </div>
