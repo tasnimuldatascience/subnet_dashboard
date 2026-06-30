@@ -17,6 +17,11 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
+import {
+  isActiveResearchLabLoopStatus,
+  isPromisingResearchLabLoopStatus,
+  isScoredResearchLabLoopStatus,
+} from '@/lib/research-lab-status'
 
 type ResearchLabData = {
   benchmark: BenchmarkReport | null
@@ -179,6 +184,7 @@ export function ResearchLab({ onSync }: { onSync?: () => void } = {}) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activityOpen, setActivityOpen] = useState(false)
+  const [selectedEmissionHotkey, setSelectedEmissionHotkey] = useState<string | null>(null)
 
   const fetchData = useCallback(async () => {
     try {
@@ -253,6 +259,12 @@ export function ResearchLab({ onSync }: { onSync?: () => void } = {}) {
       <Hero benchmark={benchmark} />
 
       <KpiRail stats={stats} />
+
+      <LabEmissionSplit
+        loops={loops}
+        selectedHotkey={selectedEmissionHotkey}
+        onSelectHotkey={setSelectedEmissionHotkey}
+      />
 
       <BenchmarkSection benchmark={benchmark} />
 
@@ -378,6 +390,216 @@ function KpiRail({ stats }: { stats: ResearchLabData['stats'] }) {
       ))}
     </section>
   )
+}
+
+type LabEmissionRow = {
+  hotkey: string
+  count: number
+  active: number
+  scored: number
+  promising: number
+  pct: number
+  lastActivityAt: string
+}
+
+function LabEmissionSplit({
+  loops,
+  selectedHotkey,
+  onSelectHotkey,
+}: {
+  loops: ResearchLoop[]
+  selectedHotkey: string | null
+  onSelectHotkey: (hotkey: string) => void
+}) {
+  const rows = useMemo(() => {
+    const byHotkey = new Map<string, Omit<LabEmissionRow, 'pct'>>()
+    for (const loop of loops) {
+      if (!loop.minerHotkey) continue
+      const current = byHotkey.get(loop.minerHotkey) ?? {
+        hotkey: loop.minerHotkey,
+        count: 0,
+        active: 0,
+        scored: 0,
+        promising: 0,
+        lastActivityAt: loop.lastActivityAt,
+      }
+      current.count += 1
+      if (isActiveResearchLabLoopStatus(loop.outcomeLabel)) current.active += 1
+      if (loop.scoredCandidateCount > 0 || isScoredResearchLabLoopStatus(loop.outcomeLabel)) current.scored += 1
+      if (isPromisingResearchLabLoopStatus(loop.outcomeLabel, loop.outcomeBand)) current.promising += 1
+      if (new Date(loop.lastActivityAt).getTime() > new Date(current.lastActivityAt).getTime()) {
+        current.lastActivityAt = loop.lastActivityAt
+      }
+      byHotkey.set(loop.minerHotkey, current)
+    }
+    const total = Array.from(byHotkey.values()).reduce((sum, row) => sum + row.count, 0)
+    return Array.from(byHotkey.values())
+      .map((row) => ({
+        ...row,
+        pct: total > 0 ? (row.count / total) * 100 : 0,
+      }))
+      .sort((a, b) => b.pct - a.pct || b.count - a.count || a.hotkey.localeCompare(b.hotkey))
+  }, [loops])
+
+  const totalLoops = rows.reduce((sum, row) => sum + row.count, 0)
+  const selected = rows.find((row) => row.hotkey === selectedHotkey) ?? rows[0] ?? null
+
+  useEffect(() => {
+    if (!selectedHotkey) return
+    if (rows.some((row) => row.hotkey === selectedHotkey)) return
+    onSelectHotkey(rows[0]?.hotkey ?? '')
+  }, [onSelectHotkey, rows, selectedHotkey])
+
+  if (rows.length === 0) {
+    return (
+      <section className="border-b border-[var(--line)] py-8">
+        <div className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-[var(--muted-2)]">
+          Lab emission split
+        </div>
+        <p className="mt-3 text-[13px] text-[var(--muted-2)]">No Research Lab miner activity yet.</p>
+      </section>
+    )
+  }
+
+  return (
+    <section className="border-b border-[var(--line)] py-8 md:py-10">
+      <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+        <div>
+          <div className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-[var(--muted-2)]">
+            Lab emission split
+          </div>
+          <div className="mt-2 font-display text-[22px] font-medium tracking-[-0.025em] text-[var(--platinum)]">
+            {rows.length} hotkeys · {totalLoops} lab loops
+          </div>
+        </div>
+        {selected ? (
+          <div className="rounded-md border border-[var(--line)] bg-[rgba(236,234,230,0.018)] px-3 py-2 md:min-w-[260px]">
+            <div className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-[var(--muted-2)]">
+              Selected hotkey
+            </div>
+            <div className="mt-1 flex items-center justify-between gap-3">
+              <HotkeyCopyButton hotkey={selected.hotkey} />
+              <span className="font-display text-[18px] font-medium text-[var(--white)]">
+                {formatPercent(selected.pct)}
+              </span>
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="h-9 w-full overflow-hidden rounded-[5px] border border-[var(--line-2)] bg-[rgba(236,234,230,0.025)] p-[3px]">
+        <div className="flex h-full w-full gap-[2px]">
+          {rows.map((row, index) => {
+            const isSelected = selected?.hotkey === row.hotkey
+            const labelFits = row.pct >= 4.5
+            return (
+              <button
+                key={row.hotkey}
+                type="button"
+                onClick={() => onSelectHotkey(row.hotkey)}
+                className={cn(
+                  'group relative flex h-full min-w-[2px] items-center justify-center overflow-hidden rounded-[3px] transition-[filter,opacity,box-shadow]',
+                  isSelected
+                    ? 'shadow-[inset_0_0_0_1px_rgba(255,255,255,0.48)]'
+                    : 'opacity-80 hover:opacity-100 hover:brightness-125'
+                )}
+                style={{
+                  width: `${row.pct}%`,
+                  background: labEmissionTone(index),
+                }}
+                title={`${row.hotkey} · ${formatPercent(row.pct)} · ${row.count} loops`}
+                aria-label={`${formatPercent(row.pct)} lab emission split for hotkey ${row.hotkey}`}
+              >
+                {labelFits ? (
+                  <span
+                    className={cn(
+                      'truncate px-1 font-mono text-[10px] font-semibold tabular-nums',
+                      index < 3 ? 'text-slate-950' : 'text-[var(--platinum)]'
+                    )}
+                  >
+                    {formatPercent(row.pct)}
+                  </span>
+                ) : null}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      <div className="mt-5 overflow-hidden rounded-md border border-[var(--line)]">
+        <div className="hidden grid-cols-[minmax(0,1fr)_92px_72px_72px_86px_92px] gap-3 border-b border-[var(--line)] bg-[rgba(236,234,230,0.018)] px-3 py-2 font-mono text-[9.5px] uppercase tracking-[0.1em] text-[var(--muted-2)] md:grid">
+          <span>Hotkey</span>
+          <span className="text-right">Emission</span>
+          <span className="text-right">Loops</span>
+          <span className="text-right">Active</span>
+          <span className="text-right">Scored</span>
+          <span className="text-right">Latest</span>
+        </div>
+        {rows.map((row, index) => {
+          const isSelected = selected?.hotkey === row.hotkey
+          return (
+            <div
+              key={row.hotkey}
+              role="button"
+              tabIndex={0}
+              onClick={() => onSelectHotkey(row.hotkey)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return
+                event.preventDefault()
+                onSelectHotkey(row.hotkey)
+              }}
+              className={cn(
+                'grid w-full grid-cols-[minmax(0,1fr)_72px] gap-3 border-b border-[var(--line)] px-3 py-3 text-left transition-colors last:border-b-0 md:grid-cols-[minmax(0,1fr)_92px_72px_72px_86px_92px] md:items-center',
+                isSelected ? 'bg-[rgba(232,240,255,0.055)]' : 'hover-bg-warm'
+              )}
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <span
+                  className="h-4 w-1.5 shrink-0 rounded-full"
+                  style={{ background: labEmissionTone(index) }}
+                />
+                <span className="min-w-0">
+                  <HotkeyCopyButton hotkey={row.hotkey} />
+                  <span className="mt-1 block font-mono text-[10px] text-[var(--muted-2)] md:hidden">
+                    {row.count} loops · {row.scored} scored · {formatRelative(row.lastActivityAt)}
+                  </span>
+                </span>
+              </span>
+              <span className="text-right font-display text-[16px] font-medium tabular-nums text-[var(--platinum)]">
+                {formatPercent(row.pct)}
+              </span>
+              <span className="hidden text-right font-mono text-[11px] tabular-nums text-[var(--muted)] md:block">
+                {row.count}
+              </span>
+              <span className="hidden text-right font-mono text-[11px] tabular-nums text-[var(--muted)] md:block">
+                {row.active}
+              </span>
+              <span className="hidden text-right font-mono text-[11px] tabular-nums text-[var(--muted)] md:block">
+                {row.scored}
+                {row.promising > 0 ? <span className="ml-1.5 text-[var(--white)]">+{row.promising}</span> : null}
+              </span>
+              <span className="hidden text-right font-mono text-[10.5px] tabular-nums text-[var(--muted-2)] md:block">
+                {formatRelative(row.lastActivityAt)}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+function formatPercent(value: number): string {
+  if (!Number.isFinite(value)) return '0%'
+  if (value >= 10) return `${value.toFixed(0)}%`
+  return `${value.toFixed(1)}%`
+}
+
+function labEmissionTone(index: number): string {
+  const alpha = Math.max(0.2, 0.9 - index * 0.055)
+  if (index === 0) return 'linear-gradient(90deg, #ffffff, var(--white))'
+  if (index === 1) return 'linear-gradient(90deg, var(--platinum), #d6d4cd)'
+  return `linear-gradient(90deg, rgba(236,234,230,${alpha}), rgba(236,234,230,${Math.max(0.16, alpha - 0.18)}))`
 }
 
 /* ============================================================

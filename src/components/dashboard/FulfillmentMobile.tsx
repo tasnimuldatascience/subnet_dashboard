@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { X, RefreshCw } from 'lucide-react'
-import { EmissionAllocationVial, type EmissionRequestMap } from './EmissionAllocationVial'
 
 /* ------------------------------------------------------------------
  * Shared types (kept in this file to keep the mobile view standalone)
@@ -46,8 +45,6 @@ interface ConsensusResult {
   miner_hotkey: string
   lead_id: string
   is_winner: boolean
-  reward_pct?: number | null
-  computed_at?: string
 }
 
 interface LeaderboardEntry {
@@ -69,7 +66,6 @@ const PENDING_STATUSES = ['pending', 'open', 'continued_open', 'commit_closed', 
 interface Props {
   activeRequests: ActiveRequest[]
   allConsensus: ConsensusResult[]
-  requestMap: EmissionRequestMap
   leaderboard: LeaderboardEntry[]
   leaderboardWindowDays: number
   totalSubmittedLeads: number
@@ -172,7 +168,6 @@ function usePullToRefresh(
 export function FulfillmentMobile({
   activeRequests,
   allConsensus,
-  requestMap,
   leaderboard,
   leaderboardWindowDays,
   totalSubmittedLeads,
@@ -240,11 +235,6 @@ export function FulfillmentMobile({
       .slice()
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
   }, [activeRequests, filter, searchQuery, asText])
-
-  const filteredRequestIds = useMemo(
-    () => filteredRequests.map((request) => request.request_id),
-    [filteredRequests],
-  )
 
   // Winner counts per request, used by the leads column on each card
   const winnersByRequest = useMemo(() => {
@@ -323,15 +313,6 @@ export function FulfillmentMobile({
             />
           </div>
         </div>
-
-        <EmissionAllocationVial
-          consensus={allConsensus}
-          requestMap={requestMap}
-          requestIds={filteredRequestIds}
-          onMinerSelect={onMinerSelect}
-          compact
-          className="mobile-section"
-        />
 
         {/* Top miners */}
         {leaderboard.length > 0 && (
