@@ -5,6 +5,7 @@ import {
   isActiveResearchLabLoopStatus,
   isCompletedResearchLabLoopStatus,
   isNoGainOrFailedResearchLabLoopStatus,
+  isPendingOrBlockingResearchLabLoopStatus,
   isPromisingResearchLabLoopStatus,
   isScoredResearchLabLoopStatus,
   type ResearchLabLoopStatusNote,
@@ -217,10 +218,15 @@ type PublicLoopRow = {
 // never entered the autoresearch queue at all.
 type PublicLoopEventDoc = {
   projection_reason?: string
+  current_candidate_status?: string
+  candidate_status?: string
+  current_reason?: string
+  candidate_reason?: string
   queue_status?: string
   receipt_status?: string
   score_bundle_count?: number
   candidate_status_counts?: Record<string, number>
+  candidate_reason_counts?: Record<string, number>
 }
 
 type ResearchLabPayload = {
@@ -229,6 +235,7 @@ type ResearchLabPayload = {
   topicGroups: TopicGroup[]
   stats: {
     activeLoopCount: number
+    opsPendingLoopCount: number
     scoredLoopCount: number
     promisingLoopCount: number
     totalBenchmarkIcpCount: number
@@ -333,6 +340,9 @@ export async function GET() {
       topicGroups,
       stats: {
         activeLoopCount: loops.filter((loop) => isActiveResearchLabLoopStatus(loop.outcomeLabel)).length,
+        opsPendingLoopCount: loops.filter((loop) =>
+          isPendingOrBlockingResearchLabLoopStatus(loop.outcomeLabel)
+        ).length,
         scoredLoopCount: loops.filter((loop) =>
           loop.scoredCandidateCount > 0 || isScoredResearchLabLoopStatus(loop.outcomeLabel)
         ).length,
@@ -831,15 +841,26 @@ async function fetchPublicLoops(supabase: ReturnType<typeof getSupabase>): Promi
       const projectedOutcomeBand = row.current_outcome_band || 'pending'
       const doc = row.current_event_doc ?? {}
       const lastActivityAt = row.current_last_activity_at || row.created_at
+      const candidateCount = numberOr(row.current_candidate_count, 0)
       const scoredCandidateCount = numberOr(row.current_scored_candidate_count, 0)
       const displayStatus = deriveResearchLabLoopStatus({
         outcomeLabel: projectedOutcomeLabel,
         outcomeBand: projectedOutcomeBand,
         runId: row.current_run_id,
         receiptId: row.current_receipt_id,
+        candidateCount,
         scoredCandidateCount,
-        currentCandidateStatus: row.current_candidate_status,
-        currentReason: row.current_reason ?? doc.projection_reason,
+        currentCandidateStatus:
+          row.current_candidate_status ??
+          stringOr(doc.current_candidate_status) ??
+          stringOr(doc.candidate_status) ??
+          dominantCountKey(doc.candidate_status_counts),
+        currentReason:
+          row.current_reason ??
+          stringOr(doc.current_reason) ??
+          stringOr(doc.candidate_reason) ??
+          dominantCountKey(doc.candidate_reason_counts) ??
+          doc.projection_reason,
         currentQueueStatus: row.current_queue_status ?? doc.queue_status,
         currentReceiptStatus: row.current_receipt_status ?? doc.receipt_status,
         currentStatus: row.current_status,
@@ -857,7 +878,7 @@ async function fetchPublicLoops(supabase: ReturnType<typeof getSupabase>): Promi
         outcomeLabel: displayStatus.key,
         statusLabel: displayStatus.label,
         outcomeBand: displayStatus.band,
-        candidateCount: numberOr(row.current_candidate_count, 0),
+        candidateCount,
         scoredCandidateCount,
         bestCandidatePublicSummary: row.current_best_candidate_public_summary || '',
         lastActivityAt,
@@ -912,6 +933,24 @@ function numberOr(value: unknown, fallback: number): number {
 function arrayOfStrings(value: unknown): string[] {
   if (!Array.isArray(value)) return []
   return value.filter((item): item is string => typeof item === 'string' && item.length > 0)
+}
+
+function stringOr(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+function dominantCountKey(counts: Record<string, number> | undefined): string | undefined {
+  if (!counts) return undefined
+  let bestKey = ''
+  let bestCount = 0
+  for (const [key, value] of Object.entries(counts)) {
+    const count = numberOr(value, 0)
+    if (key && count > bestCount) {
+      bestKey = key
+      bestCount = count
+    }
+  }
+  return bestKey || undefined
 }
 
 function scoreBand(score: number): string {

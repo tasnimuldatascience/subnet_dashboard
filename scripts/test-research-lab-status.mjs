@@ -52,6 +52,28 @@ try {
       },
     },
     {
+      name: 'completed queue with baseline_not_ready unscored candidate renders Waiting for baseline',
+      input: {
+        outcomeLabel: 'completed',
+        outcomeBand: 'completed',
+        currentCandidateStatus: 'queued',
+        currentReason: 'baseline_not_ready',
+        currentQueueStatus: 'completed',
+        candidateCount: 1,
+        scoredCandidateCount: 0,
+        runId: 'run-1b',
+        receiptId: 'receipt-1b',
+      },
+      expected: {
+        key: 'waiting_for_baseline',
+        label: 'Waiting for baseline',
+        band: 'pending',
+        active: false,
+        scoring: false,
+        detail: 'Candidate generation completed, but scoring is waiting for the benchmark baseline.',
+      },
+    },
+    {
       name: 'stale_parent_needs_rescore renders Needs rescore',
       input: {
         outcomeLabel: 'needs_rescore',
@@ -106,6 +128,26 @@ try {
         band: 'no_gain',
         active: false,
         scoring: false,
+      },
+    },
+    {
+      name: 'unscored candidate does not render Scored, no gain',
+      input: {
+        outcomeLabel: 'scored_no_gain',
+        outcomeBand: 'no_gain',
+        currentCandidateStatus: 'queued',
+        candidateCount: 1,
+        scoredCandidateCount: 0,
+        runId: 'run-4b',
+        receiptId: 'receipt-4b',
+      },
+      expected: {
+        key: 'waiting_for_baseline',
+        label: 'Waiting for baseline',
+        band: 'pending',
+        active: false,
+        scoring: false,
+        detail: 'Candidate generation completed, but scoring is waiting for the benchmark baseline.',
       },
     },
     {

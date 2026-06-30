@@ -11,6 +11,7 @@ export type ResearchLabLoopStatusInput = {
   outcomeBand?: string | null
   runId?: string | null
   receiptId?: string | null
+  candidateCount?: number | null
   scoredCandidateCount?: number | null
   candidateStatus?: string | null
   currentCandidateStatus?: string | null
@@ -118,6 +119,7 @@ const PENDING_OR_BLOCKING_STATUS_KEYS = new Set([
   'waiting_for_baseline',
   'needs_rescore',
   'not_started',
+  'failed',
 ])
 
 export function deriveResearchLabLoopStatus(input: ResearchLabLoopStatusInput): ResearchLabLoopStatus {
@@ -128,7 +130,9 @@ export function deriveResearchLabLoopStatus(input: ResearchLabLoopStatusInput): 
   const queueStatus = normalize(input.currentQueueStatus ?? input.queueStatus)
   const receiptStatus = normalize(input.currentReceiptStatus ?? input.receiptStatus)
   const currentStatus = normalize(input.currentStatus)
+  const candidateCount = numeric(input.candidateCount)
   const scoredCandidateCount = numeric(input.scoredCandidateCount)
+  const hasGeneratedUnscoredCandidate = candidateCount > 0 && scoredCandidateCount === 0
   const operationalValues = [candidateStatus, queueStatus, receiptStatus, currentStatus].filter(Boolean)
   const hasOperationalState = operationalValues.length > 0
 
@@ -145,11 +149,29 @@ export function deriveResearchLabLoopStatus(input: ResearchLabLoopStatusInput): 
 
   const operationalScored = hasAny(operationalValues, COMPLETED_VALUES)
   if (
-    projectedLabel === 'scored_no_gain' ||
-    (projectedBand === 'no_gain' && (scoredCandidateCount > 0 || operationalScored)) ||
-    (candidateStatus === 'scored_no_gain')
+    scoredCandidateCount > 0 &&
+    (
+      projectedLabel === 'scored_no_gain' ||
+      projectedBand === 'no_gain' ||
+      candidateStatus === 'scored_no_gain'
+    )
   ) {
     return status('scored_no_gain', 'Scored, no gain', 'no_gain')
+  }
+
+  if ((projectedLabel === 'scored_no_gain' || projectedBand === 'no_gain') && scoredCandidateCount === 0) {
+    if (hasGeneratedUnscoredCandidate) {
+      return status('waiting_for_baseline', 'Waiting for baseline', 'pending', {
+        tone: 'warning',
+        label: 'Waiting for baseline',
+        detail: 'Candidate generation completed, but scoring is waiting for the benchmark baseline.',
+      })
+    }
+    return status('not_started', 'Not started', 'pending', {
+      tone: 'info',
+      label: 'Not started',
+      detail: 'No scored candidate exists yet, so this is not a completed no-gain result.',
+    })
   }
 
   if (
@@ -159,11 +181,17 @@ export function deriveResearchLabLoopStatus(input: ResearchLabLoopStatusInput): 
     return status('scored', 'Scored', projectedBand === 'pending' ? 'completed' : projectedBand)
   }
 
-  if ((candidateStatus === 'queued' || queueStatus === 'queued') && reason === 'baseline_not_ready') {
+  if (
+    reason === 'baseline_not_ready' &&
+    (candidateStatus === 'queued' || queueStatus === 'queued' || queueStatus === 'completed' || hasGeneratedUnscoredCandidate)
+  ) {
+    const completedGeneration = queueStatus === 'completed' || projectedLabel === 'completed' || hasGeneratedUnscoredCandidate
     return status('waiting_for_baseline', 'Waiting for baseline', 'pending', {
       tone: 'warning',
       label: 'Waiting for baseline',
-      detail: 'Candidate is queued, but scoring is waiting for the benchmark baseline to become ready.',
+      detail: completedGeneration
+        ? 'Candidate generation completed, but scoring is waiting for the benchmark baseline.'
+        : 'Candidate is queued, but scoring is waiting for the benchmark baseline to become ready.',
     })
   }
 
@@ -175,11 +203,38 @@ export function deriveResearchLabLoopStatus(input: ResearchLabLoopStatusInput): 
     })
   }
 
+  if (!input.runId && !input.receiptId) {
+    return status('not_started', 'Not started', 'pending', {
+      tone: 'info',
+      label: 'Not started',
+      detail: 'The ticket is recorded, but no run or receipt has been published yet.',
+    })
+  }
+
   const terminalCompleted = hasAny(operationalValues, COMPLETED_VALUES)
   const activeProjection = ACTIVE_STATUS_KEYS.has(projectedLabel)
   if (activeProjection && hasOperationalState && terminalCompleted) {
     if (scoredCandidateCount > 0) return status('scored', 'Scored', 'completed')
-    return status('completed', 'Complete', 'completed')
+    if (hasGeneratedUnscoredCandidate) {
+      return status('waiting_for_baseline', 'Waiting for baseline', 'pending', {
+        tone: 'warning',
+        label: 'Waiting for baseline',
+        detail: 'Candidate generation completed, but scoring is waiting for the benchmark baseline.',
+      })
+    }
+    return status('not_started', 'Not started', 'pending', {
+      tone: 'info',
+      label: 'Not started',
+      detail: 'The run has no scored candidate yet, so it is not a completed model result.',
+    })
+  }
+
+  if ((projectedLabel === 'completed' || projectedBand === 'completed') && hasGeneratedUnscoredCandidate) {
+    return status('waiting_for_baseline', 'Waiting for baseline', 'pending', {
+      tone: 'warning',
+      label: 'Waiting for baseline',
+      detail: 'Candidate generation completed, but scoring is waiting for the benchmark baseline.',
+    })
   }
 
   if (
@@ -189,14 +244,6 @@ export function deriveResearchLabLoopStatus(input: ResearchLabLoopStatusInput): 
     if (projectedLabel === 'scoring') return status('scoring', 'Scoring', 'running')
     if (projectedLabel === 'running') return status('running', 'Running', 'running')
     return status('queued', 'Queued', 'pending')
-  }
-
-  if (!input.runId && !input.receiptId) {
-    return status('not_started', 'Not started', 'pending', {
-      tone: 'info',
-      label: 'Not started',
-      detail: 'The ticket is recorded, but no run or receipt has been published yet.',
-    })
   }
 
   if (projectedLabel === 'candidate_generation_complete') {
@@ -224,6 +271,10 @@ export function isPromisingResearchLabLoopStatus(key: string, band?: string | nu
 
 export function isNoGainOrFailedResearchLabLoopStatus(key: string, band?: string | null): boolean {
   return NO_GAIN_OR_FAILED_KEYS.has(normalize(key)) || normalize(band) === 'failed'
+}
+
+export function isPendingOrBlockingResearchLabLoopStatus(key: string): boolean {
+  return PENDING_OR_BLOCKING_STATUS_KEYS.has(normalize(key))
 }
 
 function promotionStatus(

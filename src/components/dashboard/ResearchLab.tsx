@@ -24,6 +24,7 @@ type ResearchLabData = {
   topicGroups: TopicGroup[]
   stats: {
     activeLoopCount: number
+    opsPendingLoopCount: number
     scoredLoopCount: number
     promisingLoopCount: number
     totalBenchmarkIcpCount: number
@@ -206,6 +207,7 @@ export function ResearchLab({ onSync }: { onSync?: () => void } = {}) {
   const topicGroups = data?.topicGroups ?? []
   const stats = data?.stats ?? {
     activeLoopCount: 0,
+    opsPendingLoopCount: 0,
     scoredLoopCount: 0,
     promisingLoopCount: 0,
     totalBenchmarkIcpCount: 0,
