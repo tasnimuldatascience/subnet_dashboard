@@ -1,12 +1,20 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+import {
+  deriveResearchLabLoopStatus,
+  isActiveResearchLabLoopStatus,
+  isCompletedResearchLabLoopStatus,
+  isNoGainOrFailedResearchLabLoopStatus,
+  isPromisingResearchLabLoopStatus,
+  isScoredResearchLabLoopStatus,
+  type ResearchLabLoopStatusNote,
+} from '@/lib/research-lab-status'
 
 export const dynamic = 'force-dynamic'
 
 const CACHE_TTL = 60_000
 const LOOP_LIMIT = 50
 const LOOP_FETCH_LIMIT = LOOP_LIMIT + 100
-const START_DELAY_MS = 30 * 60 * 1000
 const HIDDEN_LOOP_MINER_PREFIXES = ['5FEtvB']
 
 type CachedResponse = {
@@ -192,6 +200,11 @@ type PublicLoopRow = {
   current_last_activity_at: string | null
   current_run_id: string | null
   current_receipt_id: string | null
+  current_candidate_status?: string | null
+  current_reason?: string | null
+  current_queue_status?: string | null
+  current_receipt_status?: string | null
+  current_status?: string | null
   created_at: string
 }
 
@@ -248,6 +261,7 @@ type NormalizedLoop = {
   topicTags: string[]
   topicSignatureHash: string
   outcomeLabel: string
+  statusLabel: string
   outcomeBand: string
   candidateCount: number
   scoredCandidateCount: number
@@ -258,9 +272,9 @@ type NormalizedLoop = {
 }
 
 type LoopStatusNote = {
-  tone: 'info' | 'warning' | 'error'
-  label: string
-  detail: string
+  tone: ResearchLabLoopStatusNote['tone']
+  label: ResearchLabLoopStatusNote['label']
+  detail: ResearchLabLoopStatusNote['detail']
 }
 
 type TopicGroup = {
@@ -303,10 +317,12 @@ export async function GET() {
       loops,
       topicGroups,
       stats: {
-        activeLoopCount: loops.filter((loop) => ['queued', 'running', 'scoring'].includes(loop.outcomeLabel)).length,
-        scoredLoopCount: loops.filter((loop) => loop.scoredCandidateCount > 0).length,
+        activeLoopCount: loops.filter((loop) => isActiveResearchLabLoopStatus(loop.outcomeLabel)).length,
+        scoredLoopCount: loops.filter((loop) =>
+          loop.scoredCandidateCount > 0 || isScoredResearchLabLoopStatus(loop.outcomeLabel)
+        ).length,
         promisingLoopCount: loops.filter((loop) =>
-          ['small_gain', 'passed_threshold', 'promoted'].includes(loop.outcomeBand)
+          isPromisingResearchLabLoopStatus(loop.outcomeLabel, loop.outcomeBand)
         ).length,
         totalBenchmarkIcpCount: benchmark?.itemCount ?? 0,
       },
@@ -782,7 +798,7 @@ function stripInternalIcpFields(icps: PublicIcpEntry[]): PublicIcpEntry[] {
 async function fetchPublicLoops(supabase: ReturnType<typeof getSupabase>): Promise<NormalizedLoop[]> {
   const { data, error } = await supabase
     .from('research_lab_public_loop_card_current')
-    .select('card_id, ticket_id, miner_hotkey, research_area, research_focus_summary, topic_tags, topic_signature_hash, current_topic_tags, current_topic_signature_hash, current_outcome_label, current_outcome_band, current_candidate_count, current_scored_candidate_count, current_best_candidate_public_summary, current_last_activity_at, current_run_id, current_receipt_id, created_at')
+    .select('*')
     .order('current_last_activity_at', { ascending: false, nullsFirst: false })
     .order('created_at', { ascending: false })
     .limit(LOOP_FETCH_LIMIT)
@@ -796,9 +812,22 @@ async function fetchPublicLoops(supabase: ReturnType<typeof getSupabase>): Promi
     .filter(isVisiblePublicLoop)
     .slice(0, LOOP_LIMIT)
     .map((row) => {
-      const outcomeLabel = row.current_outcome_label || 'submitted'
-      const outcomeBand = row.current_outcome_band || 'pending'
+      const projectedOutcomeLabel = row.current_outcome_label || 'submitted'
+      const projectedOutcomeBand = row.current_outcome_band || 'pending'
       const lastActivityAt = row.current_last_activity_at || row.created_at
+      const scoredCandidateCount = numberOr(row.current_scored_candidate_count, 0)
+      const displayStatus = deriveResearchLabLoopStatus({
+        outcomeLabel: projectedOutcomeLabel,
+        outcomeBand: projectedOutcomeBand,
+        runId: row.current_run_id,
+        receiptId: row.current_receipt_id,
+        scoredCandidateCount,
+        currentCandidateStatus: row.current_candidate_status,
+        currentReason: row.current_reason,
+        currentQueueStatus: row.current_queue_status,
+        currentReceiptStatus: row.current_receipt_status,
+        currentStatus: row.current_status,
+      })
       return {
         cardId: row.card_id,
         ticketId: row.ticket_id,
@@ -809,51 +838,21 @@ async function fetchPublicLoops(supabase: ReturnType<typeof getSupabase>): Promi
         researchFocusSummary: row.research_focus_summary || '',
         topicTags: arrayOfStrings(row.current_topic_tags ?? row.topic_tags),
         topicSignatureHash: row.current_topic_signature_hash || row.topic_signature_hash,
-        outcomeLabel,
-        outcomeBand,
+        outcomeLabel: displayStatus.key,
+        statusLabel: displayStatus.label,
+        outcomeBand: displayStatus.band,
         candidateCount: numberOr(row.current_candidate_count, 0),
-        scoredCandidateCount: numberOr(row.current_scored_candidate_count, 0),
+        scoredCandidateCount,
         bestCandidatePublicSummary: row.current_best_candidate_public_summary || '',
         lastActivityAt,
         submittedAt: row.created_at,
-        statusNote: loopStatusNote(row, outcomeLabel, outcomeBand, lastActivityAt),
+        statusNote: displayStatus.note,
       }
     })
 }
 
 function isVisiblePublicLoop(row: PublicLoopRow): boolean {
   return !HIDDEN_LOOP_MINER_PREFIXES.some((prefix) => row.miner_hotkey.startsWith(prefix))
-}
-
-function loopStatusNote(
-  row: PublicLoopRow,
-  outcomeLabel: string,
-  outcomeBand: string,
-  lastActivityAt: string
-): LoopStatusNote | undefined {
-  if (outcomeBand === 'failed' || outcomeLabel === 'failed') {
-    return {
-      tone: 'error',
-      label: 'Run failed',
-      detail: 'The public log marked this loop as failed before a scored candidate was produced.',
-    }
-  }
-
-  if (
-    outcomeLabel === 'submitted' &&
-    !row.current_run_id &&
-    !row.current_receipt_id
-  ) {
-    const lastActivityMs = new Date(lastActivityAt).getTime()
-    const delayed = Number.isFinite(lastActivityMs) && Date.now() - lastActivityMs >= START_DELAY_MS
-    return {
-      tone: delayed ? 'warning' : 'info',
-      label: delayed ? 'Start delayed' : 'Waiting to start',
-      detail: 'The ticket is recorded, but no run or receipt has been published yet.',
-    }
-  }
-
-  return undefined
 }
 
 function groupLoopsByTopic(loops: NormalizedLoop[]): TopicGroup[] {
@@ -872,13 +871,13 @@ function groupLoopsByTopic(loops: NormalizedLoop[]): TopicGroup[] {
       latestActivityAt: loop.lastActivityAt,
     }
     group.total += 1
-    if (['queued', 'running', 'scoring'].includes(loop.outcomeLabel)) group.running += 1
-    if (['candidate_generation_complete', 'scored_no_gain', 'scored_promising', 'promotion_passed', 'promoted', 'failed'].includes(loop.outcomeLabel)) {
+    if (isActiveResearchLabLoopStatus(loop.outcomeLabel)) group.running += 1
+    if (isCompletedResearchLabLoopStatus(loop.outcomeLabel)) {
       group.completed += 1
     }
-    if (['scored_no_gain', 'scored_promising', 'promotion_passed', 'promoted'].includes(loop.outcomeLabel)) group.scored += 1
-    if (['small_gain', 'passed_threshold', 'promoted'].includes(loop.outcomeBand)) group.promisingOrPromoted += 1
-    if (['no_gain', 'failed'].includes(loop.outcomeBand)) group.noGainOrFailed += 1
+    if (isScoredResearchLabLoopStatus(loop.outcomeLabel)) group.scored += 1
+    if (isPromisingResearchLabLoopStatus(loop.outcomeLabel, loop.outcomeBand)) group.promisingOrPromoted += 1
+    if (isNoGainOrFailedResearchLabLoopStatus(loop.outcomeLabel, loop.outcomeBand)) group.noGainOrFailed += 1
     if (new Date(loop.lastActivityAt).getTime() > new Date(group.latestActivityAt).getTime()) {
       group.latestActivityAt = loop.lastActivityAt
     }
