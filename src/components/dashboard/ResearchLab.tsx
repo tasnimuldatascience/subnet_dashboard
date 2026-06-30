@@ -261,7 +261,6 @@ export function ResearchLab({ onSync }: { onSync?: () => void } = {}) {
       <ResearchActivityDialog
         open={activityOpen}
         loops={loops}
-        activeCount={stats.activeLoopCount}
         topicGroups={topicGroups}
         onOpenChange={setActivityOpen}
       />
@@ -904,13 +903,11 @@ function IssueRow({ issue }: { issue: BenchmarkIssue }) {
 function ResearchActivityDialog({
   open,
   loops,
-  activeCount,
   topicGroups,
   onOpenChange,
 }: {
   open: boolean
   loops: ResearchLoop[]
-  activeCount: number
   topicGroups: TopicGroup[]
   onOpenChange: (open: boolean) => void
 }) {
@@ -970,34 +967,21 @@ function ResearchActivityDialog({
       <DialogContent
         aria-describedby={undefined}
         showCloseButton={false}
-        className="sm:w-[calc(100vw-3rem)] sm:max-w-[1180px] sm:max-h-[90vh] overflow-hidden flex flex-col gap-0 bg-[var(--canvas)] border-[var(--line-2)] p-0 sm:p-0 text-[var(--platinum)]"
+        className="relative sm:w-[calc(100vw-3rem)] sm:max-w-[1180px] sm:max-h-[90vh] overflow-hidden flex flex-col gap-0 bg-[var(--canvas)] border-[var(--line-2)] p-0 sm:p-0 text-[var(--platinum)]"
       >
-        <DialogHeader className="shrink-0 border-b border-[var(--line)] px-4 py-3 text-left sm:px-5 sm:py-4">
-          <div className="flex min-w-0 items-center gap-2">
-            <DialogTitle className="truncate font-mono text-[12px] uppercase tracking-[0.16em] text-[var(--platinum)]">
-              Live research activity
-            </DialogTitle>
-            <div className="ml-auto flex shrink-0 items-center gap-2">
-              {activeCount > 0 ? (
-                <span className="inline-flex items-center gap-2 font-mono text-[10.5px] text-[var(--muted)]">
-                  <span className="live-pulse inline-block h-1.5 w-1.5 rounded-full bg-[var(--white)]" />
-                  {activeCount} running
-                </span>
-              ) : null}
-              <DialogClose asChild>
-                <button
-                  type="button"
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[var(--line-2)] bg-[rgba(236,234,230,0.025)] text-[var(--muted)] transition-colors hover:border-[var(--line-3)] hover:bg-[rgba(236,234,230,0.045)] hover:text-[var(--platinum)] premium-focus"
-                  aria-label="Close activity panel"
-                  title="Close activity panel"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </DialogClose>
-            </div>
-          </div>
-
-          <div className="mt-3 grid grid-cols-2 gap-2 sm:mt-4 sm:grid-cols-4">
+        <DialogClose asChild>
+          <button
+            type="button"
+            className="absolute right-3 top-3 z-20 inline-flex h-7 w-7 items-center justify-center rounded-md text-[var(--muted)] transition-colors hover:bg-[rgba(236,234,230,0.045)] hover:text-[var(--platinum)] premium-focus"
+            aria-label="Close activity panel"
+            title="Close activity panel"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </DialogClose>
+        <DialogHeader className="shrink-0 border-b border-[var(--line)] px-4 pb-4 pt-8 text-left sm:px-5 sm:py-4">
+          <DialogTitle className="sr-only">Live research activity</DialogTitle>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             <ActivityPanelStat label="Visible" value={filteredLoops.length} />
             <ActivityPanelStat label="Runs" value={loops.length} />
             <ActivityPanelStat label="Miners" value={minerCount} />
@@ -1092,16 +1076,6 @@ function ResearchActivityDialog({
             onPageChange={setCurrentPage}
           />
         ) : null}
-        <div className="shrink-0 border-t border-[var(--line)] px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:hidden">
-          <DialogClose asChild>
-            <button
-              type="button"
-              className="flex h-10 w-full items-center justify-center rounded-md border border-[var(--line-2)] bg-[rgba(236,234,230,0.045)] font-mono text-[11px] uppercase tracking-[0.12em] text-[var(--platinum)] transition-colors hover:border-[var(--line-3)] hover:bg-[rgba(236,234,230,0.07)] premium-focus"
-            >
-              Close activity panel
-            </button>
-          </DialogClose>
-        </div>
       </DialogContent>
     </Dialog>
   )
