@@ -436,11 +436,6 @@ function Hero({ benchmark }: { benchmark: BenchmarkReport | null }) {
 
   const score = numberOr(benchmark.aggregateScore, 0)
   const tone = scoreTone(score)
-  const splitSummary = benchmark.itemCount > 0
-    ? benchmark.publicIcpCount > 0 || benchmark.privateHoldoutIcpCount > 0
-      ? `${benchmark.itemCount} ICP benchmark, ${benchmark.publicIcpCount} shown and ${benchmark.privateHoldoutIcpCount} withheld`
-      : `${benchmark.itemCount} ICP benchmark`
-    : ''
 
   return (
     <section className="pt-12 pb-14">
@@ -457,14 +452,7 @@ function Hero({ benchmark }: { benchmark: BenchmarkReport | null }) {
       </div>
 
       <p className="mt-7 max-w-[560px] text-[14px] leading-[1.7] text-[var(--muted)]">
-        The current benchmark score for Leadpoet&apos;s sales agent
-        {splitSummary ? (
-          <>
-            , measured on a{' '}
-            <b className="font-medium text-[var(--platinum)]">{splitSummary}</b>
-          </>
-        ) : null}
-        . Each loop tests whether a miner&apos;s change improves the current model.
+        The current benchmark score for Leadpoet&apos;s sales agent. Each loop tests whether a miner&apos;s change improves the current model.
       </p>
 
       <div className="mt-6 font-mono text-[11px] text-[var(--muted-2)]">
