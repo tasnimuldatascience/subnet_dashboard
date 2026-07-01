@@ -210,6 +210,22 @@ type PublicLoopRow = {
   current_queue_status?: string | null
   current_receipt_status?: string | null
   current_status?: string | null
+  public_status?: string | null
+  payment_state?: string | null
+  execution_state?: string | null
+  candidate_state?: string | null
+  result_state?: string | null
+  ops_reason?: string | null
+  status_detail?: string | null
+  ops_warnings?: unknown
+  current_public_status?: string | null
+  current_payment_state?: string | null
+  current_execution_state?: string | null
+  current_candidate_state?: string | null
+  current_result_state?: string | null
+  current_ops_reason?: string | null
+  current_status_detail?: string | null
+  current_ops_warnings?: unknown
   created_at: string
 }
 
@@ -227,6 +243,22 @@ type PublicLoopEventDoc = {
   candidate_reason?: string
   queue_status?: string
   receipt_status?: string
+  public_status?: string
+  payment_state?: string
+  execution_state?: string
+  candidate_state?: string
+  result_state?: string
+  ops_reason?: string
+  status_detail?: string
+  ops_warnings?: unknown
+  current_public_status?: string
+  current_payment_state?: string
+  current_execution_state?: string
+  current_candidate_state?: string
+  current_result_state?: string
+  current_ops_reason?: string
+  current_status_detail?: string
+  current_ops_warnings?: unknown
   score_bundle_count?: number
   candidate_status_counts?: Record<string, number>
   candidate_reason_counts?: Record<string, number>
@@ -305,6 +337,14 @@ type NormalizedLoop = {
   topicTags: string[]
   topicSignatureHash: string
   outcomeLabel: string
+  publicStatus?: string
+  paymentState?: string
+  executionState?: string
+  candidateState?: string
+  resultState?: string
+  opsReason?: string
+  statusDetail?: string
+  opsWarnings?: string[]
   statusKey: string
   statusLabel: string
   outcomeBand: string
@@ -976,7 +1016,56 @@ async function fetchPublicLoops(supabase: ReturnType<typeof getSupabase>): Promi
       const lastActivityAt = row.current_last_activity_at || row.created_at
       const candidateCount = numberOr(row.current_candidate_count, 0)
       const scoredCandidateCount = numberOr(row.current_scored_candidate_count, 0)
+      const publicStatus =
+        stringOr(row.public_status) ??
+        stringOr(row.current_public_status) ??
+        stringOr(doc.public_status) ??
+        stringOr(doc.current_public_status)
+      const paymentState =
+        stringOr(row.payment_state) ??
+        stringOr(row.current_payment_state) ??
+        stringOr(doc.payment_state) ??
+        stringOr(doc.current_payment_state)
+      const executionState =
+        stringOr(row.execution_state) ??
+        stringOr(row.current_execution_state) ??
+        stringOr(doc.execution_state) ??
+        stringOr(doc.current_execution_state)
+      const candidateState =
+        stringOr(row.candidate_state) ??
+        stringOr(row.current_candidate_state) ??
+        stringOr(doc.candidate_state) ??
+        stringOr(doc.current_candidate_state)
+      const resultState =
+        stringOr(row.result_state) ??
+        stringOr(row.current_result_state) ??
+        stringOr(doc.result_state) ??
+        stringOr(doc.current_result_state)
+      const opsReason =
+        stringOr(row.ops_reason) ??
+        stringOr(row.current_ops_reason) ??
+        stringOr(doc.ops_reason) ??
+        stringOr(doc.current_ops_reason)
+      const statusDetail =
+        stringOr(row.status_detail) ??
+        stringOr(row.current_status_detail) ??
+        stringOr(doc.status_detail) ??
+        stringOr(doc.current_status_detail)
+      const opsWarningsSource =
+        row.ops_warnings ??
+        row.current_ops_warnings ??
+        doc.ops_warnings ??
+        doc.current_ops_warnings
+      const opsWarnings = warningStrings(opsWarningsSource)
       const displayStatus = deriveResearchLabLoopStatus({
+        publicStatus,
+        paymentState,
+        executionState,
+        candidateState,
+        resultState,
+        opsReason,
+        statusDetail,
+        opsWarnings,
         outcomeLabel: projectedOutcomeLabel,
         outcomeBand: projectedOutcomeBand,
         runId: row.current_run_id,
@@ -1009,6 +1098,14 @@ async function fetchPublicLoops(supabase: ReturnType<typeof getSupabase>): Promi
         topicTags: arrayOfStrings(row.current_topic_tags ?? row.topic_tags),
         topicSignatureHash: row.current_topic_signature_hash || row.topic_signature_hash,
         outcomeLabel: projectedOutcomeLabel,
+        publicStatus,
+        paymentState,
+        executionState,
+        candidateState,
+        resultState,
+        opsReason,
+        statusDetail,
+        opsWarnings,
         statusKey: displayStatus.key,
         statusLabel: displayStatus.label,
         outcomeBand: displayStatus.band,
@@ -1100,6 +1197,26 @@ function numberOr(value: unknown, fallback: number): number {
 function arrayOfStrings(value: unknown): string[] {
   if (!Array.isArray(value)) return []
   return value.filter((item): item is string => typeof item === 'string' && item.length > 0)
+}
+
+function warningStrings(value: unknown): string[] {
+  if (!value) return []
+  const values = Array.isArray(value) ? value : [value]
+  return values
+    .map((item) => {
+      if (typeof item === 'string') return item.trim()
+      if (typeof item === 'number' || typeof item === 'boolean') return String(item)
+      if (!item || typeof item !== 'object') return ''
+      const record = item as Record<string, unknown>
+      return stringOr(record.detail) ??
+        stringOr(record.message) ??
+        stringOr(record.reason) ??
+        stringOr(record.code) ??
+        stringOr(record.label) ??
+        JSON.stringify(record)
+    })
+    .map((item) => item.trim())
+    .filter(Boolean)
 }
 
 function stringOr(value: unknown): string | undefined {

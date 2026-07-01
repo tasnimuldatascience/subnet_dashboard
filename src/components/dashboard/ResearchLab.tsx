@@ -22,8 +22,8 @@ import {
   isActiveResearchLabLoopStatus,
   isPromisingResearchLabLoopStatus,
   isScoredResearchLabLoopStatus,
-  researchLabOutcomeFilterOptionsWithCounts,
   researchLabLoopDirectionKeys as getResearchLabLoopDirectionKeys,
+  researchLabStatusFilterOptionsWithCounts,
 } from '@/lib/research-lab-status'
 import type { MetagraphData } from '@/lib/types'
 
@@ -172,6 +172,14 @@ type ResearchLoop = {
   topicTags: string[]
   topicSignatureHash: string
   outcomeLabel: string
+  publicStatus?: string
+  paymentState?: string
+  executionState?: string
+  candidateState?: string
+  resultState?: string
+  opsReason?: string
+  statusDetail?: string
+  opsWarnings?: string[]
   statusKey?: string
   statusLabel: string
   outcomeBand: string
@@ -1268,21 +1276,21 @@ function ResearchActivityDialog({
 }) {
   const [minerQuery, setMinerQuery] = useState('')
   const [direction, setDirection] = useState('all')
-  const [outcome, setOutcome] = useState('all')
+  const [status, setStatus] = useState('all')
   const [currentPage, setCurrentPage] = useState(1)
 
   useEffect(() => {
     if (!open) {
       setMinerQuery('')
       setDirection('all')
-      setOutcome('all')
+      setStatus('all')
       setCurrentPage(1)
     }
   }, [open])
 
   useEffect(() => {
     if (open) setCurrentPage(1)
-  }, [open, minerQuery, direction, outcome])
+  }, [open, minerQuery, direction, status])
 
   const directionOptions = useMemo(
     () => buildDirectionOptions(loops),
@@ -1298,18 +1306,18 @@ function ResearchActivityDialog({
   }, [loops])
 
   const filteredLoops = useMemo(() => {
-    return filterResearchLabActivityLoops(loops, { minerQuery, direction, outcome })
-  }, [loops, minerQuery, direction, outcome])
+    return filterResearchLabActivityLoops(loops, { minerQuery, direction, status })
+  }, [loops, minerQuery, direction, status])
 
-  const outcomeOptions = useMemo(() => {
-    return researchLabOutcomeFilterOptionsWithCounts(loops, { minerQuery, direction })
+  const statusOptions = useMemo(() => {
+    return researchLabStatusFilterOptionsWithCounts(loops, { minerQuery, direction })
   }, [loops, minerQuery, direction])
 
   useEffect(() => {
-    if (outcome === 'all') return
-    if (outcomeOptions.some((option) => option.value === outcome)) return
-    setOutcome('all')
-  }, [outcome, outcomeOptions])
+    if (status === 'all') return
+    if (statusOptions.some((option) => option.value === status)) return
+    setStatus('all')
+  }, [status, statusOptions])
 
   const totalPages = Math.max(1, Math.ceil(filteredLoops.length / ACTIVITY_PAGE_SIZE))
   const safePage = Math.min(currentPage, totalPages)
@@ -1405,16 +1413,16 @@ function ResearchActivityDialog({
               </SelectContent>
             </Select>
 
-            <Select value={outcome} onValueChange={setOutcome}>
+            <Select value={status} onValueChange={setStatus}>
               <SelectTrigger
                 size="sm"
                 className="h-8 w-full border-[var(--line-2)] bg-[rgba(236,234,230,0.025)] font-mono text-[11px] text-[var(--muted)] shadow-none hover:border-[var(--line-3)] hover:text-[var(--platinum)] sm:w-[210px]"
-                aria-label="Filter by outcome"
+                aria-label="Filter by status"
               >
-                <SelectValue placeholder="All outcomes" />
+                <SelectValue placeholder="All statuses" />
               </SelectTrigger>
               <SelectContent className="z-[70] border-[var(--line-2)] bg-[var(--canvas-2)] text-[var(--platinum)]">
-                {outcomeOptions.map((option) => (
+                {statusOptions.map((option) => (
                   <SelectItem
                     key={option.value}
                     value={option.value}

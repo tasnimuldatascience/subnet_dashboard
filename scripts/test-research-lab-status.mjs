@@ -29,11 +29,122 @@ try {
   const {
     deriveResearchLabLoopStatus,
     filterResearchLabActivityLoops,
-    RESEARCH_LAB_OUTCOME_FILTER_OPTIONS,
-    researchLabOutcomeFilterOptionsWithCounts,
+    RESEARCH_LAB_STATUS_FILTER_OPTIONS,
+    researchLabStatusFilterOptionsWithCounts,
   } = require(join(outDir, 'research-lab-status.js'))
 
   const cases = [
+    {
+      name: 'canonical no payment renders Awaiting payment',
+      input: {
+        publicStatus: 'awaiting_payment',
+        paymentState: 'no_payment',
+        runId: null,
+        receiptId: null,
+      },
+      expected: {
+        key: 'awaiting_payment',
+        label: 'Awaiting payment',
+        band: 'pending',
+        active: false,
+        scoring: false,
+        detail: 'No payment has been recorded for this research loop yet.',
+      },
+    },
+    {
+      name: 'canonical paid loop with no worker run renders Paid, not started',
+      input: {
+        publicStatus: 'paid_not_started',
+        paymentState: 'paid',
+        executionState: 'not_started',
+        runId: null,
+        receiptId: 'receipt-paid',
+      },
+      expected: {
+        key: 'paid_not_started',
+        label: 'Paid, not started',
+        band: 'pending',
+        active: false,
+        scoring: false,
+      },
+    },
+    {
+      name: 'canonical OpenRouter 402 renders Waiting for credits',
+      input: {
+        publicStatus: 'running',
+        paymentState: 'paid',
+        executionState: 'failed',
+        opsReason: 'openrouter_402',
+        statusDetail: 'OpenRouter 402 insufficient credits',
+      },
+      expected: {
+        key: 'blocked_for_credit',
+        label: 'Waiting for credits',
+        band: 'blocked',
+        active: false,
+        scoring: false,
+        detail: 'OpenRouter 402 insufficient credits',
+      },
+    },
+    {
+      name: 'canonical scored no gain with failed receipt warning keeps model result primary',
+      input: {
+        publicStatus: 'scored_no_gain',
+        paymentState: 'paid',
+        executionState: 'completed',
+        candidateState: 'scored',
+        resultState: 'scored_no_gain',
+        currentReceiptStatus: 'failed',
+        opsWarnings: ['Queue receipt failed after scoring'],
+        scoredCandidateCount: 1,
+      },
+      expected: {
+        key: 'scored_no_gain',
+        label: 'Scored, no gain',
+        band: 'no_gain',
+        active: false,
+        scoring: false,
+        detail: 'Queue receipt failed after scoring',
+      },
+    },
+    {
+      name: 'canonical terminal stale scoring retry failure renders Failed',
+      input: {
+        publicStatus: 'failed',
+        paymentState: 'paid',
+        executionState: 'failed',
+        candidateState: 'failed',
+        resultState: 'failed',
+        opsReason: 'stale_scoring_retry_failed',
+        scoredCandidateCount: 0,
+      },
+      expected: {
+        key: 'failed',
+        label: 'Failed',
+        band: 'failed',
+        active: false,
+        scoring: false,
+        detail: 'Stale Scoring Retry Failed',
+      },
+    },
+    {
+      name: 'canonical stale parent rebase unavailable renders Rebase unavailable',
+      input: {
+        publicStatus: 'failed',
+        paymentState: 'paid',
+        resultState: 'failed',
+        candidateState: 'failed',
+        opsReason: 'stale_parent_rebase_unavailable',
+      },
+      expected: {
+        key: 'rebase_unavailable',
+        label: 'Rebase unavailable',
+        band: 'failed',
+        active: false,
+        scoring: false,
+        detail: 'Stale Parent Rebase Unavailable',
+      },
+    },
     {
       name: 'active scoring candidate renders Scoring, not Waiting for baseline',
       input: {
@@ -265,19 +376,22 @@ try {
     }
   }
 
-  const optionValues = RESEARCH_LAB_OUTCOME_FILTER_OPTIONS.map((option) => option.value)
+  const optionValues = RESEARCH_LAB_STATUS_FILTER_OPTIONS.map((option) => option.value)
   assert.deepEqual(optionValues, [
     'all',
+    'awaiting_payment',
+    'paid_not_started',
+    'running',
     'scoring',
     'waiting_for_baseline',
-    'not_started',
+    'needs_rescore',
+    'blocked_for_credit',
+    'scored_no_gain',
+    'scored',
     'completed_no_candidate',
     'failed',
-    'scored',
-    'scored_no_gain',
-    'blocked_for_credit',
-    'needs_rescore',
-  ], 'outcome filter options should include required statuses')
+    'ops_warnings',
+  ], 'status filter options should include required statuses')
 
   const activityLoops = [
     {
@@ -291,6 +405,90 @@ try {
       lastActivityAt: '2026-01-04T00:00:00Z',
     },
     {
+      id: 'awaiting-payment-alpha',
+      minerHotkey: 'alpha-hotkey',
+      topicSignatureHash: 'billing',
+      topicTags: ['payment_state'],
+      researchArea: 'ops',
+      outcomeLabel: 'submitted',
+      statusKey: deriveResearchLabLoopStatus({
+        publicStatus: 'awaiting_payment',
+        paymentState: 'no_payment',
+      }).key,
+      lastActivityAt: '2026-01-08T00:00:00Z',
+    },
+    {
+      id: 'paid-not-started-beta',
+      minerHotkey: 'beta-hotkey',
+      topicSignatureHash: 'billing',
+      topicTags: ['payment_state'],
+      researchArea: 'ops',
+      outcomeLabel: 'submitted',
+      statusKey: deriveResearchLabLoopStatus({
+        publicStatus: 'paid_not_started',
+        paymentState: 'paid',
+        executionState: 'not_started',
+      }).key,
+      lastActivityAt: '2026-01-07T00:00:00Z',
+    },
+    {
+      id: 'running-delta',
+      minerHotkey: 'delta-hotkey',
+      topicSignatureHash: 'worker-lifecycle',
+      topicTags: ['worker_lifecycle'],
+      researchArea: 'ops',
+      outcomeLabel: 'running',
+      statusKey: deriveResearchLabLoopStatus({
+        publicStatus: 'running',
+        paymentState: 'paid',
+        executionState: 'running',
+      }).key,
+      lastActivityAt: '2026-01-06T00:00:00Z',
+    },
+    {
+      id: 'blocked-credit-delta',
+      minerHotkey: 'delta-hotkey',
+      topicSignatureHash: 'credit-block',
+      topicTags: ['ops_reliability'],
+      researchArea: 'ops',
+      outcomeLabel: 'running',
+      statusKey: deriveResearchLabLoopStatus({
+        publicStatus: 'running',
+        paymentState: 'paid',
+        executionState: 'failed',
+        opsReason: 'openrouter_402',
+        statusDetail: 'OpenRouter 402 insufficient credits',
+      }).key,
+      lastActivityAt: '2026-01-05T00:00:00Z',
+    },
+    {
+      id: 'needs-rescore-epsilon',
+      minerHotkey: 'epsilon-hotkey',
+      topicSignatureHash: 'model-staleness',
+      topicTags: ['model_staleness'],
+      researchArea: 'ops',
+      outcomeLabel: 'needs_rescore',
+      statusKey: deriveResearchLabLoopStatus({
+        publicStatus: 'needs_rescore',
+        candidateState: 'needs_rescore',
+        opsReason: 'stale_parent_needs_rescore',
+      }).key,
+      lastActivityAt: '2026-01-04T12:00:00Z',
+    },
+    {
+      id: 'completed-no-candidate-zeta',
+      minerHotkey: 'zeta-hotkey',
+      topicSignatureHash: 'candidate-generation',
+      topicTags: ['candidate_generation'],
+      researchArea: 'ops',
+      outcomeLabel: 'completed_no_candidate',
+      statusKey: deriveResearchLabLoopStatus({
+        publicStatus: 'completed_no_candidate',
+        resultState: 'completed_no_candidate',
+      }).key,
+      lastActivityAt: '2026-01-03T18:00:00Z',
+    },
+    {
       id: 'scored-no-gain-failed-ops',
       minerHotkey: 'alpha-hotkey',
       topicSignatureHash: 'direction-a',
@@ -298,12 +496,14 @@ try {
       researchArea: 'ops',
       outcomeLabel: 'scored_no_gain',
       statusKey: deriveResearchLabLoopStatus({
-        outcomeLabel: 'scored_no_gain',
-        outcomeBand: 'failed',
-        currentCandidateStatus: 'scored',
+        publicStatus: 'scored_no_gain',
+        resultState: 'scored_no_gain',
+        candidateState: 'scored',
         currentQueueStatus: 'failed',
+        opsWarnings: ['Queue receipt failed after scoring'],
         scoredCandidateCount: 1,
       }).key,
+      opsWarnings: ['Queue receipt failed after scoring'],
       lastActivityAt: '2026-01-03T12:00:00Z',
     },
     {
@@ -364,29 +564,64 @@ try {
 
   const byId = (loops) => loops.map((loop) => loop.id)
   assert.deepEqual(
-    byId(filterResearchLabActivityLoops(activityLoops, { outcome: 'waiting_for_baseline' })),
+    byId(filterResearchLabActivityLoops(activityLoops, { status: 'awaiting_payment' })),
+    ['awaiting-payment-alpha'],
+    'status filter should find awaiting payment loops'
+  )
+  assert.deepEqual(
+    byId(filterResearchLabActivityLoops(activityLoops, { status: 'paid_not_started' })),
+    ['paid-not-started-beta'],
+    'status filter should find paid loops before worker start'
+  )
+  assert.deepEqual(
+    byId(filterResearchLabActivityLoops(activityLoops, { status: 'running' })),
+    ['running-delta'],
+    'status filter should find running loops'
+  )
+  assert.deepEqual(
+    byId(filterResearchLabActivityLoops(activityLoops, { status: 'blocked_for_credit' })),
+    ['blocked-credit-delta'],
+    'status filter should find credit-blocked loops'
+  )
+  assert.deepEqual(
+    byId(filterResearchLabActivityLoops(activityLoops, { status: 'needs_rescore' })),
+    ['needs-rescore-epsilon'],
+    'status filter should find loops needing rescore'
+  )
+  assert.deepEqual(
+    byId(filterResearchLabActivityLoops(activityLoops, { status: 'completed_no_candidate' })),
+    ['completed-no-candidate-zeta'],
+    'status filter should find completed no candidate loops'
+  )
+  assert.deepEqual(
+    byId(filterResearchLabActivityLoops(activityLoops, { status: 'ops_warnings' })),
+    ['scored-no-gain-failed-ops'],
+    'Ops warnings filter should find secondary ops warning rows'
+  )
+  assert.deepEqual(
+    byId(filterResearchLabActivityLoops(activityLoops, { status: 'waiting_for_baseline' })),
     ['waiting-alpha-a'],
-    'outcome filter should find explicit waiting_for_baseline status'
+    'status filter should find explicit waiting_for_baseline status'
   )
   assert.deepEqual(
-    byId(filterResearchLabActivityLoops(activityLoops, { outcome: 'scoring' })),
+    byId(filterResearchLabActivityLoops(activityLoops, { status: 'scoring' })),
     ['scoring-alpha-a', 'scoring-alpha-b'],
-    'outcome filter should find only scoring statuses'
+    'status filter should find only scoring statuses'
   )
   assert.deepEqual(
-    byId(filterResearchLabActivityLoops(activityLoops, { outcome: 'scored_no_gain' })),
+    byId(filterResearchLabActivityLoops(activityLoops, { status: 'scored_no_gain' })),
     ['scored-no-gain-failed-ops'],
     'Scored, no gain filter should include failed-ops scored_no_gain rows'
   )
   assert.deepEqual(
-    byId(filterResearchLabActivityLoops(activityLoops, { outcome: 'failed' })),
+    byId(filterResearchLabActivityLoops(activityLoops, { status: 'failed' })),
     ['failed-gamma-b', 'failed-alpha-a'],
     'Failed filter should exclude scored_no_gain rows even if ops failed'
   )
   assert.deepEqual(
-    byId(filterResearchLabActivityLoops(activityLoops, { outcome: 'scored' })),
+    byId(filterResearchLabActivityLoops(activityLoops, { status: 'scored' })),
     ['scored-beta-a'],
-    'Scored outcome filter should include scored_promising records'
+    'Scored status filter should include scored_promising records'
   )
   assert.deepEqual(
     byId(filterResearchLabActivityLoops(activityLoops, { direction: 'query_generation' })),
@@ -402,30 +637,37 @@ try {
     byId(filterResearchLabActivityLoops(activityLoops, {
       minerQuery: 'alpha',
       direction: 'query_generation',
-      outcome: 'scoring',
+      status: 'scoring',
     })),
     ['scoring-alpha-a'],
-    'miner, direction, and outcome filters should combine'
+    'miner, direction, and status filters should combine'
   )
 
-  const countedOutcomeOptions = researchLabOutcomeFilterOptionsWithCounts(activityLoops, {
+  const countedStatusOptions = researchLabStatusFilterOptionsWithCounts(activityLoops, {
     minerQuery: 'alpha',
     direction: 'intent_quality',
   })
-  const countedOutcomeValues = countedOutcomeOptions.map((option) => option.value)
+  const countedStatusValues = countedStatusOptions.map((option) => option.value)
   const countByValue = Object.fromEntries(
-    countedOutcomeOptions.map((option) => [option.value, option.count])
+    countedStatusOptions.map((option) => [option.value, option.count])
   )
   assert.deepEqual(
-    countedOutcomeValues,
-    ['all', 'scoring', 'waiting_for_baseline', 'failed', 'scored_no_gain'],
-    'outcome dropdown should hide empty buckets'
+    countedStatusValues,
+    ['all', 'scoring', 'waiting_for_baseline', 'scored_no_gain', 'failed', 'ops_warnings'],
+    'status dropdown should hide empty buckets'
   )
-  assert.equal(countByValue.all, 5, 'All outcomes count should match visible miner+direction records')
-  assert.equal(countByValue.scoring, 2, 'Scoring outcome count should match visible filtered records')
-  assert.equal(countByValue.waiting_for_baseline, 1, 'Waiting outcome count should match visible filtered records')
-  assert.equal(countByValue.scored_no_gain, 1, 'Scored, no gain outcome count should match visible filtered records')
-  assert.equal(countByValue.failed, 1, 'Failed outcome count should match visible filtered records')
+  assert.equal(countByValue.all, 5, 'All statuses count should match visible miner+direction records')
+  for (const value of countedStatusValues.filter((value) => value !== 'all')) {
+    assert.equal(
+      countByValue[value],
+      filterResearchLabActivityLoops(activityLoops, {
+        minerQuery: 'alpha',
+        direction: 'intent_quality',
+        status: value,
+      }).length,
+      `${value} count should match visible filtered records`
+    )
+  }
 
   console.log(`research-lab-status: ${cases.length} status fixtures and filter fixtures passed`)
 } finally {

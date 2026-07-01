@@ -7,6 +7,14 @@ export type ResearchLabLoopStatusNote = {
 }
 
 export type ResearchLabLoopStatusInput = {
+  publicStatus?: string | null
+  paymentState?: string | null
+  executionState?: string | null
+  candidateState?: string | null
+  resultState?: string | null
+  opsReason?: string | null
+  statusDetail?: string | null
+  opsWarnings?: unknown
   outcomeLabel?: string | null
   outcomeBand?: string | null
   runId?: string | null
@@ -46,20 +54,25 @@ export type ResearchLabActivityFilterInput = {
   outcomeLabel?: string | null
   statusKey?: string | null
   statusLabel?: string | null
+  statusNote?: ResearchLabLoopStatusNote | null
+  opsWarnings?: string[] | null
   lastActivityAt?: string | null
 }
 
 export type ResearchLabActivityFilters = {
   minerQuery?: string
   direction?: string
+  status?: string
   outcome?: string
 }
 
-export type ResearchLabOutcomeFilterOption = {
+export type ResearchLabStatusFilterOption = {
   value: string
   label: string
   count?: number
 }
+
+export type ResearchLabOutcomeFilterOption = ResearchLabStatusFilterOption
 
 const FAILED_VALUES = new Set([
   'failed',
@@ -82,6 +95,61 @@ const ACTIVE_VALUES = new Set([
   'in_progress',
   'processing',
   'started',
+])
+
+const NOT_STARTED_VALUES = new Set([
+  'not_started',
+  'not started',
+  'pending_start',
+  'pending_worker',
+  'worker_not_started',
+  'no_worker_run',
+  'awaiting_worker',
+])
+
+const PAID_VALUES = new Set([
+  'paid',
+  'payment_received',
+  'confirmed',
+  'settled',
+  'credited',
+  'receipt_found',
+])
+
+const NO_PAYMENT_VALUES = new Set([
+  'no_payment',
+  'not_paid',
+  'unpaid',
+  'awaiting_payment',
+  'payment_missing',
+  'no_receipt',
+])
+
+const CREDIT_BLOCK_VALUES = new Set([
+  'blocked_for_credit',
+  'waiting_for_credits',
+  'waiting_for_credit',
+  'openrouter_402',
+  'insufficient_credits',
+  'insufficient_credit',
+  'credit_exhausted',
+  'credits_exhausted',
+  'resumable_credit_issue',
+])
+
+const REBASE_UNAVAILABLE_VALUES = new Set([
+  'rebase_unavailable',
+  'stale_parent_rebase_unavailable',
+  'parent_rebase_unavailable',
+])
+
+const SCORED_NO_GAIN_VALUES = new Set(['scored_no_gain', 'no_gain'])
+const SCORED_PROMISING_VALUES = new Set([
+  'scored_promising',
+  'promotion_passed',
+  'promoted',
+  'winner',
+  'high_gain',
 ])
 
 const SCORING_VALUES = new Set([
@@ -120,6 +188,8 @@ const COMPLETED_STATUS_KEYS = new Set([
   'promoted',
   'winner',
   'high_gain',
+  'completed_no_candidate',
+  'rebase_unavailable',
   'failed',
 ])
 const PROMISING_STATUS_KEYS = new Set([
@@ -130,30 +200,42 @@ const PROMISING_STATUS_KEYS = new Set([
   'high_gain',
 ])
 const PROMISING_BANDS = new Set(['small_gain', 'passed_threshold', 'promoted', 'high_gain', 'winner'])
-const NO_GAIN_OR_FAILED_KEYS = new Set(['scored_no_gain', 'failed'])
+const NO_GAIN_OR_FAILED_KEYS = new Set(['scored_no_gain', 'failed', 'rebase_unavailable'])
 const PENDING_OR_BLOCKING_STATUS_KEYS = new Set([
   'queued',
   'waiting_for_baseline',
   'blocked_for_credit',
   'needs_rescore',
   'not_started',
+  'awaiting_payment',
+  'paid_not_started',
   'failed',
+  'rebase_unavailable',
 ])
 
-export const RESEARCH_LAB_OUTCOME_FILTER_OPTIONS: ResearchLabOutcomeFilterOption[] = [
-  { value: 'all', label: 'All outcomes' },
+export const RESEARCH_LAB_STATUS_FILTER_OPTIONS: ResearchLabStatusFilterOption[] = [
+  { value: 'all', label: 'All statuses' },
+  { value: 'awaiting_payment', label: 'Awaiting payment' },
+  { value: 'paid_not_started', label: 'Paid, not started' },
+  { value: 'running', label: 'Running' },
   { value: 'scoring', label: 'Scoring' },
   { value: 'waiting_for_baseline', label: 'Waiting for baseline' },
-  { value: 'not_started', label: 'Not started' },
+  { value: 'needs_rescore', label: 'Needs rescore' },
+  { value: 'blocked_for_credit', label: 'Blocked for credit' },
+  { value: 'scored_no_gain', label: 'Scored, no gain' },
+  { value: 'scored', label: 'Scored/promising' },
   { value: 'completed_no_candidate', label: 'Completed no candidate' },
   { value: 'failed', label: 'Failed' },
-  { value: 'scored', label: 'Scored' },
-  { value: 'scored_no_gain', label: 'Scored, no gain' },
-  { value: 'blocked_for_credit', label: 'Waiting for credits' },
-  { value: 'needs_rescore', label: 'Needs rescore' },
+  { value: 'ops_warnings', label: 'Ops warnings' },
 ]
 
+export const RESEARCH_LAB_OUTCOME_FILTER_OPTIONS = RESEARCH_LAB_STATUS_FILTER_OPTIONS
+
 export function deriveResearchLabLoopStatus(input: ResearchLabLoopStatusInput): ResearchLabLoopStatus {
+  if (hasCanonicalLifecycleFields(input)) {
+    return deriveCanonicalResearchLabLoopStatus(input)
+  }
+
   const projectedLabel = normalize(input.outcomeLabel) || 'submitted'
   const projectedBand = normalize(input.outcomeBand) || 'pending'
   const candidateStatus = normalize(input.currentCandidateStatus ?? input.candidateStatus)
@@ -244,10 +326,25 @@ export function researchLabStatusLabel(value: string | null | undefined): string
   return labelForStatus(normalize(value) || 'submitted')
 }
 
-export function researchLabOutcomeFilterKey(value: string | null | undefined): string {
+export function researchLabStatusFilterKey(
+  value: string | null | undefined,
+  loop?: Pick<ResearchLabActivityFilterInput, 'statusNote' | 'opsWarnings'>,
+): string {
   const normalized = normalize(value)
+  if (normalized === 'ops_warnings') return 'ops_warnings'
   if (normalized === 'scored_promising') return 'scored'
+  if (normalized === 'promotion_passed') return 'scored'
+  if (normalized === 'promoted') return 'scored'
+  if (normalized === 'winner') return 'scored'
+  if (normalized === 'high_gain') return 'scored'
+  if (normalized === 'rebase_unavailable') return 'failed'
+  if (normalized === 'not_started') return 'paid_not_started'
+  if (loopHasOpsWarning(loop)) return normalized
   return normalized
+}
+
+export function researchLabOutcomeFilterKey(value: string | null | undefined): string {
+  return researchLabStatusFilterKey(value)
 }
 
 export function researchLabLoopDirectionKey(loop: ResearchLabActivityFilterInput): string {
@@ -270,29 +367,37 @@ export function researchLabLoopMatchesDirection(
   return researchLabLoopDirectionKeys(loop).includes(normalizedDirection)
 }
 
-export function researchLabOutcomeFilterOptionsWithCounts<T extends ResearchLabActivityFilterInput>(
+export function researchLabStatusFilterOptionsWithCounts<T extends ResearchLabActivityFilterInput>(
   loops: T[],
   filters: Pick<ResearchLabActivityFilters, 'minerQuery' | 'direction'> = {},
-): ResearchLabOutcomeFilterOption[] {
+): ResearchLabStatusFilterOption[] {
   const scopedLoops = filterResearchLabActivityLoops(loops, {
     minerQuery: filters.minerQuery,
     direction: filters.direction,
-    outcome: 'all',
+    status: 'all',
   })
   const counts = new Map<string, number>([['all', scopedLoops.length]])
 
   for (const loop of scopedLoops) {
-    const key = researchLabOutcomeFilterKey(loop.statusKey || loop.outcomeLabel)
+    const key = researchLabStatusFilterKey(loop.statusKey || loop.outcomeLabel, loop)
     if (!key) continue
     counts.set(key, (counts.get(key) ?? 0) + 1)
+    if (loopHasOpsWarning(loop)) counts.set('ops_warnings', (counts.get('ops_warnings') ?? 0) + 1)
   }
 
-  return RESEARCH_LAB_OUTCOME_FILTER_OPTIONS
+  return RESEARCH_LAB_STATUS_FILTER_OPTIONS
     .map((option) => ({
       ...option,
       count: counts.get(option.value) ?? 0,
     }))
     .filter((option) => option.value === 'all' || (option.count ?? 0) > 0)
+}
+
+export function researchLabOutcomeFilterOptionsWithCounts<T extends ResearchLabActivityFilterInput>(
+  loops: T[],
+  filters: Pick<ResearchLabActivityFilters, 'minerQuery' | 'direction'> = {},
+): ResearchLabOutcomeFilterOption[] {
+  return researchLabStatusFilterOptionsWithCounts(loops, filters)
 }
 
 export function filterResearchLabActivityLoops<T extends ResearchLabActivityFilterInput>(
@@ -301,12 +406,18 @@ export function filterResearchLabActivityLoops<T extends ResearchLabActivityFilt
 ): T[] {
   const q = normalize(filters.minerQuery)
   const direction = filters.direction || 'all'
-  const outcome = filters.outcome || 'all'
+  const selectedStatus = filters.status || filters.outcome || 'all'
 
   return loops
     .filter((loop) => {
       if (!researchLabLoopMatchesDirection(loop, direction)) return false
-      if (outcome !== 'all' && researchLabOutcomeFilterKey(loop.statusKey || loop.outcomeLabel) !== outcome) return false
+      if (selectedStatus !== 'all') {
+        if (selectedStatus === 'ops_warnings') {
+          if (!loopHasOpsWarning(loop)) return false
+        } else if (researchLabStatusFilterKey(loop.statusKey || loop.outcomeLabel, loop) !== selectedStatus) {
+          return false
+        }
+      }
       if (!q) return true
       return normalize(loop.minerHotkey).includes(q)
     })
@@ -336,6 +447,179 @@ function promotionStatus(
     return status('scored_promising', 'Scored', canonicalBand(projectedBand, 'small_gain'), note)
   }
   return null
+}
+
+function deriveCanonicalResearchLabLoopStatus(input: ResearchLabLoopStatusInput): ResearchLabLoopStatus {
+  const publicStatus = normalize(input.publicStatus)
+  const paymentState = normalize(input.paymentState)
+  const executionState = normalize(input.executionState)
+  const candidateState = normalize(input.candidateState)
+  const resultState = normalize(input.resultState)
+  const opsReason = normalize(input.opsReason)
+  const statusDetail = cleanText(input.statusDetail)
+  const queueStatus = normalize(input.currentQueueStatus ?? input.queueStatus)
+  const receiptStatus = normalize(input.currentReceiptStatus ?? input.receiptStatus)
+  const legacyOutcome = normalize(input.outcomeLabel)
+  const projectedBand = normalize(input.outcomeBand) || 'pending'
+  const opsWarnings = opsWarningTexts(input.opsWarnings)
+  const canonicalValues = [
+    resultState,
+    publicStatus,
+    candidateState,
+    executionState,
+    paymentState,
+    opsReason,
+  ].filter(Boolean)
+  const scoredNote = canonicalOpsWarningNote(opsWarnings) ??
+    scoredOutcomeOpsFailureNote(
+      resultState || publicStatus || legacyOutcome,
+      candidateState,
+      queueStatus,
+      receiptStatus
+    )
+
+  const modelResult = canonicalModelResultStatus(
+    resultState,
+    publicStatus,
+    candidateState,
+    projectedBand,
+    scoredNote
+  )
+  if (modelResult) return modelResult
+
+  if (hasAny(canonicalValues, NO_PAYMENT_VALUES)) {
+    return status('awaiting_payment', 'Awaiting payment', 'pending', canonicalDetailNote({
+      tone: 'info',
+      label: 'Awaiting payment',
+      detail: statusDetail || detailForReason(opsReason) || 'No payment has been recorded for this research loop yet.',
+    }))
+  }
+
+  if (hasExplicitCreditBlock(canonicalValues, statusDetail, opsWarnings)) {
+    return status('blocked_for_credit', 'Waiting for credits', 'blocked', canonicalDetailNote({
+      tone: 'warning',
+      label: 'Blocked for credit',
+      detail: statusDetail || detailForReason(opsReason) || 'The run hit a resumable credit limit and is waiting for credits.',
+    }))
+  }
+
+  if (isRebaseUnavailable(canonicalValues, statusDetail)) {
+    return status('rebase_unavailable', 'Rebase unavailable', 'failed', canonicalDetailNote({
+      tone: 'error',
+      label: 'Rebase unavailable',
+      detail: statusDetail || detailForReason(opsReason) || 'The stale parent model could not be rebased for this loop.',
+    }))
+  }
+
+  if (isNeedsRescore(publicStatus || resultState, candidateState, opsReason)) {
+    return status('needs_rescore', 'Needs rescore', 'stale', canonicalDetailNote({
+      tone: 'warning',
+      label: 'Needs rescore',
+      detail: statusDetail || 'Candidate was created against an older parent model and needs to be rebased or rescored against the current parent.',
+    }))
+  }
+
+  if (isBaselineNotReady(publicStatus || resultState, opsReason, canonicalValues)) {
+    return status('waiting_for_baseline', 'Waiting for baseline', 'pending', canonicalDetailNote({
+      tone: 'warning',
+      label: 'Waiting for baseline',
+      detail: statusDetail || 'Scoring is waiting for the benchmark baseline to become ready.',
+    }))
+  }
+
+  if (publicStatus === 'completed_no_candidate' || resultState === 'completed_no_candidate') {
+    return status('completed_no_candidate', 'Completed no candidate', canonicalBand(projectedBand, 'completed'))
+  }
+
+  if (isCanonicalTerminalFailure(publicStatus, resultState, candidateState, executionState)) {
+    return status('failed', 'Failed', 'failed', canonicalDetailNote({
+      tone: 'error',
+      label: 'Failed',
+      detail: statusDetail || detailForReason(opsReason) || 'The canonical backend lifecycle state is terminal failed.',
+    }))
+  }
+
+  if (publicStatus === 'scoring' || resultState === 'scoring' || candidateState === 'scoring') {
+    return status('scoring', 'Scoring', 'running')
+  }
+
+  if (hasAny(canonicalValues, ACTIVE_VALUES)) {
+    return status('running', 'Running', 'running')
+  }
+
+  if (hasAny(canonicalValues, PAID_VALUES) && hasAny(canonicalValues, NOT_STARTED_VALUES)) {
+    return status('paid_not_started', 'Paid, not started', 'pending')
+  }
+
+  if (publicStatus === 'paid_not_started' || executionState === 'paid_not_started') {
+    return status('paid_not_started', 'Paid, not started', 'pending')
+  }
+
+  if (
+    PAID_VALUES.has(paymentState) &&
+    (!input.runId || publicStatus === 'submitted' || publicStatus === 'pending' || !publicStatus) &&
+    !resultState &&
+    !candidateState
+  ) {
+    return status('paid_not_started', 'Paid, not started', 'pending')
+  }
+
+  const fallback = resultState || publicStatus || executionState || paymentState || candidateState || legacyOutcome || 'submitted'
+  return status(fallback, labelForStatus(fallback), canonicalBand(projectedBand, 'pending'), canonicalOpsWarningNote(opsWarnings))
+}
+
+function hasCanonicalLifecycleFields(input: ResearchLabLoopStatusInput): boolean {
+  const statusDetail = cleanText(input.statusDetail)
+  const opsWarnings = opsWarningTexts(input.opsWarnings)
+  const primaryFields = [
+    input.publicStatus,
+    input.paymentState,
+    input.executionState,
+    input.candidateState,
+    input.resultState,
+    input.opsReason,
+  ].some((value) => normalize(value))
+  return primaryFields ||
+    hasExplicitCreditBlock([], statusDetail, opsWarnings) ||
+    isRebaseUnavailable([], statusDetail)
+}
+
+function canonicalModelResultStatus(
+  resultState: string,
+  publicStatus: string,
+  candidateState: string,
+  projectedBand: string,
+  note?: ResearchLabLoopStatusNote,
+): ResearchLabLoopStatus | null {
+  const values = [resultState, publicStatus, candidateState]
+  if (hasAny(values, SCORED_NO_GAIN_VALUES)) {
+    return status('scored_no_gain', 'Scored, no gain', 'no_gain', note)
+  }
+  if (hasAny(values, SCORED_PROMISING_VALUES)) {
+    return promotionStatus(
+      resultState || publicStatus || candidateState,
+      canonicalBand(projectedBand, 'small_gain'),
+      candidateState,
+      note,
+    ) ?? status('scored_promising', 'Scored', canonicalBand(projectedBand, 'small_gain'), note)
+  }
+  if (resultState === 'scored' || publicStatus === 'scored' || candidateState === 'scored') {
+    return status('scored', 'Scored', canonicalBand(projectedBand, 'completed'), note)
+  }
+  return null
+}
+
+function canonicalOpsWarningNote(opsWarnings: string[]): ResearchLabLoopStatusNote | undefined {
+  if (opsWarnings.length === 0) return undefined
+  return {
+    tone: 'warning',
+    label: 'Ops warning',
+    detail: opsWarnings[0],
+  }
+}
+
+function canonicalDetailNote(note: ResearchLabLoopStatusNote): ResearchLabLoopStatusNote | undefined {
+  return note.detail ? note : undefined
 }
 
 function canonicalBand(projectedBand: string, fallback: string): string {
@@ -379,6 +663,71 @@ function isNeedsRescore(projectedLabel: string, candidateStatus: string, reason:
   )
 }
 
+function isCanonicalTerminalFailure(
+  publicStatus: string,
+  resultState: string,
+  candidateState: string,
+  executionState: string,
+): boolean {
+  if (FAILED_VALUES.has(resultState) || FAILED_VALUES.has(publicStatus)) return true
+  if (FAILED_VALUES.has(candidateState)) return true
+  return FAILED_VALUES.has(executionState) && (FAILED_VALUES.has(publicStatus) || FAILED_VALUES.has(resultState))
+}
+
+function isRebaseUnavailable(values: string[], statusDetail: string): boolean {
+  if (hasAny(values, REBASE_UNAVAILABLE_VALUES)) return true
+  const normalizedDetail = normalize(statusDetail)
+  return normalizedDetail.includes('rebase unavailable') || normalizedDetail.includes('rebase_unavailable')
+}
+
+function hasExplicitCreditBlock(values: string[], statusDetail: string, opsWarnings: string[]): boolean {
+  if (hasAny(values, CREDIT_BLOCK_VALUES)) return true
+  const haystack = [statusDetail, ...opsWarnings].map(normalize).join(' ')
+  return (
+    haystack.includes('openrouter 402') ||
+    haystack.includes('openrouter_402') ||
+    (haystack.includes('402') && haystack.includes('credit')) ||
+    haystack.includes('insufficient credit') ||
+    haystack.includes('insufficient_credits') ||
+    haystack.includes('waiting for credit') ||
+    haystack.includes('blocked for credit')
+  )
+}
+
+function loopHasOpsWarning(
+  loop?: Pick<ResearchLabActivityFilterInput, 'statusNote' | 'opsWarnings'>,
+): boolean {
+  if (!loop) return false
+  if (Array.isArray(loop.opsWarnings) && loop.opsWarnings.length > 0) return true
+  return normalize(loop.statusNote?.label).includes('ops warning')
+}
+
+function opsWarningTexts(value: unknown): string[] {
+  if (!value) return []
+  const raw = Array.isArray(value) ? value : [value]
+  return raw
+    .map((item) => {
+      if (typeof item === 'string') return item
+      if (typeof item === 'number' || typeof item === 'boolean') return String(item)
+      if (!item || typeof item !== 'object') return ''
+      const record = item as Record<string, unknown>
+      return cleanText(
+        record.detail ??
+        record.message ??
+        record.reason ??
+        record.code ??
+        record.label ??
+        JSON.stringify(record)
+      )
+    })
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function detailForReason(reason: string): string {
+  return reason ? labelForStatus(reason) : ''
+}
+
 function status(
   key: string,
   label: string,
@@ -406,7 +755,11 @@ function hasAny(values: string[], set: Set<string>): boolean {
   return values.some((value) => set.has(value))
 }
 
-function normalize(value: string | null | undefined): string {
+function cleanText(value: unknown): string {
+  return String(value ?? '').trim()
+}
+
+function normalize(value: unknown): string {
   return String(value ?? '').trim().toLowerCase()
 }
 
