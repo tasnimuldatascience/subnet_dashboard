@@ -9,11 +9,15 @@ import {
   AdminModelCompetition,
   type AdminModelCompetitionPayload,
 } from './_components/AdminModelCompetition'
+import {
+  AdminResearchLab,
+  type AdminResearchLabPayload,
+} from './_components/AdminResearchLab'
 import { cn } from '@/lib/utils'
 
 export const dynamic = 'force-dynamic'
 
-type AdminView = 'fulfillment' | 'model-competition'
+type AdminView = 'fulfillment' | 'model-competition' | 'lab'
 type FulfillmentTab = 'requests' | 'submitted-leads'
 
 async function fetchChains(): Promise<ChainSummary[]> {
@@ -70,6 +74,22 @@ async function fetchSubmittedLeads(): Promise<AdminSubmittedLeadsPayload> {
   return (await res.json()) as AdminSubmittedLeadsPayload
 }
 
+async function fetchResearchLab(): Promise<AdminResearchLabPayload> {
+  const h = await headers()
+  const host = h.get('x-forwarded-host') ?? h.get('host')
+  const proto = h.get('x-forwarded-proto') ?? 'https'
+  const base = host ? `${proto}://${host}` : ''
+  const auth = h.get('authorization')
+  const res = await fetch(`${base}/api/admin/research-lab`, {
+    cache: 'no-store',
+    headers: auth ? { authorization: auth } : undefined,
+  })
+  if (!res.ok) {
+    throw new Error(`API returned ${res.status}: ${await res.text()}`)
+  }
+  return (await res.json()) as AdminResearchLabPayload
+}
+
 function AdminViewTabs({ active }: { active: AdminView }) {
   const tabs: Array<{ key: AdminView; label: string; href: string }> = [
     { key: 'fulfillment', label: 'Fulfillment', href: '/admin' },
@@ -77,6 +97,11 @@ function AdminViewTabs({ active }: { active: AdminView }) {
       key: 'model-competition',
       label: 'Model competition',
       href: '/admin?view=model-competition',
+    },
+    {
+      key: 'lab',
+      label: 'Lab',
+      href: '/admin?view=lab',
     },
   ]
 
@@ -108,7 +133,9 @@ function AdminViewTabs({ active }: { active: AdminView }) {
 
 function getAdminView(value: string | string[] | undefined): AdminView {
   const view = Array.isArray(value) ? value[0] : value
-  return view === 'model-competition' ? 'model-competition' : 'fulfillment'
+  if (view === 'model-competition') return 'model-competition'
+  if (view === 'lab') return 'lab'
+  return 'fulfillment'
 }
 
 function getFulfillmentTab(value: string | string[] | undefined): FulfillmentTab {
@@ -156,11 +183,14 @@ export default async function AdminLandingPage({
   const fulfillmentTab = getFulfillmentTab(params.tab)
   let chains: ChainSummary[] = []
   let modelPayload: AdminModelCompetitionPayload | null = null
+  let labPayload: AdminResearchLabPayload | null = null
   let submittedLeadsPayload: AdminSubmittedLeadsPayload | null = null
   let error: string | null = null
   try {
     if (activeView === 'model-competition') {
       modelPayload = await fetchModelCompetition()
+    } else if (activeView === 'lab') {
+      labPayload = await fetchResearchLab()
     } else if (fulfillmentTab === 'submitted-leads') {
       submittedLeadsPayload = await fetchSubmittedLeads()
     } else {
@@ -172,6 +202,8 @@ export default async function AdminLandingPage({
         ? e.message
         : activeView === 'model-competition'
           ? 'Unknown error loading model competition'
+          : activeView === 'lab'
+            ? 'Unknown error loading Lab activity'
           : 'Unknown error loading requests'
   }
 
@@ -180,6 +212,8 @@ export default async function AdminLandingPage({
       <AdminViewTabs active={activeView} />
       {activeView === 'model-competition' ? (
         <AdminModelCompetition payload={modelPayload} error={error} />
+      ) : activeView === 'lab' ? (
+        <AdminResearchLab payload={labPayload} error={error} />
       ) : fulfillmentTab === 'submitted-leads' ? (
         <>
           <FulfillmentTabs active={fulfillmentTab} />

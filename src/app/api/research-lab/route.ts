@@ -13,6 +13,7 @@ import {
 import {
   buildResearchLabLoopTimeline,
   type ResearchLabLoopTimeline,
+  type ResearchLabTimelineEvent,
   type ResearchLabTimelinePhase,
   type ResearchLabTimelineRawRow,
   type ResearchLabTimelineSourceInput,
@@ -575,7 +576,7 @@ async function fetchLoopTimeline(
     sourceNotes.push('Only the current public loop projection is available for this ticket.')
   }
 
-  return buildResearchLabLoopTimeline({
+  const detailedTimeline = buildResearchLabLoopTimeline({
     ticketId,
     currentRunId,
     currentReceiptId,
@@ -595,6 +596,185 @@ async function fetchLoopTimeline(
     sources,
     sourceNotes,
   })
+
+  return summarizePublicLoopTimeline(detailedTimeline, currentRow)
+}
+
+type PublicTimelineStageId =
+  | 'submitted'
+  | 'paid_queued'
+  | 'run_started'
+  | 'research_patch'
+  | 'candidate_generated'
+  | 'scoring'
+  | 'final_result'
+
+type PublicTimelineStageDefinition = {
+  id: PublicTimelineStageId
+  label: string
+  phase: ResearchLabTimelinePhase
+  pick?: 'first' | 'last'
+  match: (event: ResearchLabTimelineEvent, text: string) => boolean
+  fallback?: (event: ResearchLabTimelineEvent, text: string) => boolean
+}
+
+const PUBLIC_TIMELINE_STAGES: PublicTimelineStageDefinition[] = [
+  {
+    id: 'submitted',
+    label: 'Submitted',
+    phase: 'ticket',
+    match: (event, text) =>
+      event.phase === 'ticket' && hasAny(text, ['submitted', 'opened', 'created', 'ticket created']),
+    fallback: (event) => event.phase === 'ticket',
+  },
+  {
+    id: 'paid_queued',
+    label: 'Paid / queued',
+    phase: 'queue',
+    match: (event, text) =>
+      event.phase === 'queue' ||
+      (event.phase === 'ticket' && hasAny(text, ['paid', 'payment', 'funded', 'queued', 'queue'])),
+  },
+  {
+    id: 'run_started',
+    label: 'Run started',
+    phase: 'queue',
+    match: (event, text) =>
+      Boolean(event.runId) &&
+      (event.phase === 'queue' || hasAny(text, ['run started', 'started run', 'claimed', 'dispatched'])),
+    fallback: (event) => Boolean(event.runId) && event.phase !== 'ticket',
+  },
+  {
+    id: 'research_patch',
+    label: 'Research / patch attempt',
+    phase: 'auto_research',
+    match: (event) => event.phase === 'auto_research',
+  },
+  {
+    id: 'candidate_generated',
+    label: 'Candidate generated',
+    phase: 'candidate',
+    match: (event) => event.phase === 'candidate',
+  },
+  {
+    id: 'scoring',
+    label: 'Scoring',
+    phase: 'scoring',
+    match: (event, text) =>
+      event.phase === 'scoring' ||
+      (event.phase === 'public_projection' && hasAny(text, ['scoring'])),
+  },
+  {
+    id: 'final_result',
+    label: 'Final result / promotion',
+    phase: 'promotion',
+    pick: 'last',
+    match: (event, text) => event.phase === 'public_projection' && isFinalPublicTimelineText(text),
+  },
+]
+
+function summarizePublicLoopTimeline(
+  timeline: ResearchLabLoopTimeline,
+  currentLoop: PublicLoopRow | null,
+): ResearchLabLoopTimeline {
+  const events = timeline.runs
+    .flatMap((run) => run.events)
+    .filter((event) => Number.isFinite(new Date(event.enteredAt).getTime()))
+    .sort((a, b) => new Date(a.enteredAt).getTime() - new Date(b.enteredAt).getTime())
+
+  const stageEvents = PUBLIC_TIMELINE_STAGES
+    .reduce<ResearchLabTimelineEvent[]>((acc, stage) => {
+      if (stage.id === 'final_result' && !isCurrentPublicLoopFinal(currentLoop)) return acc
+      const sourceEvent = selectPublicStageEvent(stage, events)
+      if (!sourceEvent) return acc
+      acc.push({
+        id: `public-stage:${stage.id}`,
+        phase: stage.phase,
+        stage: stage.label,
+        enteredAt: sourceEvent.enteredAt,
+        timestampKind: 'entered_stage' as const,
+        lastActivityAt: sourceEvent.lastActivityAt,
+        runId: sourceEvent.runId,
+        receiptId: sourceEvent.receiptId,
+      })
+      return acc
+    }, [])
+
+  const receiptId = stageEvents.find((event) => event.receiptId)?.receiptId
+
+  return {
+    ticketId: timeline.ticketId,
+    currentRunId: timeline.currentRunId,
+    runs: stageEvents.length
+      ? [
+          {
+            runId: timeline.currentRunId,
+            receiptId,
+            isCurrent: Boolean(timeline.currentRunId),
+            events: stageEvents,
+          },
+        ]
+      : [],
+  }
+}
+
+function isCurrentPublicLoopFinal(row: PublicLoopRow | null): boolean {
+  if (!row) return false
+  return isFinalPublicTimelineText(
+    [
+      row.current_status,
+      row.current_outcome_label,
+      row.current_outcome_band,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase(),
+  )
+}
+
+function selectPublicStageEvent(
+  stage: PublicTimelineStageDefinition,
+  events: ResearchLabTimelineEvent[],
+): ResearchLabTimelineEvent | undefined {
+  const matches = events.filter((event) => stage.match(event, publicTimelineText(event)))
+  const candidates =
+    matches.length > 0 || !stage.fallback
+      ? matches
+      : events.filter((event) => stage.fallback?.(event, publicTimelineText(event)))
+  if (candidates.length === 0) return undefined
+  return stage.pick === 'last' ? candidates[candidates.length - 1] : candidates[0]
+}
+
+function publicTimelineText(event: ResearchLabTimelineEvent): string {
+  return [
+    event.phase,
+    event.stage,
+    event.status,
+    event.summary,
+    event.source,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+}
+
+function hasAny(value: string, needles: string[]): boolean {
+  return needles.some((needle) => value.includes(needle))
+}
+
+function isFinalPublicTimelineText(value: string): boolean {
+  return hasAny(value, [
+    'promoted',
+    'final',
+    'result',
+    'scored',
+    'completed',
+    'no gain',
+    'no_gain',
+    'failed',
+    'cancelled',
+    'rejected',
+  ])
 }
 
 type TimelineSourceResult = ResearchLabTimelineSourceInput & {

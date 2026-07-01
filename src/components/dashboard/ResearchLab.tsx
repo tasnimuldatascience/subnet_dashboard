@@ -287,6 +287,7 @@ type TopicGroup = {
 }
 
 const ACTIVITY_PAGE_SIZE = 20
+const LAB_MINER_PAGE_SIZE = 10
 
 export function ResearchLab({
   onSync,
@@ -466,10 +467,11 @@ function Hero({ benchmark }: { benchmark: BenchmarkReport | null }) {
  * KPI rail — real stats only, hairline-separated.
  * ============================================================ */
 function KpiRail({ stats }: { stats: ResearchLabData['stats'] }) {
+  const completedTestCount = Math.max(0, numberOr(stats.scoredLoopCount, 0))
   const items = [
-    { label: 'Live experiments', value: stats.activeLoopCount, sub: 'research running now' },
-    { label: 'Completed tests', value: stats.scoredLoopCount, sub: 'evaluated against current model' },
-    { label: 'Model improvements', value: stats.promisingLoopCount, sub: 'validated lifts over baseline' },
+    { label: 'Live experiments', value: stats.activeLoopCount },
+    { label: 'Completed tests', value: completedTestCount },
+    { label: 'Model improvements', value: stats.promisingLoopCount },
   ]
   return (
     <section className="grid grid-cols-3 border-y border-[var(--line)]">
@@ -487,7 +489,6 @@ function KpiRail({ stats }: { stats: ResearchLabData['stats'] }) {
           <div className="mt-4 font-display text-[34px] font-medium leading-none tracking-[-0.03em] text-[var(--platinum)] md:text-[40px]">
             <CountUp value={it.value} />
           </div>
-          <div className="mt-3 font-mono text-[10.5px] text-[var(--faint)]">{it.sub}</div>
         </div>
       ))}
     </section>
@@ -502,7 +503,7 @@ type LabMinerRow = {
   promising: number
   emission: number
   activeSubnetPct: number
-  labEmissionPct: number
+  displayedEmissionPct: number
   alphaEarned: number
   alphaSharePct: number
   computeSpendUsd: number
@@ -531,6 +532,8 @@ function LabEmissionSplit({
   onSelectHotkey: (hotkey: string | null) => void
 }) {
   const [mode, setMode] = useState<LabMinerMode>('window')
+  const [hoveredVialHotkey, setHoveredVialHotkey] = useState<string | null>(null)
+  const [leaderboardPage, setLeaderboardPage] = useState(1)
   const emissions = useMemo(() => metagraph?.emissions ?? {}, [metagraph?.emissions])
   const validatorMap = useMemo(() => metagraph?.isValidator ?? {}, [metagraph?.isValidator])
   const activeSubnetEmission = useMemo(() => {
@@ -600,7 +603,7 @@ function LabEmissionSplit({
         lastActivityAt: activityEntry.lastActivityAt,
         emission,
         activeSubnetPct: activeSubnetEmission > 0 ? (emission / activeSubnetEmission) * 100 : 0,
-        labEmissionPct: 0,
+        displayedEmissionPct: 0,
         alphaEarned: Math.max(0, allTimeSpendEntry?.alphaEarned ?? 0),
         alphaSharePct: 0,
         computeSpendUsd,
@@ -612,12 +615,12 @@ function LabEmissionSplit({
           : windowSpendEntry?.reimbursementEpochs) ?? null,
       }
     })
-    const activeLabEmission = rowsWithEmission.reduce((sum, row) => sum + row.emission, 0)
+    const displayedEmissionTotal = rowsWithEmission.reduce((sum, row) => sum + row.emission, 0)
     const totalAlphaEarned = rowsWithEmission.reduce((sum, row) => sum + row.alphaEarned, 0)
     return rowsWithEmission
       .map((row) => ({
         ...row,
-        labEmissionPct: activeLabEmission > 0 ? (row.emission / activeLabEmission) * 100 : 0,
+        displayedEmissionPct: displayedEmissionTotal > 0 ? (row.emission / displayedEmissionTotal) * 100 : 0,
         alphaSharePct: totalAlphaEarned > 0 ? (row.alphaEarned / totalAlphaEarned) * 100 : 0,
       }))
       .sort(
@@ -634,30 +637,47 @@ function LabEmissionSplit({
       )
   }, [activeSubnetEmission, activity?.allTime, activity?.last24h, emissions, loops, mode, spend?.allTime?.byHotkey, spend?.byHotkey])
 
-  const totalLoops = rows.reduce((sum, row) => sum + row.count, 0)
-  const activeLabEmission = rows.reduce((sum, row) => sum + row.emission, 0)
-  const activeLabEmissionPct = activeSubnetEmission > 0 ? (activeLabEmission / activeSubnetEmission) * 100 : 0
-  const totalAlphaEarned = rows.reduce((sum, row) => sum + row.alphaEarned, 0)
-  const totalComputeSpendUsd = rows.reduce((sum, row) => sum + row.computeSpendUsd, 0)
   const barRows = rows.filter((row) => mode === 'all_time' ? row.alphaEarned > 0 : row.emission > 0)
-  const selected = rows.find((row) => row.hotkey === selectedHotkey) ?? rows[0] ?? null
-  const hasEmissionData = Object.keys(emissions).length > 0 && !metagraph?.error
-  const spendWindowLabel = labSpendWindowLabel(spend?.window ?? null)
-  const allTimeWindowLabel = labAllTimeWindowLabel(spend?.allTime ?? null)
+  const selected = selectedHotkey ? rows.find((row) => row.hotkey === selectedHotkey) ?? null : null
   const isAllTime = mode === 'all_time'
-  const sectionLabel = isAllTime ? 'All-time alpha by lab miner' : '24-hour emission share by lab miner'
-  const primaryColumnLabel = isAllTime ? 'Alpha earned' : 'Emission share'
+  const primaryColumnLabel = isAllTime ? 'Alpha earned' : 'Lab Emissions'
   const emptyBarLabel = isAllTime
     ? 'No lab alpha allocation history for these hotkeys yet'
-    : 'No active emission for these lab hotkeys in the current metagraph'
+    : 'No Lab emissions for these Lab-active hotkeys'
+  const vialSegments = useMemo(() => {
+    let left = 0
+    return barRows.map((row) => {
+      const sharePct = Math.max(0, isAllTime ? row.alphaSharePct : row.displayedEmissionPct)
+      const segment = {
+        row,
+        leftPct: Math.min(98, Math.max(2, left + sharePct / 2)),
+        widthPct: sharePct,
+      }
+      left += sharePct
+      return segment
+    })
+  }, [barRows, isAllTime])
+  const hoveredVialSegment = hoveredVialHotkey
+    ? vialSegments.find((segment) => segment.row.hotkey === hoveredVialHotkey) ?? null
+    : null
+  const leaderboardTotalPages = Math.max(1, Math.ceil(rows.length / LAB_MINER_PAGE_SIZE))
+  const safeLeaderboardPage = Math.min(leaderboardPage, leaderboardTotalPages)
+  const leaderboardStart = (safeLeaderboardPage - 1) * LAB_MINER_PAGE_SIZE
+  const leaderboardEnd = Math.min(rows.length, leaderboardStart + LAB_MINER_PAGE_SIZE)
+  const paginatedRows = rows.slice(leaderboardStart, leaderboardEnd)
 
   useEffect(() => {
-    if (rows.length === 0) {
-      if (selectedHotkey) onSelectHotkey(null)
-      return
+    setLeaderboardPage(1)
+  }, [mode])
+
+  useEffect(() => {
+    if (leaderboardPage > leaderboardTotalPages) setLeaderboardPage(leaderboardTotalPages)
+  }, [leaderboardPage, leaderboardTotalPages])
+
+  useEffect(() => {
+    if (selectedHotkey && !rows.some((row) => row.hotkey === selectedHotkey)) {
+      onSelectHotkey(null)
     }
-    if (selectedHotkey && rows.some((row) => row.hotkey === selectedHotkey)) return
-    onSelectHotkey(rows[0].hotkey)
   }, [onSelectHotkey, rows, selectedHotkey])
 
   if (rows.length === 0) {
@@ -673,23 +693,18 @@ function LabEmissionSplit({
 
   return (
     <section className="border-b border-[var(--line)] py-8 md:py-10">
-      <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-        <div>
-          <div className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-[var(--muted-2)]">
-            {sectionLabel}
+      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <div className="font-display text-[22px] font-medium tracking-[-0.025em] text-[var(--platinum)]">
+            {rows.length} miners {isAllTime ? 'all-time' : 'active today'}
           </div>
-          <div className="mt-2 font-display text-[22px] font-medium tracking-[-0.025em] text-[var(--platinum)]">
-            {rows.length} hotkeys · {isAllTime
-              ? `${formatAlpha(totalAlphaEarned)} ㄴ earned all time`
-              : `${formatPercent(activeLabEmissionPct)} active subnet emission`}
-          </div>
-          <div className="mt-1 font-mono text-[10px] text-[var(--muted-2)]">
+          <div className="mt-1 max-w-[760px] font-mono text-[10px] leading-relaxed text-[var(--muted-2)]">
             {isAllTime
-              ? `${totalLoops} lab loops · ${formatUsd(totalComputeSpendUsd)} compute all time${allTimeWindowLabel ? ` · ${allTimeWindowLabel}` : ''}`
-              : `${totalLoops} lab loops · ${hasEmissionData ? 'live metagraph emission' : 'waiting for metagraph emission'}${spendWindowLabel ? ` · ${formatUsd(totalComputeSpendUsd)} compute in ${spendWindowLabel}` : ''}`}
+              ? 'All-time view uses paid Lab alpha allocation and compute reimbursements.'
+              : 'Lab allocation is capped separately at 10%; Lab Emissions show each Lab-active miner\'s current total metagraph emission.'}
           </div>
         </div>
-        <div className="flex items-center gap-2 self-start md:self-end">
+        <div className="flex shrink-0 items-center gap-2">
           <div className="inline-flex rounded-md border border-[var(--line-2)] bg-[rgba(236,234,230,0.025)] p-0.5">
             <button
               type="button"
@@ -719,77 +734,60 @@ function LabEmissionSplit({
             </button>
           </div>
         </div>
-        {selected ? (
-          <div className="rounded-md border border-[var(--line)] bg-[rgba(236,234,230,0.018)] px-3 py-2 md:min-w-[300px]">
-            <div className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-[var(--muted-2)]">
-              Selected hotkey
+      </div>
+
+      <div className="relative">
+        {hoveredVialSegment ? (
+          <div
+            className="pointer-events-none absolute bottom-[calc(100%+8px)] z-20 -translate-x-1/2 rounded-md border border-[var(--line-2)] bg-[rgba(14,14,13,0.96)] px-2.5 py-2 shadow-[0_12px_30px_rgba(0,0,0,0.35)]"
+            style={{ left: `${hoveredVialSegment.leftPct}%` }}
+          >
+            <div className="whitespace-nowrap font-mono text-[10px] text-[var(--muted)]">
+              {shortHotkey(hoveredVialSegment.row.hotkey)}
             </div>
-            <div className="mt-1 flex items-start justify-between gap-3">
-              <HotkeyCopyButton hotkey={selected.hotkey} />
-              <span className="text-right">
-                <span className="block font-display text-[18px] font-medium text-[var(--white)]">
-                  {isAllTime ? `${formatAlpha(selected.alphaEarned)} ㄴ` : formatPercent(selected.activeSubnetPct)}
-                </span>
-                <span className="block font-mono text-[9.5px] uppercase tracking-[0.08em] text-[var(--muted-2)]">
-                  {isAllTime ? 'lab alpha earned' : 'active subnet emission'}
-                </span>
-                <span className="mt-1 block font-mono text-[9.5px] uppercase tracking-[0.08em] text-[var(--muted-2)]">
-                  {formatUsd(selected.computeSpendUsd)} {isAllTime ? 'compute all time' : 'compute'}
-                </span>
-              </span>
+            <div className="mt-1 whitespace-nowrap font-mono text-[10px] text-[var(--platinum)]">
+              {isAllTime
+                ? `${formatAlpha(hoveredVialSegment.row.alphaEarned)} ㄴ Leadpoet alpha earned`
+                : `${formatPercent(hoveredVialSegment.row.activeSubnetPct)} Lab Emissions`}
             </div>
           </div>
         ) : null}
-      </div>
-
-      <div className="h-9 w-full overflow-hidden rounded-[5px] border border-[var(--line-2)] bg-[rgba(236,234,230,0.025)] p-[3px]">
-        <div className="flex h-full w-full gap-[2px]">
-          {barRows.length > 0 ? (
-            barRows.map((row, index) => {
-              const isSelected = selected?.hotkey === row.hotkey
-              const sharePct = isAllTime ? row.alphaSharePct : row.labEmissionPct
-              const primaryLabel = isAllTime ? `${formatAlpha(row.alphaEarned)} ㄴ` : formatPercent(row.activeSubnetPct)
-              const labelFits = sharePct >= 7
-              return (
-                <button
-                  key={row.hotkey}
-                  type="button"
-                  onClick={() => onSelectHotkey(row.hotkey)}
-                  className={cn(
-                    'group relative flex h-full min-w-[2px] items-center justify-center overflow-hidden rounded-[3px] transition-[filter,opacity,box-shadow]',
-                    isSelected
-                      ? 'shadow-[inset_0_0_0_1px_rgba(255,255,255,0.48)]'
-                      : 'opacity-80 hover:opacity-100 hover:brightness-125'
-                  )}
-                  style={{
-                    width: `${sharePct}%`,
-                    background: labEmissionTone(index),
-                  }}
-                  title={isAllTime
-                    ? `${row.hotkey} · ${formatAlpha(row.alphaEarned)} alpha earned all time · ${formatUsd(row.computeSpendUsd)} compute`
-                    : `${row.hotkey} · ${formatPercent(row.activeSubnetPct)} of active subnet emission · ${formatUsd(row.computeSpendUsd)} compute`}
-                  aria-label={isAllTime
-                    ? `${formatAlpha(row.alphaEarned)} alpha earned all time for hotkey ${row.hotkey}`
-                    : `${formatPercent(row.activeSubnetPct)} of active subnet emission for hotkey ${row.hotkey}`}
-                >
-                  {labelFits ? (
-                    <span
-                      className={cn(
-                        'truncate px-1 font-mono text-[10px] font-semibold tabular-nums',
-                        index < 3 ? 'text-slate-950' : 'text-[var(--platinum)]'
-                      )}
-                    >
-                      {primaryLabel}
-                    </span>
-                  ) : null}
-                </button>
-              )
-            })
-          ) : (
-            <div className="flex h-full w-full items-center justify-center rounded-[3px] font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--muted-2)]">
-              {emptyBarLabel}
-            </div>
-          )}
+        <div className="h-9 w-full overflow-hidden rounded-[5px] border border-[var(--line-2)] bg-[rgba(236,234,230,0.025)] p-[3px]">
+          <div className="flex h-full w-full gap-[2px]">
+            {barRows.length > 0 ? (
+              vialSegments.map(({ row, widthPct }, index) => {
+                const isSelected = selected?.hotkey === row.hotkey
+                return (
+                  <button
+                    key={row.hotkey}
+                    type="button"
+                    onBlur={() => setHoveredVialHotkey(null)}
+                    onClick={() => onSelectHotkey(row.hotkey)}
+                    onFocus={() => setHoveredVialHotkey(row.hotkey)}
+                    onMouseEnter={() => setHoveredVialHotkey(row.hotkey)}
+                    onMouseLeave={() => setHoveredVialHotkey(null)}
+                    className={cn(
+                      'group relative flex h-full min-w-[2px] items-center justify-center overflow-hidden rounded-[3px] transition-[filter,opacity,box-shadow]',
+                      isSelected
+                        ? 'shadow-[inset_0_0_0_1px_rgba(255,255,255,0.48)]'
+                        : 'opacity-80 hover:opacity-100 hover:brightness-125'
+                    )}
+                    style={{
+                      width: `${widthPct}%`,
+                      background: labEmissionTone(index),
+                    }}
+                    aria-label={isAllTime
+                      ? `${formatAlpha(row.alphaEarned)} alpha earned all time for hotkey ${row.hotkey}`
+                      : `${formatPercent(row.activeSubnetPct)} Lab Emissions for hotkey ${row.hotkey}`}
+                  />
+                )
+              })
+            ) : (
+              <div className="flex h-full w-full items-center justify-center rounded-[3px] font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--muted-2)]">
+                {emptyBarLabel}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -804,8 +802,9 @@ function LabEmissionSplit({
           <span className="text-right">Improvements</span>
           <span className="text-right">Latest</span>
         </div>
-        {rows.map((row, index) => {
+        {paginatedRows.map((row, index) => {
           const isSelected = selected?.hotkey === row.hotkey
+          const rowIndex = leaderboardStart + index
           return (
             <div
               key={row.hotkey}
@@ -825,7 +824,7 @@ function LabEmissionSplit({
               <span className="flex min-w-0 items-center gap-2">
                 <span
                   className="h-4 w-1.5 shrink-0 rounded-full"
-                  style={{ background: labEmissionTone(index) }}
+                  style={{ background: labEmissionTone(rowIndex) }}
                 />
                 <span className="min-w-0">
                   <HotkeyCopyButton hotkey={row.hotkey} />
@@ -839,7 +838,7 @@ function LabEmissionSplit({
                   {isAllTime ? `${formatAlpha(row.alphaEarned)} ㄴ` : formatPercent(row.activeSubnetPct)}
                 </span>
                 <span className="block font-mono text-[9.5px] uppercase tracking-[0.08em] text-[var(--muted-2)]">
-                  {isAllTime ? 'earned' : 'active subnet'}
+                  {isAllTime ? 'earned' : 'Lab Emissions'}
                 </span>
               </span>
               <span className="hidden text-right tabular-nums md:block">
@@ -872,8 +871,70 @@ function LabEmissionSplit({
             </div>
           )
         })}
+        {rows.length > LAB_MINER_PAGE_SIZE ? (
+          <LabMinerPagination
+            page={safeLeaderboardPage}
+            totalPages={leaderboardTotalPages}
+            start={leaderboardStart + 1}
+            end={leaderboardEnd}
+            total={rows.length}
+            onPageChange={setLeaderboardPage}
+          />
+        ) : null}
       </div>
     </section>
+  )
+}
+
+function LabMinerPagination({
+  page,
+  totalPages,
+  start,
+  end,
+  total,
+  onPageChange,
+}: {
+  page: number
+  totalPages: number
+  start: number
+  end: number
+  total: number
+  onPageChange: (page: number) => void
+}) {
+  const canPrev = page > 1
+  const canNext = page < totalPages
+  return (
+    <div className="flex items-center justify-between gap-3 border-t border-[var(--line)] px-3 py-2.5">
+      <div className="font-mono text-[10.5px] text-[var(--muted-2)]">
+        <span className="text-[var(--platinum)]">{start}</span>-<span className="text-[var(--platinum)]">{end}</span> of{' '}
+        <span className="text-[var(--platinum)]">{total}</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => canPrev && onPageChange(page - 1)}
+          disabled={!canPrev}
+          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--line-2)] bg-[rgba(236,234,230,0.02)] text-[var(--muted)] transition-colors hover:border-[var(--line-3)] hover:bg-[rgba(236,234,230,0.045)] hover:text-[var(--platinum)] disabled:cursor-not-allowed disabled:opacity-35"
+          aria-label="Previous miner page"
+          title="Previous page"
+        >
+          <ChevronLeft className="h-3.5 w-3.5" />
+        </button>
+        <div className="min-w-16 text-center font-mono text-[10.5px] text-[var(--muted-2)]">
+          <span className="text-[var(--platinum)]">{page}</span> / {totalPages}
+        </div>
+        <button
+          type="button"
+          onClick={() => canNext && onPageChange(page + 1)}
+          disabled={!canNext}
+          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-[var(--line-2)] bg-[rgba(236,234,230,0.02)] text-[var(--muted)] transition-colors hover:border-[var(--line-3)] hover:bg-[rgba(236,234,230,0.045)] hover:text-[var(--platinum)] disabled:cursor-not-allowed disabled:opacity-35"
+          aria-label="Next miner page"
+          title="Next page"
+        >
+          <ChevronRight className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -909,19 +970,6 @@ function formatAlpha(value: number): string {
   }
   if (value >= 0.0001) return value.toFixed(4)
   return '<0.0001'
-}
-
-function labSpendWindowLabel(window: LabMinerSpendWindow | null): string {
-  if (!window?.latestEpoch || !window.epochCount) return ''
-  return `${window.epochCount}-epoch window at ${window.latestEpoch}`
-}
-
-function labAllTimeWindowLabel(window: LabMinerAllTimeRollup | null): string {
-  if (!window?.allocationSnapshotCount) return ''
-  const epochLabel = window.firstEpoch !== null && window.latestEpoch !== null
-    ? `epochs ${window.firstEpoch}-${window.latestEpoch}`
-    : 'allocation history'
-  return `${window.allocationSnapshotCount} allocation snapshots · ${epochLabel}`
 }
 
 function labEmissionTone(index: number): string {
@@ -1876,7 +1924,8 @@ function LoopTimelineDialog({
     }
   }, [open, loop, retryKey])
 
-  const totalEvents = timeline?.runs.reduce((sum, run) => sum + run.events.length, 0) ?? 0
+  const stageEvents = timeline?.runs.flatMap((run) => run.events) ?? []
+  const stageCount = stageEvents.length
   const currentRunId = timeline?.currentRunId ?? loop?.runId ?? undefined
 
   return (
@@ -1893,7 +1942,7 @@ function LoopTimelineDialog({
                 Loop timeline
               </DialogTitle>
               <p id="loop-timeline-description" className="mt-1 text-[12px] leading-relaxed text-[var(--muted-2)]">
-                Stage timestamps use each event&apos;s own timestamp. Public projection activity is labeled separately.
+                High-level lifecycle stages with the first public timestamp recorded for each step.
               </p>
             </div>
             <DialogClose asChild>
@@ -1926,7 +1975,7 @@ function LoopTimelineDialog({
                   <TimelineMeta label="Miner" value={shortHotkey(loop.minerHotkey)} title={loop.minerHotkey} />
                   <TimelineMeta label="Submitted" value={formatDateTime(loop.submittedAt)} />
                   <TimelineMeta label="Last activity" value={formatDateTime(loop.lastActivityAt)} />
-                  <TimelineMeta label="Events" value={loading ? 'Loading' : totalEvents.toLocaleString()} />
+                  <TimelineMeta label="Stages" value={loading ? 'Loading' : stageCount.toLocaleString()} />
                 </div>
               </div>
             </div>
@@ -1953,29 +2002,12 @@ function LoopTimelineDialog({
                 Retry
               </button>
             </div>
-          ) : timeline && totalEvents === 0 ? (
+          ) : timeline && stageCount === 0 ? (
             <div className="flex min-h-[260px] items-center justify-center text-center text-[13px] text-[var(--muted-2)]">
-              No timeline events are available for this loop.
+              No public stage timestamps are available for this loop.
             </div>
           ) : timeline ? (
-            <div className="space-y-5">
-              {timeline.runs.map((run, index) => (
-                <TimelineRunSection
-                  key={run.runId ?? `ticket-${index}`}
-                  run={run}
-                  currentRunId={currentRunId}
-                />
-              ))}
-              {timeline.sourceNotes?.length ? (
-                <div className="border-t border-[var(--line)] pt-4">
-                  {timeline.sourceNotes.map((note) => (
-                    <p key={note} className="text-[11.5px] leading-relaxed text-[var(--muted-2)]">
-                      {note}
-                    </p>
-                  ))}
-                </div>
-              ) : null}
-            </div>
+            <TimelineStageList events={stageEvents} />
           ) : null}
         </div>
       </DialogContent>
@@ -1994,96 +2026,55 @@ function TimelineMeta({ label, value, title }: { label: string; value: string; t
   )
 }
 
-function TimelineRunSection({
-  run,
-  currentRunId,
-}: {
-  run: LoopTimelineRun
-  currentRunId?: string
-}) {
-  const isCurrent = run.isCurrent || Boolean(run.runId && run.runId === currentRunId)
+function TimelineStageList({ events }: { events: LoopTimelineEvent[] }) {
   return (
-    <section className="rounded-md border border-[var(--line)] bg-[rgba(236,234,230,0.012)]">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line)] px-4 py-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--muted-2)]">
-              {run.runId ? 'Run' : 'Ticket'}
-            </span>
-            {isCurrent ? (
-              <span className="rounded-[3px] border border-[var(--line-2)] px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.1em] text-[var(--platinum)]">
-                Current run
-              </span>
-            ) : null}
-          </div>
-          <div className="mt-1 truncate font-mono text-[11px] text-[var(--muted)]">
-            {run.runId ? run.runId : 'Ticket-level events'}
-          </div>
-          {run.receiptId ? (
-            <div className="mt-1 truncate font-mono text-[10px] text-[var(--muted-2)]">
-              Receipt {run.receiptId}
-            </div>
-          ) : null}
-        </div>
-        <div className="font-mono text-[10.5px] text-[var(--muted-2)]">
-          {run.events.length} {run.events.length === 1 ? 'event' : 'events'}
-        </div>
-      </div>
-      <div className="border-l border-[var(--line)] py-2 pl-4 pr-4 sm:ml-5">
-        {run.events.map((event) => (
-          <TimelineEventRow key={`${event.source ?? 'event'}:${event.id}:${event.enteredAt}`} event={event} />
-        ))}
-      </div>
-    </section>
+    <ol className="overflow-hidden rounded-md border border-[var(--line)] bg-[rgba(236,234,230,0.012)]">
+      {events.map((event, index) => (
+        <TimelineStageRow
+          key={`${event.id}:${event.enteredAt}`}
+          event={event}
+          index={index}
+          isLast={index === events.length - 1}
+        />
+      ))}
+    </ol>
   )
 }
 
-function TimelineEventRow({ event }: { event: LoopTimelineEvent }) {
-  const metadata = event.metadata ? JSON.stringify(event.metadata, null, 2) : ''
+function TimelineStageRow({
+  event,
+  index,
+  isLast,
+}: {
+  event: LoopTimelineEvent
+  index: number
+  isLast: boolean
+}) {
   return (
-    <div className="relative py-3 pl-2">
-      <span className="absolute -left-[21px] top-4 h-2.5 w-2.5 rounded-full border border-[var(--line-3)] bg-[var(--canvas)]" />
-      <div className="grid gap-3 sm:grid-cols-[170px_minmax(0,1fr)]">
-        <div className="font-mono text-[10px] leading-relaxed text-[var(--muted-2)]">
-          <div className="uppercase tracking-[0.12em]">{timestampKindLabel(event.timestampKind)}</div>
-          <time className="mt-1 block text-[var(--muted)]" dateTime={event.enteredAt}>
-            {formatDateTime(event.enteredAt)}
-          </time>
-          <div>{formatRelative(event.enteredAt)}</div>
-          {event.durationSincePreviousMs !== undefined ? (
-            <div className="mt-1 text-[var(--muted)]">+{formatDurationMs(event.durationSincePreviousMs)}</div>
-          ) : null}
+    <li
+      className={cn(
+        'grid gap-3 px-4 py-4 sm:grid-cols-[minmax(0,1fr)_190px] sm:items-center',
+        !isLast && 'border-b border-[var(--line)]',
+      )}
+    >
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-[var(--line-2)] bg-[rgba(236,234,230,0.035)] font-mono text-[10px] text-[var(--muted)]">
+          {index + 1}
         </div>
         <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <Tag>{phaseLabel(event.phase)}</Tag>
-            {event.status ? <Tag>{readableTag(event.status)}</Tag> : null}
-            {event.source ? (
-              <span className="font-mono text-[9.5px] text-[var(--muted-2)]">{event.source}</span>
-            ) : null}
+          <div className="text-[13px] font-medium text-[var(--platinum)]">{event.stage}</div>
+          <div className="mt-1 font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--muted-2)]">
+            Stage {index + 1}
           </div>
-          <div className="mt-2 text-[13px] font-medium text-[var(--platinum)]">{event.stage}</div>
-          {event.summary ? (
-            <p className="mt-1 text-[12px] leading-relaxed text-[var(--muted-2)]">{event.summary}</p>
-          ) : null}
-          {event.timestampKind === 'projection_written' && event.lastActivityAt ? (
-            <p className="mt-1 font-mono text-[10px] text-[var(--muted-2)]">
-              Last activity represented {formatDateTime(event.lastActivityAt)}
-            </p>
-          ) : null}
-          {metadata ? (
-            <details className="mt-2">
-              <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--muted-2)]">
-                Raw details
-              </summary>
-              <pre className="mt-2 max-h-56 overflow-auto rounded-md border border-[var(--line)] bg-[rgba(0,0,0,0.18)] p-3 text-[10px] leading-relaxed text-[var(--muted)]">
-                {metadata}
-              </pre>
-            </details>
-          ) : null}
         </div>
       </div>
-    </div>
+      <div className="sm:text-right">
+        <time className="block font-mono text-[11px] text-[var(--muted)]" dateTime={event.enteredAt}>
+          {formatDateTime(event.enteredAt)}
+        </time>
+        <div className="mt-1 font-mono text-[10px] text-[var(--muted-2)]">{formatRelative(event.enteredAt)}</div>
+      </div>
+    </li>
   )
 }
 
@@ -2420,32 +2411,6 @@ function formatDateTime(value: string): string {
     hour12: false,
     timeZone: 'UTC',
   })} UTC`
-}
-
-function formatDurationMs(value: number): string {
-  const totalSeconds = Math.max(0, Math.round(value / 1000))
-  if (totalSeconds < 60) return `${totalSeconds}s`
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = totalSeconds % 60
-  if (minutes < 60) return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`
-  const hours = Math.floor(minutes / 60)
-  const remainingMinutes = minutes % 60
-  if (hours < 24) return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`
-  const days = Math.floor(hours / 24)
-  const remainingHours = hours % 24
-  return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`
-}
-
-function timestampKindLabel(kind: LoopTimelineTimestampKind | undefined): string {
-  if (kind === 'projection_written') return 'Projection written'
-  if (kind === 'last_activity_represented') return 'Last activity represented'
-  return 'Entered stage'
-}
-
-function phaseLabel(phase: LoopTimelinePhase): string {
-  if (phase === 'auto_research') return 'Auto research'
-  if (phase === 'public_projection') return 'Public projection'
-  return readableTag(phase)
 }
 
 function readableTag(value: string): string {

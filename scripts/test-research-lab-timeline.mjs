@@ -168,8 +168,26 @@ try {
   assert.match(componentSource, /<ActivityPanelRow key=\{loop\.cardId\} loop=\{loop\} onSelect=\{setSelectedLoop\}/)
   assert.match(componentSource, /role="button"/)
   assert.match(componentSource, /<LoopTimelineDialog/)
-  assert.match(componentSource, /timestampKindLabel\(event\.timestampKind\)/)
-  assert.match(componentSource, /Last activity represented/)
+  assert.match(componentSource, /<TimelineStageList events=\{stageEvents\} \/>/)
+  assert.match(componentSource, /High-level lifecycle stages with the first public timestamp recorded for each step\./)
+  assert.match(componentSource, /<TimelineMeta label="Stages"/)
+  assert.doesNotMatch(componentSource, /Raw details/)
+  assert.doesNotMatch(componentSource, /timestampKindLabel\(event\.timestampKind\)/)
+
+  const routeSource = await readFile(resolve('src/app/api/research-lab/route.ts'), 'utf8')
+  assert.match(routeSource, /summarizePublicLoopTimeline/)
+  for (const label of [
+    'Submitted',
+    'Paid / queued',
+    'Run started',
+    'Research / patch attempt',
+    'Candidate generated',
+    'Scoring',
+    'Final result / promotion',
+  ]) {
+    assert.match(routeSource, new RegExp(`label: '${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`))
+  }
+  assert.match(routeSource, /isCurrentPublicLoopFinal/)
 
   console.log('research-lab-timeline: adapter and UI wiring fixtures passed')
 } finally {
