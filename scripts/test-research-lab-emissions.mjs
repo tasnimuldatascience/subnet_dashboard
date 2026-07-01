@@ -94,9 +94,10 @@ try {
   const componentSource = await readFile(resolve('src/components/dashboard/ResearchLab.tsx'), 'utf8')
   assert.match(componentSource, /Lab Allocation/)
   assert.match(componentSource, /Total Emissions/)
-  assert.match(componentSource, /Current metagraph emission for this Lab-active miner/)
+  assert.match(componentSource, /Current metagraph incentive share for this Lab-active miner/)
   assert.match(componentSource, /labAllocationPaidAlphaPercent/)
-  assert.match(componentSource, /activeSubnetPct/)
+  assert.match(componentSource, /metagraphIncentivePct/)
+  assert.match(componentSource, /metagraph\?\.incentives/)
   assert.doesNotMatch(componentSource, /Lab Emissions/)
 
   const routeSource = await readFile(resolve('src/app/api/research-lab/route.ts'), 'utf8')

@@ -522,7 +522,7 @@ type LabMinerRow = {
   scored: number
   promising: number
   emission: number
-  activeSubnetPct: number
+  metagraphIncentivePct: number
   displayedEmissionPct: number
   labAllocationPaidAlphaPercent: number
   labAllocationBucketSharePercent: number
@@ -556,15 +556,8 @@ function LabEmissionSplit({
   const [mode, setMode] = useState<LabMinerMode>('window')
   const [hoveredVialHotkey, setHoveredVialHotkey] = useState<string | null>(null)
   const [leaderboardPage, setLeaderboardPage] = useState(1)
+  const incentives = useMemo(() => metagraph?.incentives ?? {}, [metagraph?.incentives])
   const emissions = useMemo(() => metagraph?.emissions ?? {}, [metagraph?.emissions])
-  const validatorMap = useMemo(() => metagraph?.isValidator ?? {}, [metagraph?.isValidator])
-  const activeSubnetEmission = useMemo(() => {
-    return Object.entries(emissions).reduce((sum, [hotkey, emission]) => {
-      if (!Number.isFinite(emission) || emission <= 0) return sum
-      if (validatorMap[hotkey] === true) return sum
-      return sum + emission
-    }, 0)
-  }, [emissions, validatorMap])
 
   const rows = useMemo<LabMinerRow[]>(() => {
     const activityByHotkey = mode === 'all_time' ? activity?.allTime : activity?.last24h
@@ -614,6 +607,7 @@ function LabEmissionSplit({
 
     const rowsWithEmission = Array.from(byHotkey.entries()).map(([hotkey, activityEntry]) => {
       const emission = Math.max(0, emissions[hotkey] ?? 0)
+      const metagraphIncentivePct = Math.max(0, incentives[hotkey] ?? 0) * 100
       const windowSpendEntry = spend?.byHotkey?.[hotkey]
       const allTimeSpendEntry = spend?.allTime?.byHotkey?.[hotkey]
       const currentAllocationEntry = currentAllocationByHotkey[hotkey]
@@ -631,7 +625,7 @@ function LabEmissionSplit({
         promising: activityEntry.promising,
         lastActivityAt: activityEntry.lastActivityAt,
         emission,
-        activeSubnetPct: activeSubnetEmission > 0 ? (emission / activeSubnetEmission) * 100 : 0,
+        metagraphIncentivePct,
         displayedEmissionPct: 0,
         labAllocationPaidAlphaPercent: Math.max(0, currentAllocationEntry?.paidAlphaPercent ?? 0),
         labAllocationBucketSharePercent: Math.max(0, currentAllocationEntry?.labBucketSharePercent ?? 0),
@@ -646,12 +640,12 @@ function LabEmissionSplit({
           : windowSpendEntry?.reimbursementEpochs) ?? null,
       }
     })
-    const displayedEmissionTotal = rowsWithEmission.reduce((sum, row) => sum + row.emission, 0)
+    const displayedEmissionTotal = rowsWithEmission.reduce((sum, row) => sum + row.metagraphIncentivePct, 0)
     const totalAlphaEarned = rowsWithEmission.reduce((sum, row) => sum + row.alphaEarned, 0)
     return rowsWithEmission
       .map((row) => ({
         ...row,
-        displayedEmissionPct: displayedEmissionTotal > 0 ? (row.emission / displayedEmissionTotal) * 100 : 0,
+        displayedEmissionPct: displayedEmissionTotal > 0 ? (row.metagraphIncentivePct / displayedEmissionTotal) * 100 : 0,
         alphaSharePct: totalAlphaEarned > 0 ? (row.alphaEarned / totalAlphaEarned) * 100 : 0,
       }))
       .sort(
@@ -662,16 +656,16 @@ function LabEmissionSplit({
           a.hotkey.localeCompare(b.hotkey)
           :
           b.labAllocationPaidAlphaPercent - a.labAllocationPaidAlphaPercent ||
-          b.emission - a.emission ||
+          b.metagraphIncentivePct - a.metagraphIncentivePct ||
           b.count - a.count ||
           b.scored - a.scored ||
           a.hotkey.localeCompare(b.hotkey)
       )
   }, [
-    activeSubnetEmission,
     activity?.allTime,
     activity?.last24h,
     emissions,
+    incentives,
     loops,
     mode,
     spend?.allTime?.byHotkey,
@@ -679,13 +673,13 @@ function LabEmissionSplit({
     spend?.currentAllocation?.byHotkey,
   ])
 
-  const barRows = rows.filter((row) => mode === 'all_time' ? row.alphaEarned > 0 : row.emission > 0)
+  const barRows = rows.filter((row) => mode === 'all_time' ? row.alphaEarned > 0 : row.metagraphIncentivePct > 0)
   const selected = selectedHotkey ? rows.find((row) => row.hotkey === selectedHotkey) ?? null : null
   const isAllTime = mode === 'all_time'
   const primaryColumnLabel = isAllTime ? 'Alpha earned' : 'Lab Allocation'
   const emptyBarLabel = isAllTime
     ? 'No lab alpha allocation history for these hotkeys yet'
-    : 'No current metagraph emission for these Lab-active hotkeys'
+    : 'No current metagraph incentive for these Lab-active hotkeys'
   const vialSegments = useMemo(() => {
     let left = 0
     return barRows.map((row) => {
@@ -783,7 +777,7 @@ function LabEmissionSplit({
             <div className="mt-1 whitespace-nowrap font-mono text-[10px] text-[var(--platinum)]">
               {isAllTime
                 ? `${formatAlpha(hoveredVialSegment.row.alphaEarned)} ㄴ Leadpoet alpha earned`
-                : `${formatPercent(hoveredVialSegment.row.activeSubnetPct)} current subnet share`}
+                : `${formatPercent(hoveredVialSegment.row.metagraphIncentivePct)} metagraph incentive`}
             </div>
           </div>
         ) : null}
@@ -813,7 +807,7 @@ function LabEmissionSplit({
                     }}
                     aria-label={isAllTime
                       ? `${formatAlpha(row.alphaEarned)} alpha earned all time for hotkey ${row.hotkey}`
-                      : `${formatPercent(row.activeSubnetPct)} current total metagraph emission for hotkey ${row.hotkey}`}
+                      : `${formatPercent(row.metagraphIncentivePct)} metagraph incentive for hotkey ${row.hotkey}`}
                   />
                 )
               })
@@ -830,10 +824,10 @@ function LabEmissionSplit({
         <div className="hidden grid-cols-[minmax(0,1fr)_118px_132px_112px_58px_58px_96px_80px] gap-3 border-b border-[var(--line)] bg-[rgba(236,234,230,0.018)] px-3 py-2 font-mono text-[9.5px] uppercase tracking-[0.1em] text-[var(--muted-2)] md:grid">
           <span>Hotkey</span>
           <span className="text-right">{primaryColumnLabel}</span>
-          <span className="text-right" title="Current metagraph emission for this Lab-active miner">
+          <span className="text-right" title="Current metagraph incentive share for this Lab-active miner">
             <span className="block">Total Emissions</span>
             <span className="mt-0.5 block text-[8.5px] normal-case leading-tight tracking-normal">
-              Current metagraph emission for this Lab-active miner
+              Current metagraph incentive share for this Lab-active miner
             </span>
           </span>
           <span className="text-right">Compute spent</span>
@@ -869,7 +863,7 @@ function LabEmissionSplit({
                 <span className="min-w-0">
                   <HotkeyCopyButton hotkey={row.hotkey} />
                   <span className="mt-1 block font-mono text-[10px] text-[var(--muted-2)] md:hidden">
-                    {row.count} loops · {row.active} active · {row.promising} improvements · {isAllTime ? `${formatAlpha(row.alphaEarned)} ㄴ earned` : `${formatLabAllocationPercent(row.labAllocationPaidAlphaPercent)} lab allocation`} · {formatPercent(row.activeSubnetPct)} total emissions · {formatUsd(row.computeSpendUsd)} compute
+                    {row.count} loops · {row.active} active · {row.promising} improvements · {isAllTime ? `${formatAlpha(row.alphaEarned)} ㄴ earned` : `${formatLabAllocationPercent(row.labAllocationPaidAlphaPercent)} lab allocation`} · {formatPercent(row.metagraphIncentivePct)} total emissions · {formatUsd(row.computeSpendUsd)} compute
                   </span>
                 </span>
               </span>
@@ -885,10 +879,10 @@ function LabEmissionSplit({
               </span>
               <span className="hidden text-right tabular-nums md:block">
                 <span className="block font-display text-[15px] font-medium text-[var(--platinum)]">
-                  {formatPercent(row.activeSubnetPct)}
+                  {formatPercent(row.metagraphIncentivePct)}
                 </span>
                 <span className="block font-mono text-[9.5px] uppercase tracking-[0.08em] text-[var(--muted-2)]">
-                  metagraph emission
+                  {formatAlpha(row.emission)} ㄴ emitted
                 </span>
               </span>
               <span className="hidden text-right tabular-nums md:block">
