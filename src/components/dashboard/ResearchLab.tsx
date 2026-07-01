@@ -186,25 +186,9 @@ type ResearchLoop = {
   candidateCount: number
   scoredCandidateCount: number
   bestCandidatePublicSummary: string
-  scoreSummary: LoopScoreSummary | null
   lastActivityAt: string
   submittedAt: string
   statusNote?: LoopStatusNote
-}
-
-type LoopScoreSummary = {
-  scoreBundleId: string
-  baseScore: number | null
-  candidateScore: number | null
-  meanDelta: number | null
-  publicBaselineScore: number | null
-  publicPairedBaseScore: number | null
-  publicCandidateScore: number | null
-  publicBenchmarkDelta: number | null
-  publicPairedDelta: number | null
-  publicGateDecision: string | null
-  publicIcpCount: number | null
-  privateHoldoutIcpCount: number | null
 }
 
 type LoopStatusNote = {
@@ -402,7 +386,7 @@ function Hero({ benchmark }: { benchmark: BenchmarkReport | null }) {
             <b className="font-medium text-[var(--platinum)]">{splitSummary}</b>
           </>
         ) : null}
-        . Research loops show their paired evaluation score and public gate result in the activity panel.
+        . Research loops are scored against this baseline.
       </p>
 
       <div className="mt-6 font-mono text-[11px] text-[var(--muted-2)]">
@@ -1606,7 +1590,6 @@ function ActivityPanelRow({ loop }: { loop: ResearchLoop }) {
         <span className="md:mt-1 md:block">
           <span className="text-[var(--muted)]">{loop.scoredCandidateCount}</span> scored
         </span>
-        {loop.scoreSummary ? <LoopScoreStrip score={loop.scoreSummary} /> : null}
       </div>
 
       <div className="flex min-w-0 md:justify-center">
@@ -1616,47 +1599,6 @@ function ActivityPanelRow({ loop }: { loop: ResearchLoop }) {
       <div className="font-mono text-[10.5px] text-[var(--muted-2)]">
         <span>{formatRelative(loop.lastActivityAt)}</span>
       </div>
-    </div>
-  )
-}
-
-function LoopScoreStrip({ score }: { score: LoopScoreSummary }) {
-  const pairedDelta =
-    score.meanDelta === null
-      ? null
-      : `${score.meanDelta >= 0 ? '+' : ''}${formatScore(score.meanDelta)}`
-  const publicDelta =
-    score.publicBenchmarkDelta === null
-      ? null
-      : `${score.publicBenchmarkDelta >= 0 ? '+' : ''}${formatScore(score.publicBenchmarkDelta)}`
-  const publicPairedDelta =
-    score.publicPairedDelta === null
-      ? null
-      : `${score.publicPairedDelta >= 0 ? '+' : ''}${formatScore(score.publicPairedDelta)}`
-  const publicLabel = score.publicIcpCount
-    ? `public ${score.publicIcpCount}`
-    : 'public'
-
-  return (
-    <div className="mt-2 min-w-[150px] space-y-1 border-l border-[var(--line)] pl-3 text-left md:ml-auto md:border-l-0 md:border-t md:pt-2 md:pl-0 md:text-right">
-      {score.candidateScore !== null && score.baseScore !== null ? (
-        <div>
-          <span className="text-[var(--muted)]">{formatScore(score.candidateScore)}</span>
-          <span className="text-[var(--faint)]"> vs </span>
-          <span>{formatScore(score.baseScore)}</span>
-          {pairedDelta ? <span className="ml-1 text-[var(--platinum)]">{pairedDelta}</span> : null}
-        </div>
-      ) : null}
-      {score.publicCandidateScore !== null && score.publicBaselineScore !== null ? (
-        <div title={score.publicGateDecision ? readableTag(score.publicGateDecision) : undefined}>
-          <span className="text-[var(--faint)]">{publicLabel}</span>
-          <span className="mx-1 text-[var(--muted)]">{formatScore(score.publicCandidateScore)}</span>
-          <span className="text-[var(--faint)]">vs</span>
-          <span className="ml-1">{formatScore(score.publicBaselineScore)}</span>
-          {publicDelta ? <span className="ml-1 text-[var(--platinum)]">{publicDelta}</span> : null}
-          {publicPairedDelta ? <span className="ml-1 text-[var(--muted-2)]">paired {publicPairedDelta}</span> : null}
-        </div>
-      ) : null}
     </div>
   )
 }

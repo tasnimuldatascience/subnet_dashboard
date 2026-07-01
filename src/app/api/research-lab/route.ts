@@ -264,33 +264,6 @@ type PublicLoopEventDoc = {
   candidate_reason_counts?: Record<string, number>
 }
 
-type ScoreBundleRow = {
-  score_bundle_id: string
-  run_id: string | null
-  ticket_id: string | null
-  bundle_status: string | null
-  current_event_status: string | null
-  created_at: string
-  current_status_at: string | null
-  score_bundle_doc: ScoreBundleDoc | null
-}
-
-type ScoreBundleDoc = {
-  aggregates?: {
-    base_score?: number
-    candidate_score?: number
-    mean_delta?: number
-  }
-  private_holdout_gate?: {
-    baseline_public_score?: number
-    paired_base_public_score?: number
-    candidate_public_score?: number
-    decision?: string
-    public_icp_count?: number
-    private_holdout_icp_count?: number
-  }
-}
-
 type ResearchLabPayload = {
   benchmark: NormalizedBenchmark | null
   loops: NormalizedLoop[]
@@ -378,25 +351,9 @@ type NormalizedLoop = {
   candidateCount: number
   scoredCandidateCount: number
   bestCandidatePublicSummary: string
-  scoreSummary: LoopScoreSummary | null
   lastActivityAt: string
   submittedAt: string
   statusNote?: LoopStatusNote
-}
-
-type LoopScoreSummary = {
-  scoreBundleId: string
-  baseScore: number | null
-  candidateScore: number | null
-  meanDelta: number | null
-  publicBaselineScore: number | null
-  publicPairedBaseScore: number | null
-  publicCandidateScore: number | null
-  publicBenchmarkDelta: number | null
-  publicPairedDelta: number | null
-  publicGateDecision: string | null
-  publicIcpCount: number | null
-  privateHoldoutIcpCount: number | null
 }
 
 type LoopStatusNote = {
@@ -1049,16 +1006,9 @@ async function fetchPublicLoops(supabase: ReturnType<typeof getSupabase>): Promi
     return []
   }
 
-  const rows = ((data ?? []) as PublicLoopRow[])
+  return ((data ?? []) as PublicLoopRow[])
     .filter(isVisiblePublicLoop)
     .slice(0, LOOP_LIMIT)
-
-  const scoreSummaryByRun = await fetchLoopScoreSummaries(
-    supabase,
-    rows.map((row) => row.current_run_id).filter((value): value is string => Boolean(value))
-  )
-
-  return rows
     .map((row) => {
       const projectedOutcomeLabel = row.current_outcome_label || 'submitted'
       const projectedOutcomeBand = row.current_outcome_band || 'pending'
@@ -1162,80 +1112,11 @@ async function fetchPublicLoops(supabase: ReturnType<typeof getSupabase>): Promi
         candidateCount,
         scoredCandidateCount,
         bestCandidatePublicSummary: row.current_best_candidate_public_summary || '',
-        scoreSummary: row.current_run_id ? scoreSummaryByRun.get(row.current_run_id) ?? null : null,
         lastActivityAt,
         submittedAt: row.created_at,
         statusNote: displayStatus.note,
       }
     })
-}
-
-async function fetchLoopScoreSummaries(
-  supabase: ReturnType<typeof getSupabase>,
-  runIds: string[],
-): Promise<Map<string, LoopScoreSummary>> {
-  const uniqueRunIds = Array.from(new Set(runIds)).filter(Boolean)
-  const byRun = new Map<string, LoopScoreSummary>()
-  if (uniqueRunIds.length === 0) return byRun
-
-  for (let i = 0; i < uniqueRunIds.length; i += 100) {
-    const batch = uniqueRunIds.slice(i, i + 100)
-    const { data, error } = await supabase
-      .from('research_evaluation_score_bundle_current')
-      .select('score_bundle_id, run_id, ticket_id, bundle_status, current_event_status, score_bundle_doc, created_at, current_status_at')
-      .in('run_id', batch)
-      .order('current_status_at', { ascending: false, nullsFirst: false })
-      .order('created_at', { ascending: false })
-
-    if (error) {
-      console.error('[Research Lab API] score bundle query failed:', error)
-      continue
-    }
-
-    for (const row of (data ?? []) as ScoreBundleRow[]) {
-      if (!row.run_id || byRun.has(row.run_id)) continue
-      const summary = scoreSummaryFromBundle(row)
-      if (summary) byRun.set(row.run_id, summary)
-    }
-  }
-
-  return byRun
-}
-
-function scoreSummaryFromBundle(row: ScoreBundleRow): LoopScoreSummary | null {
-  const doc = row.score_bundle_doc
-  if (!doc) return null
-  const aggregates = doc.aggregates ?? {}
-  const gate = doc.private_holdout_gate ?? {}
-  const baseScore = nullableNumber(aggregates.base_score)
-  const candidateScore = nullableNumber(aggregates.candidate_score)
-  const meanDelta = nullableNumber(aggregates.mean_delta)
-  const publicBaselineScore = nullableNumber(gate.baseline_public_score)
-  const publicPairedBaseScore = nullableNumber(gate.paired_base_public_score)
-  const publicCandidateScore = nullableNumber(gate.candidate_public_score)
-  const publicBenchmarkDelta =
-    publicCandidateScore !== null && publicBaselineScore !== null
-      ? roundScore(publicCandidateScore - publicBaselineScore)
-      : null
-  const publicPairedDelta =
-    publicCandidateScore !== null && publicPairedBaseScore !== null
-      ? roundScore(publicCandidateScore - publicPairedBaseScore)
-      : null
-
-  return {
-    scoreBundleId: row.score_bundle_id,
-    baseScore,
-    candidateScore,
-    meanDelta,
-    publicBaselineScore,
-    publicPairedBaseScore,
-    publicCandidateScore,
-    publicBenchmarkDelta,
-    publicPairedDelta,
-    publicGateDecision: stringOr(gate.decision) ?? null,
-    publicIcpCount: nullableInteger(gate.public_icp_count),
-    privateHoldoutIcpCount: nullableInteger(gate.private_holdout_icp_count),
-  }
 }
 
 function isVisiblePublicLoop(row: PublicLoopRow): boolean {
@@ -1311,20 +1192,6 @@ function roundUsd(value: number): number {
 function numberOr(value: unknown, fallback: number): number {
   const numeric = Number(value)
   return Number.isFinite(numeric) ? numeric : fallback
-}
-
-function nullableNumber(value: unknown): number | null {
-  const numeric = Number(value)
-  return Number.isFinite(numeric) ? numeric : null
-}
-
-function nullableInteger(value: unknown): number | null {
-  const numeric = nullableNumber(value)
-  return numeric === null ? null : Math.round(numeric)
-}
-
-function roundScore(value: number): number {
-  return Math.round(value * 1000) / 1000
 }
 
 function arrayOfStrings(value: unknown): string[] {
