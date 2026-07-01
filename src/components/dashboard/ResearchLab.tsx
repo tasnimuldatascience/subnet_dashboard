@@ -792,13 +792,12 @@ function LabEmissionSplit({
       </div>
 
       <div className="mt-5 overflow-hidden rounded-md border border-[var(--line)]">
-        <div className="hidden grid-cols-[minmax(0,1fr)_124px_116px_64px_64px_72px_104px_92px] gap-3 border-b border-[var(--line)] bg-[rgba(236,234,230,0.018)] px-3 py-2 font-mono text-[9.5px] uppercase tracking-[0.1em] text-[var(--muted-2)] md:grid">
+        <div className="hidden grid-cols-[minmax(0,1fr)_124px_116px_64px_64px_104px_92px] gap-3 border-b border-[var(--line)] bg-[rgba(236,234,230,0.018)] px-3 py-2 font-mono text-[9.5px] uppercase tracking-[0.1em] text-[var(--muted-2)] md:grid">
           <span>Hotkey</span>
           <span className="text-right">{primaryColumnLabel}</span>
           <span className="text-right">Compute spent</span>
           <span className="text-right">Loops</span>
           <span className="text-right">Active</span>
-          <span className="text-right">Scored</span>
           <span className="text-right">Improvements</span>
           <span className="text-right">Latest</span>
         </div>
@@ -817,7 +816,7 @@ function LabEmissionSplit({
                 onSelectHotkey(row.hotkey)
               }}
               className={cn(
-                'grid w-full grid-cols-[minmax(0,1fr)_104px] gap-3 border-b border-[var(--line)] px-3 py-3 text-left transition-colors last:border-b-0 md:grid-cols-[minmax(0,1fr)_124px_116px_64px_64px_72px_104px_92px] md:items-center',
+                'grid w-full grid-cols-[minmax(0,1fr)_104px] gap-3 border-b border-[var(--line)] px-3 py-3 text-left transition-colors last:border-b-0 md:grid-cols-[minmax(0,1fr)_124px_116px_64px_64px_104px_92px] md:items-center',
                 isSelected ? 'bg-[rgba(232,240,255,0.055)]' : 'hover-bg-warm'
               )}
             >
@@ -829,7 +828,7 @@ function LabEmissionSplit({
                 <span className="min-w-0">
                   <HotkeyCopyButton hotkey={row.hotkey} />
                   <span className="mt-1 block font-mono text-[10px] text-[var(--muted-2)] md:hidden">
-                    {row.count} loops · {row.scored} scored · {row.promising} improvements · {isAllTime ? `${formatAlpha(row.alphaEarned)} ㄴ earned` : `${formatUsd(row.computeSpendUsd)} compute`}
+                    {row.count} loops · {row.active} active · {row.promising} improvements · {isAllTime ? `${formatAlpha(row.alphaEarned)} ㄴ earned` : `${formatUsd(row.computeSpendUsd)} compute`}
                   </span>
                 </span>
               </span>
@@ -858,9 +857,6 @@ function LabEmissionSplit({
               </span>
               <span className="hidden text-right font-mono text-[11px] tabular-nums text-[var(--muted)] md:block">
                 {row.active}
-              </span>
-              <span className="hidden text-right font-mono text-[11px] tabular-nums text-[var(--muted)] md:block">
-                {row.scored}
               </span>
               <span className="hidden text-right font-mono text-[11px] tabular-nums md:block">
                 <span className={row.promising > 0 ? 'text-[var(--white)]' : 'text-[var(--muted)]'}>
