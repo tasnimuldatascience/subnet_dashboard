@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node scripts/test-research-lab-status.mjs"
+    "test": "node scripts/test-research-lab-status.mjs && node scripts/test-research-lab-timeline.mjs"
   },
   "dependencies": {
     "@polkadot/api": "^16.5.4",

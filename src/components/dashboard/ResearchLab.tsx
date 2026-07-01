@@ -1,7 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronLeft, ChevronRight, Copy, Search, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
+import { Check, ChevronLeft, ChevronRight, Copy, Loader2, Search, X } from 'lucide-react'
 import {
   Dialog,
   DialogClose,
@@ -221,6 +221,51 @@ type ResearchLoop = {
   lastActivityAt: string
   submittedAt: string
   statusNote?: LoopStatusNote
+}
+
+type LoopTimelinePhase =
+  | 'ticket'
+  | 'queue'
+  | 'auto_research'
+  | 'candidate'
+  | 'scoring'
+  | 'promotion'
+  | 'public_projection'
+
+type LoopTimelineTimestampKind =
+  | 'entered_stage'
+  | 'projection_written'
+  | 'last_activity_represented'
+
+type LoopTimelineEvent = {
+  id: string
+  phase: LoopTimelinePhase
+  stage: string
+  status?: string
+  enteredAt: string
+  seq?: number
+  source?: string
+  summary?: string
+  metadata?: Record<string, unknown>
+  timestampKind?: LoopTimelineTimestampKind
+  lastActivityAt?: string
+  runId?: string
+  receiptId?: string
+  durationSincePreviousMs?: number
+}
+
+type LoopTimelineRun = {
+  runId?: string
+  receiptId?: string
+  isCurrent?: boolean
+  events: LoopTimelineEvent[]
+}
+
+type LoopTimeline = {
+  ticketId: string
+  currentRunId?: string
+  runs: LoopTimelineRun[]
+  sourceNotes?: string[]
 }
 
 type LoopStatusNote = {
@@ -1428,6 +1473,7 @@ function ResearchActivityDialog({
   const [direction, setDirection] = useState('all')
   const [status, setStatus] = useState('all')
   const [currentPage, setCurrentPage] = useState(1)
+  const [selectedLoop, setSelectedLoop] = useState<ResearchLoop | null>(null)
 
   useEffect(() => {
     if (!open) {
@@ -1435,6 +1481,7 @@ function ResearchActivityDialog({
       setDirection('all')
       setStatus('all')
       setCurrentPage(1)
+      setSelectedLoop(null)
     }
   }, [open])
 
@@ -1601,7 +1648,7 @@ function ResearchActivityDialog({
                 <span>Activity</span>
               </div>
               {paginatedLoops.map((loop) => (
-                <ActivityPanelRow key={loop.cardId} loop={loop} />
+                <ActivityPanelRow key={loop.cardId} loop={loop} onSelect={setSelectedLoop} />
               ))}
             </div>
           )}
@@ -1617,6 +1664,13 @@ function ResearchActivityDialog({
           />
         ) : null}
       </DialogContent>
+      <LoopTimelineDialog
+        loop={selectedLoop}
+        open={selectedLoop !== null}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setSelectedLoop(null)
+        }}
+      />
     </Dialog>
   )
 }
@@ -1686,10 +1740,30 @@ function ActivityPagination({
   )
 }
 
-function ActivityPanelRow({ loop }: { loop: ResearchLoop }) {
+function ActivityPanelRow({
+  loop,
+  onSelect,
+}: {
+  loop: ResearchLoop
+  onSelect: (loop: ResearchLoop) => void
+}) {
   const statusTone = loop.statusNote ? statusNoteTone(loop.statusNote.tone) : null
+  const handleKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    onSelect(loop)
+  }, [loop, onSelect])
+
   return (
-    <div className="grid gap-3 border-b border-[var(--line)] px-5 py-4 transition-colors last:border-b-0 hover-bg-warm md:grid-cols-[minmax(170px,1.05fr)_minmax(0,1.65fr)_86px_122px_86px] md:items-start md:gap-4">
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => onSelect(loop)}
+      onKeyDown={handleKeyDown}
+      className="grid cursor-pointer gap-3 border-b border-[var(--line)] px-5 py-4 transition-colors last:border-b-0 hover-bg-warm premium-focus md:grid-cols-[minmax(170px,1.05fr)_minmax(0,1.65fr)_86px_122px_86px] md:items-start md:gap-4"
+      aria-label={`Open timeline for ticket ${loop.ticketId}`}
+      title="Open loop timeline"
+    >
       <div className="min-w-0">
         <HotkeyCopyButton hotkey={loop.minerHotkey} />
         <div className="mt-2 flex flex-wrap gap-1.5">
@@ -1753,6 +1827,273 @@ function ActivityPanelRow({ loop }: { loop: ResearchLoop }) {
   )
 }
 
+function LoopTimelineDialog({
+  loop,
+  open,
+  onOpenChange,
+}: {
+  loop: ResearchLoop | null
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  const [timeline, setTimeline] = useState<LoopTimeline | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [retryKey, setRetryKey] = useState(0)
+
+  useEffect(() => {
+    if (!open || !loop) {
+      setTimeline(null)
+      setLoading(false)
+      setError(null)
+      return
+    }
+
+    const controller = new AbortController()
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+    setTimeline(null)
+
+    fetch(`/api/research-lab?ticketId=${encodeURIComponent(loop.ticketId)}&t=${Date.now()}`, {
+      cache: 'no-store',
+      signal: controller.signal,
+    })
+      .then(async (res) => {
+        const json = await res.json().catch(() => null)
+        if (!res.ok || !json?.success) {
+          throw new Error(json?.error || `Timeline request failed (${res.status})`)
+        }
+        return json.data as LoopTimeline
+      })
+      .then((data) => {
+        if (!cancelled) setTimeline(data)
+      })
+      .catch((err) => {
+        if (cancelled || controller.signal.aborted) return
+        setError(err instanceof Error ? err.message : 'Failed to load loop timeline')
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
+  }, [open, loop, retryKey])
+
+  const totalEvents = timeline?.runs.reduce((sum, run) => sum + run.events.length, 0) ?? 0
+  const currentRunId = timeline?.currentRunId ?? loop?.runId ?? undefined
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        aria-describedby="loop-timeline-description"
+        showCloseButton={false}
+        className="h-[86vh] max-h-[86vh] supports-[height:100svh]:h-[calc(100svh-0.75rem)] supports-[height:100svh]:max-h-[calc(100svh-0.75rem)] overflow-hidden flex flex-col gap-0 bg-[var(--canvas)] border-[var(--line-2)] p-0 text-[var(--platinum)] sm:w-[calc(100vw-3rem)] sm:max-w-[940px] sm:max-h-[88vh]"
+      >
+        <DialogHeader className="shrink-0 border-b border-[var(--line)] px-4 py-3 text-left sm:px-5 sm:py-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <DialogTitle className="font-display text-[19px] font-medium leading-tight tracking-normal text-[var(--platinum)]">
+                Loop timeline
+              </DialogTitle>
+              <p id="loop-timeline-description" className="mt-1 text-[12px] leading-relaxed text-[var(--muted-2)]">
+                Stage timestamps use each event&apos;s own timestamp. Public projection activity is labeled separately.
+              </p>
+            </div>
+            <DialogClose asChild>
+              <button
+                type="button"
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-[var(--line-2)] bg-[rgba(236,234,230,0.055)] text-[var(--platinum)] transition-colors hover:border-[var(--line-3)] hover:bg-[rgba(236,234,230,0.08)] premium-focus"
+                aria-label="Close loop timeline"
+                title="Close loop timeline"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </DialogClose>
+          </div>
+
+          {loop ? (
+            <div className="mt-4 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <OutcomeBadge label={loop.statusLabel || readableTag(loop.outcomeLabel)} band={loop.outcomeBand} />
+                  <span className="font-mono text-[10.5px] text-[var(--muted-2)]">
+                    Ticket <span className="text-[var(--muted)]">{shortId(loop.ticketId)}</span>
+                  </span>
+                  {currentRunId ? (
+                    <span className="font-mono text-[10.5px] text-[var(--muted-2)]">
+                      Run <span className="text-[var(--muted)]">{shortId(currentRunId)}</span>
+                    </span>
+                  ) : null}
+                </div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                  <TimelineMeta label="Miner" value={shortHotkey(loop.minerHotkey)} title={loop.minerHotkey} />
+                  <TimelineMeta label="Submitted" value={formatDateTime(loop.submittedAt)} />
+                  <TimelineMeta label="Last activity" value={formatDateTime(loop.lastActivityAt)} />
+                  <TimelineMeta label="Events" value={loading ? 'Loading' : totalEvents.toLocaleString()} />
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </DialogHeader>
+
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-4 sm:px-5">
+          {loading ? (
+            <div className="flex min-h-[260px] flex-col items-center justify-center gap-3 text-[13px] text-[var(--muted-2)]">
+              <Loader2 className="h-5 w-5 animate-spin text-[var(--muted)]" />
+              Loading loop timeline
+            </div>
+          ) : error ? (
+            <div className="mx-auto flex min-h-[260px] max-w-md flex-col items-center justify-center text-center">
+              <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--muted-2)]">
+                Timeline unavailable
+              </div>
+              <p className="mt-3 text-[13px] leading-relaxed text-[var(--muted)]">{error}</p>
+              <button
+                type="button"
+                onClick={() => setRetryKey((value) => value + 1)}
+                className="mt-5 inline-flex h-8 items-center rounded-md border border-[var(--line-2)] bg-[rgba(236,234,230,0.025)] px-3 font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--muted)] transition-colors hover:border-[var(--line-3)] hover:bg-[rgba(236,234,230,0.045)] hover:text-[var(--platinum)] premium-focus"
+              >
+                Retry
+              </button>
+            </div>
+          ) : timeline && totalEvents === 0 ? (
+            <div className="flex min-h-[260px] items-center justify-center text-center text-[13px] text-[var(--muted-2)]">
+              No timeline events are available for this loop.
+            </div>
+          ) : timeline ? (
+            <div className="space-y-5">
+              {timeline.runs.map((run, index) => (
+                <TimelineRunSection
+                  key={run.runId ?? `ticket-${index}`}
+                  run={run}
+                  currentRunId={currentRunId}
+                />
+              ))}
+              {timeline.sourceNotes?.length ? (
+                <div className="border-t border-[var(--line)] pt-4">
+                  {timeline.sourceNotes.map((note) => (
+                    <p key={note} className="text-[11.5px] leading-relaxed text-[var(--muted-2)]">
+                      {note}
+                    </p>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function TimelineMeta({ label, value, title }: { label: string; value: string; title?: string }) {
+  return (
+    <div className="min-w-0 rounded-md border border-[var(--line)] bg-[rgba(236,234,230,0.018)] px-2.5 py-2">
+      <div className="font-mono text-[9px] uppercase tracking-[0.12em] text-[var(--muted-2)]">{label}</div>
+      <div className="mt-1 truncate font-mono text-[10.5px] text-[var(--muted)]" title={title ?? value}>
+        {value}
+      </div>
+    </div>
+  )
+}
+
+function TimelineRunSection({
+  run,
+  currentRunId,
+}: {
+  run: LoopTimelineRun
+  currentRunId?: string
+}) {
+  const isCurrent = run.isCurrent || Boolean(run.runId && run.runId === currentRunId)
+  return (
+    <section className="rounded-md border border-[var(--line)] bg-[rgba(236,234,230,0.012)]">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line)] px-4 py-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--muted-2)]">
+              {run.runId ? 'Run' : 'Ticket'}
+            </span>
+            {isCurrent ? (
+              <span className="rounded-[3px] border border-[var(--line-2)] px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.1em] text-[var(--platinum)]">
+                Current run
+              </span>
+            ) : null}
+          </div>
+          <div className="mt-1 truncate font-mono text-[11px] text-[var(--muted)]">
+            {run.runId ? run.runId : 'Ticket-level events'}
+          </div>
+          {run.receiptId ? (
+            <div className="mt-1 truncate font-mono text-[10px] text-[var(--muted-2)]">
+              Receipt {run.receiptId}
+            </div>
+          ) : null}
+        </div>
+        <div className="font-mono text-[10.5px] text-[var(--muted-2)]">
+          {run.events.length} {run.events.length === 1 ? 'event' : 'events'}
+        </div>
+      </div>
+      <div className="border-l border-[var(--line)] py-2 pl-4 pr-4 sm:ml-5">
+        {run.events.map((event) => (
+          <TimelineEventRow key={`${event.source ?? 'event'}:${event.id}:${event.enteredAt}`} event={event} />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function TimelineEventRow({ event }: { event: LoopTimelineEvent }) {
+  const metadata = event.metadata ? JSON.stringify(event.metadata, null, 2) : ''
+  return (
+    <div className="relative py-3 pl-2">
+      <span className="absolute -left-[21px] top-4 h-2.5 w-2.5 rounded-full border border-[var(--line-3)] bg-[var(--canvas)]" />
+      <div className="grid gap-3 sm:grid-cols-[170px_minmax(0,1fr)]">
+        <div className="font-mono text-[10px] leading-relaxed text-[var(--muted-2)]">
+          <div className="uppercase tracking-[0.12em]">{timestampKindLabel(event.timestampKind)}</div>
+          <time className="mt-1 block text-[var(--muted)]" dateTime={event.enteredAt}>
+            {formatDateTime(event.enteredAt)}
+          </time>
+          <div>{formatRelative(event.enteredAt)}</div>
+          {event.durationSincePreviousMs !== undefined ? (
+            <div className="mt-1 text-[var(--muted)]">+{formatDurationMs(event.durationSincePreviousMs)}</div>
+          ) : null}
+        </div>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <Tag>{phaseLabel(event.phase)}</Tag>
+            {event.status ? <Tag>{readableTag(event.status)}</Tag> : null}
+            {event.source ? (
+              <span className="font-mono text-[9.5px] text-[var(--muted-2)]">{event.source}</span>
+            ) : null}
+          </div>
+          <div className="mt-2 text-[13px] font-medium text-[var(--platinum)]">{event.stage}</div>
+          {event.summary ? (
+            <p className="mt-1 text-[12px] leading-relaxed text-[var(--muted-2)]">{event.summary}</p>
+          ) : null}
+          {event.timestampKind === 'projection_written' && event.lastActivityAt ? (
+            <p className="mt-1 font-mono text-[10px] text-[var(--muted-2)]">
+              Last activity represented {formatDateTime(event.lastActivityAt)}
+            </p>
+          ) : null}
+          {metadata ? (
+            <details className="mt-2">
+              <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--muted-2)]">
+                Raw details
+              </summary>
+              <pre className="mt-2 max-h-56 overflow-auto rounded-md border border-[var(--line)] bg-[rgba(0,0,0,0.18)] p-3 text-[10px] leading-relaxed text-[var(--muted)]">
+                {metadata}
+              </pre>
+            </details>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function HotkeyCopyButton({ hotkey }: { hotkey: string }) {
   const [copied, setCopied] = useState(false)
   const timeoutRef = useRef<number | null>(null)
@@ -1763,7 +2104,8 @@ function HotkeyCopyButton({ hotkey }: { hotkey: string }) {
     }
   }, [])
 
-  const handleCopy = useCallback(async () => {
+  const handleCopy = useCallback(async (event?: MouseEvent<HTMLButtonElement>) => {
+    event?.stopPropagation()
     try {
       await copyToClipboard(hotkey)
       setCopied(true)
@@ -1778,6 +2120,7 @@ function HotkeyCopyButton({ hotkey }: { hotkey: string }) {
     <button
       type="button"
       onClick={handleCopy}
+      onKeyDown={(event) => event.stopPropagation()}
       className="group inline-flex max-w-full items-center gap-1.5 rounded-[4px] border border-transparent py-0.5 pr-1.5 font-mono text-[11px] text-[var(--platinum)] transition-colors hover:border-[var(--line-2)] hover:bg-[rgba(236,234,230,0.035)]"
       title={copied ? 'Copied full hotkey' : hotkey}
       aria-label={`Copy miner hotkey ${hotkey}`}
@@ -2069,6 +2412,47 @@ function formatRelative(value: string): string {
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
   if (diff < 86400 * 7) return `${Math.floor(diff / 86400)}d ago`
   return formatDate(value)
+}
+
+function formatDateTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value || '—'
+  return `${date.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+    timeZone: 'UTC',
+  })} UTC`
+}
+
+function formatDurationMs(value: number): string {
+  const totalSeconds = Math.max(0, Math.round(value / 1000))
+  if (totalSeconds < 60) return `${totalSeconds}s`
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  if (minutes < 60) return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  const remainingMinutes = minutes % 60
+  if (hours < 24) return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`
+  const days = Math.floor(hours / 24)
+  const remainingHours = hours % 24
+  return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`
+}
+
+function timestampKindLabel(kind: LoopTimelineTimestampKind | undefined): string {
+  if (kind === 'projection_written') return 'Projection written'
+  if (kind === 'last_activity_represented') return 'Last activity represented'
+  return 'Entered stage'
+}
+
+function phaseLabel(phase: LoopTimelinePhase): string {
+  if (phase === 'auto_research') return 'Auto research'
+  if (phase === 'public_projection') return 'Public projection'
+  return readableTag(phase)
 }
 
 function readableTag(value: string): string {

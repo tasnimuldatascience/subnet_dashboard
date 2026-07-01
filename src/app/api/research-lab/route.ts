@@ -10,6 +10,13 @@ import {
   isScoredResearchLabLoopStatus,
   type ResearchLabLoopStatusNote,
 } from '@/lib/research-lab-status'
+import {
+  buildResearchLabLoopTimeline,
+  type ResearchLabLoopTimeline,
+  type ResearchLabTimelinePhase,
+  type ResearchLabTimelineRawRow,
+  type ResearchLabTimelineSourceInput,
+} from '@/lib/research-lab-timeline'
 
 export const dynamic = 'force-dynamic'
 
@@ -451,8 +458,22 @@ function getSupabase() {
   return createClient(url, key, { auth: { persistSession: false } })
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const url = new URL(request.url)
+    const ticketId = url.searchParams.get('ticketId')?.trim()
+    if (ticketId) {
+      const supabase = getSupabase()
+      const timeline = await fetchLoopTimeline(supabase, ticketId)
+      if (!timeline) {
+        return NextResponse.json(
+          { success: false, error: 'Research Lab loop not found' },
+          { status: 404 },
+        )
+      }
+      return NextResponse.json({ success: true, data: timeline })
+    }
+
     if (cache && Date.now() - cache.ts < CACHE_TTL) {
       return NextResponse.json({ success: true, data: cache.data })
     }
@@ -496,6 +517,157 @@ export async function GET() {
       { status: 500 }
     )
   }
+}
+
+async function fetchLoopTimeline(
+  supabase: ReturnType<typeof getSupabase>,
+  ticketId: string,
+): Promise<ResearchLabLoopTimeline | null> {
+  const { data: currentRows, error: currentError } = await supabase
+    .from('research_lab_public_loop_card_current')
+    .select('*')
+    .eq('ticket_id', ticketId)
+    .limit(5)
+
+  if (currentError) {
+    console.error('[Research Lab API] loop timeline current query failed:', currentError)
+    return null
+  }
+
+  const currentRow = ((currentRows ?? []) as PublicLoopRow[]).find(isVisiblePublicLoop) ?? null
+  if (!currentRow) return null
+
+  const currentRunId = currentRow.current_run_id
+  const currentReceiptId = currentRow.current_receipt_id
+  const fetches: Array<Promise<TimelineSourceResult>> = [
+    fetchTimelineSourceByTicket(supabase, 'research_loop_ticket_events', 'ticket', ticketId),
+    fetchTimelineSourceByTicket(supabase, 'research_loop_run_queue_events', 'queue', ticketId),
+    fetchTimelineSourceByTicket(supabase, 'research_lab_auto_research_loop_events', 'auto_research', ticketId),
+    fetchTimelineSourceByTicket(supabase, 'research_lab_candidate_evaluation_events', 'candidate', ticketId),
+    fetchTimelineSourceByTicket(supabase, 'research_evaluation_score_bundle_events', 'scoring', ticketId),
+    fetchTimelineSourceByTicket(supabase, 'research_lab_candidate_promotion_events', 'promotion', ticketId),
+    fetchTimelineSourceByTicket(supabase, 'research_lab_public_loop_card_events', 'public_projection', ticketId),
+  ]
+
+  if (currentRunId) {
+    fetches.push(
+      fetchTimelineSourceByRun(supabase, 'research_loop_run_queue_events', 'queue', currentRunId),
+      fetchTimelineSourceByRun(supabase, 'research_lab_auto_research_loop_events', 'auto_research', currentRunId),
+      fetchTimelineSourceByRun(supabase, 'research_lab_candidate_evaluation_events', 'candidate', currentRunId),
+      fetchTimelineSourceByRun(supabase, 'research_evaluation_score_bundle_events', 'scoring', currentRunId),
+      fetchTimelineSourceByRun(supabase, 'research_lab_candidate_promotion_events', 'promotion', currentRunId),
+    )
+  }
+
+  const results = await Promise.all(fetches)
+  const sources = mergeTimelineSources(results)
+  const sourceNotes = Array.from(new Set(results.map((result) => result.note).filter(Boolean))) as string[]
+  const rawEventCount = sources
+    .filter((source) => source.source !== 'research_lab_public_loop_card_events')
+    .reduce((sum, source) => sum + source.rows.length, 0)
+  const publicProjectionCount = sources
+    .filter((source) => source.source === 'research_lab_public_loop_card_events')
+    .reduce((sum, source) => sum + source.rows.length, 0)
+
+  if (rawEventCount === 0 && publicProjectionCount > 0) {
+    sourceNotes.push('This timeline is built from public projection events; raw execution events were not returned by the current backend.')
+  } else if (rawEventCount === 0 && publicProjectionCount === 0) {
+    sourceNotes.push('Only the current public loop projection is available for this ticket.')
+  }
+
+  return buildResearchLabLoopTimeline({
+    ticketId,
+    currentRunId,
+    currentReceiptId,
+    currentLoop: {
+      cardId: currentRow.card_id,
+      ticketId: currentRow.ticket_id,
+      runId: currentRunId,
+      receiptId: currentReceiptId,
+      minerHotkey: currentRow.miner_hotkey,
+      outcomeLabel: currentRow.current_outcome_label,
+      outcomeBand: currentRow.current_outcome_band,
+      statusLabel: currentRow.current_status,
+      submittedAt: currentRow.created_at,
+      lastActivityAt: currentRow.current_last_activity_at,
+      eventDoc: currentRow.current_event_doc,
+    },
+    sources,
+    sourceNotes,
+  })
+}
+
+type TimelineSourceResult = ResearchLabTimelineSourceInput & {
+  note?: string
+}
+
+async function fetchTimelineSourceByTicket(
+  supabase: ReturnType<typeof getSupabase>,
+  table: string,
+  phase: ResearchLabTimelinePhase,
+  ticketId: string,
+): Promise<TimelineSourceResult> {
+  return fetchTimelineSource(supabase, table, phase, 'ticket_id', ticketId)
+}
+
+async function fetchTimelineSourceByRun(
+  supabase: ReturnType<typeof getSupabase>,
+  table: string,
+  phase: ResearchLabTimelinePhase,
+  runId: string,
+): Promise<TimelineSourceResult> {
+  return fetchTimelineSource(supabase, table, phase, 'run_id', runId)
+}
+
+async function fetchTimelineSource(
+  supabase: ReturnType<typeof getSupabase>,
+  table: string,
+  phase: ResearchLabTimelinePhase,
+  column: 'ticket_id' | 'run_id',
+  value: string,
+): Promise<TimelineSourceResult> {
+  const { data, error } = await supabase
+    .from(table)
+    .select('*')
+    .eq(column, value)
+    .limit(500)
+
+  if (error) {
+    if (!isExpectedOptionalTimelineSourceMiss(error.message)) {
+      console.warn(`[Research Lab API] timeline source unavailable: ${table}.${column}`, error.message)
+    }
+    return {
+      source: table,
+      phase,
+      rows: [],
+    }
+  }
+
+  return {
+    source: table,
+    phase,
+    rows: (data ?? []) as ResearchLabTimelineRawRow[],
+  }
+}
+
+function mergeTimelineSources(results: TimelineSourceResult[]): ResearchLabTimelineSourceInput[] {
+  const bySource = new Map<string, ResearchLabTimelineSourceInput>()
+  for (const result of results) {
+    const key = `${result.phase}:${result.source}`
+    const current = bySource.get(key) ?? {
+      source: result.source,
+      phase: result.phase,
+      rows: [],
+    }
+    current.rows.push(...result.rows)
+    bySource.set(key, current)
+  }
+  return Array.from(bySource.values())
+}
+
+function isExpectedOptionalTimelineSourceMiss(message: string | undefined): boolean {
+  const normalized = (message ?? '').toLowerCase()
+  return normalized.includes('does not exist') || normalized.includes('could not find')
 }
 
 async function fetchLatestBenchmark(supabase: ReturnType<typeof getSupabase>): Promise<NormalizedBenchmark | null> {
