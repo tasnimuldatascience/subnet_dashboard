@@ -26,6 +26,7 @@ import {
   researchLabStatusFilterOptionsWithCounts,
 } from '@/lib/research-lab-status'
 import { formatLabAllocationPercent } from '@/lib/research-lab-emissions'
+import { researchLabTemporaryImprovementOverride } from '@/lib/research-lab-temporary-overrides'
 import type { MetagraphData } from '@/lib/types'
 
 type ResearchLabData = {
@@ -588,6 +589,7 @@ function LabEmissionSplit({
         if (isActiveResearchLabLoopStatus(statusKey)) current.active += 1
         if (isScoredResearchLabLoopStatus(statusKey)) current.scored += 1
         if (isPromisingResearchLabLoopStatus(statusKey, loop.outcomeBand)) current.promising += 1
+        current.promising = Math.max(current.promising, researchLabTemporaryImprovementOverride(loop.minerHotkey))
         if (new Date(loop.lastActivityAt).getTime() > new Date(current.lastActivityAt).getTime()) {
           current.lastActivityAt = loop.lastActivityAt
         }
