@@ -420,7 +420,7 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
               className="data-[state=active]:animate-in data-[state=active]:fade-in-0 data-[state=active]:duration-300"
             >
               <ErrorBoundary label="ResearchLab">
-                <ResearchLab />
+                <ResearchLab emissions={metagraph?.emissions ?? {}} />
               </ErrorBoundary>
             </TabsContent>
           )}

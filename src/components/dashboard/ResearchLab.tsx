@@ -179,7 +179,10 @@ type TopicGroup = {
 
 const ACTIVITY_PAGE_SIZE = 20
 
-export function ResearchLab({ onSync }: { onSync?: () => void } = {}) {
+export function ResearchLab({
+  onSync,
+  emissions,
+}: { onSync?: () => void; emissions?: Record<string, number> } = {}) {
   const [data, setData] = useState<ResearchLabData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -262,6 +265,7 @@ export function ResearchLab({ onSync }: { onSync?: () => void } = {}) {
 
       <LabEmissionSplit
         loops={loops}
+        emissions={emissions}
         selectedHotkey={selectedEmissionHotkey}
         onSelectHotkey={setSelectedEmissionHotkey}
       />
@@ -398,16 +402,19 @@ type LabEmissionRow = {
   active: number
   scored: number
   promising: number
+  emission: number
   pct: number
   lastActivityAt: string
 }
 
 function LabEmissionSplit({
   loops,
+  emissions,
   selectedHotkey,
   onSelectHotkey,
 }: {
   loops: ResearchLoop[]
+  emissions?: Record<string, number>
   selectedHotkey: string | null
   onSelectHotkey: (hotkey: string) => void
 }) {
@@ -421,6 +428,7 @@ function LabEmissionSplit({
         active: 0,
         scored: 0,
         promising: 0,
+        emission: 0,
         lastActivityAt: loop.lastActivityAt,
       }
       current.count += 1
@@ -432,14 +440,28 @@ function LabEmissionSplit({
       }
       byHotkey.set(loop.minerHotkey, current)
     }
-    const total = Array.from(byHotkey.values()).reduce((sum, row) => sum + row.count, 0)
-    return Array.from(byHotkey.values())
+    // Attach each lab hotkey's real on-chain emission, then split as a share
+    // of emission across ONLY the lab hotkeys (not the whole subnet) — that is
+    // the "lab emission split". Falls back to loop-count share if no emission
+    // data is available (e.g. metagraph not yet loaded).
+    for (const row of byHotkey.values()) {
+      row.emission = Math.max(0, emissions?.[row.hotkey] ?? 0)
+    }
+    const values = Array.from(byHotkey.values())
+    const totalEmission = values.reduce((sum, row) => sum + row.emission, 0)
+    const totalCount = values.reduce((sum, row) => sum + row.count, 0)
+    return values
       .map((row) => ({
         ...row,
-        pct: total > 0 ? (row.count / total) * 100 : 0,
+        pct:
+          totalEmission > 0
+            ? (row.emission / totalEmission) * 100
+            : totalCount > 0
+              ? (row.count / totalCount) * 100
+              : 0,
       }))
       .sort((a, b) => b.pct - a.pct || b.count - a.count || a.hotkey.localeCompare(b.hotkey))
-  }, [loops])
+  }, [loops, emissions])
 
   const totalLoops = rows.reduce((sum, row) => sum + row.count, 0)
   const selected = rows.find((row) => row.hotkey === selectedHotkey) ?? rows[0] ?? null
