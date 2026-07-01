@@ -837,19 +837,21 @@ function LabEmissionSplit({
                 <span className="block font-display text-[16px] font-medium text-[var(--platinum)]">
                   {isAllTime ? `${formatAlpha(row.alphaEarned)} ㄴ` : formatPercent(row.activeSubnetPct)}
                 </span>
-                <span className="block font-mono text-[9.5px] uppercase tracking-[0.08em] text-[var(--muted-2)]">
-                  {isAllTime ? 'earned' : 'Lab Emissions'}
-                </span>
+                {isAllTime ? (
+                  <span className="block font-mono text-[9.5px] uppercase tracking-[0.08em] text-[var(--muted-2)]">
+                    earned
+                  </span>
+                ) : null}
               </span>
               <span className="hidden text-right tabular-nums md:block">
                 <span className="block font-display text-[15px] font-medium text-[var(--platinum)]">
                   {formatUsd(row.computeSpendUsd)}
                 </span>
-                <span className="block font-mono text-[9.5px] uppercase tracking-[0.08em] text-[var(--muted-2)]">
-                  {isAllTime
-                    ? row.awardCount > 0 ? `${row.awardCount} ${row.awardCount === 1 ? 'award' : 'awards'}` : 'no awards'
-                    : row.activeAwardCount > 0 ? `${row.activeAwardCount} active ${row.activeAwardCount === 1 ? 'run' : 'runs'}` : 'no active runs'}
-                </span>
+                {isAllTime ? (
+                  <span className="block font-mono text-[9.5px] uppercase tracking-[0.08em] text-[var(--muted-2)]">
+                    {row.awardCount > 0 ? `${row.awardCount} ${row.awardCount === 1 ? 'award' : 'awards'}` : 'no awards'}
+                  </span>
+                ) : null}
               </span>
               <span className="hidden text-right font-mono text-[11px] tabular-nums text-[var(--muted)] md:block">
                 {row.count}
