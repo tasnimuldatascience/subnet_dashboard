@@ -31,6 +31,7 @@ type ResearchLabData = {
   benchmark: BenchmarkReport | null
   loops: ResearchLoop[]
   topicGroups: TopicGroup[]
+  labMinerSpend?: LabMinerSpendRollup | null
   stats: {
     activeLoopCount: number
     opsPendingLoopCount: number
@@ -39,6 +40,24 @@ type ResearchLabData = {
     totalBenchmarkIcpCount: number
   }
   fetchedAt: string
+}
+
+type LabMinerSpendRollup = {
+  window: LabMinerSpendWindow
+  byHotkey: Record<string, LabMinerSpendEntry>
+}
+
+type LabMinerSpendWindow = {
+  latestEpoch: number | null
+  epochCount: number | null
+  activeScheduleCount: number
+}
+
+type LabMinerSpendEntry = {
+  computeSpendUsd: number
+  scheduledReimbursementUsd: number
+  activeAwardCount: number
+  reimbursementEpochs: number | null
 }
 
 type BenchmarkReport = {
@@ -271,6 +290,7 @@ export function ResearchLab({
       <LabEmissionSplit
         loops={loops}
         metagraph={metagraph}
+        spend={data?.labMinerSpend ?? null}
         selectedHotkey={selectedEmissionHotkey}
         onSelectHotkey={setSelectedEmissionHotkey}
       />
@@ -409,17 +429,23 @@ type LabMinerRow = {
   emission: number
   activeSubnetPct: number
   labEmissionPct: number
+  computeSpendUsd: number
+  scheduledReimbursementUsd: number
+  activeAwardCount: number
+  reimbursementEpochs: number | null
   lastActivityAt: string
 }
 
 function LabEmissionSplit({
   loops,
   metagraph,
+  spend,
   selectedHotkey,
   onSelectHotkey,
 }: {
   loops: ResearchLoop[]
   metagraph?: MetagraphData | null
+  spend?: LabMinerSpendRollup | null
   selectedHotkey: string | null
   onSelectHotkey: (hotkey: string | null) => void
 }) {
@@ -434,7 +460,13 @@ function LabEmissionSplit({
   }, [emissions, validatorMap])
 
   const rows = useMemo(() => {
-    const byHotkey = new Map<string, Omit<LabMinerRow, 'emission' | 'activeSubnetPct' | 'labEmissionPct'>>()
+    const byHotkey = new Map<
+      string,
+      Omit<
+        LabMinerRow,
+        'emission' | 'activeSubnetPct' | 'labEmissionPct' | 'computeSpendUsd' | 'scheduledReimbursementUsd' | 'activeAwardCount' | 'reimbursementEpochs'
+      >
+    >()
     for (const loop of loops) {
       if (!loop.minerHotkey) continue
       const current = byHotkey.get(loop.minerHotkey) ?? {
@@ -457,11 +489,16 @@ function LabEmissionSplit({
     }
     const rowsWithEmission = Array.from(byHotkey.values()).map((row) => {
       const emission = Math.max(0, emissions[row.hotkey] ?? 0)
+      const spendEntry = spend?.byHotkey?.[row.hotkey]
       return {
         ...row,
         emission,
         activeSubnetPct: activeSubnetEmission > 0 ? (emission / activeSubnetEmission) * 100 : 0,
         labEmissionPct: 0,
+        computeSpendUsd: Math.max(0, spendEntry?.computeSpendUsd ?? 0),
+        scheduledReimbursementUsd: Math.max(0, spendEntry?.scheduledReimbursementUsd ?? 0),
+        activeAwardCount: Math.max(0, spendEntry?.activeAwardCount ?? 0),
+        reimbursementEpochs: spendEntry?.reimbursementEpochs ?? null,
       }
     })
     const activeLabEmission = rowsWithEmission.reduce((sum, row) => sum + row.emission, 0)
@@ -477,13 +514,16 @@ function LabEmissionSplit({
           b.scored - a.scored ||
           a.hotkey.localeCompare(b.hotkey)
       )
-  }, [activeSubnetEmission, emissions, loops])
+  }, [activeSubnetEmission, emissions, loops, spend?.byHotkey])
 
   const totalLoops = rows.reduce((sum, row) => sum + row.count, 0)
   const activeLabEmission = rows.reduce((sum, row) => sum + row.emission, 0)
+  const activeLabEmissionPct = activeSubnetEmission > 0 ? (activeLabEmission / activeSubnetEmission) * 100 : 0
+  const totalComputeSpendUsd = rows.reduce((sum, row) => sum + row.computeSpendUsd, 0)
   const barRows = rows.filter((row) => row.emission > 0)
   const selected = rows.find((row) => row.hotkey === selectedHotkey) ?? rows[0] ?? null
   const hasEmissionData = Object.keys(emissions).length > 0 && !metagraph?.error
+  const spendWindowLabel = labSpendWindowLabel(spend?.window ?? null)
 
   useEffect(() => {
     if (rows.length === 0) {
@@ -498,7 +538,7 @@ function LabEmissionSplit({
     return (
       <section className="border-b border-[var(--line)] py-8">
         <div className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-[var(--muted-2)]">
-          Active emissions by lab miner
+          Active emission share by lab miner
         </div>
         <p className="mt-3 text-[13px] text-[var(--muted-2)]">No Research Lab miner activity yet.</p>
       </section>
@@ -510,13 +550,14 @@ function LabEmissionSplit({
       <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
           <div className="font-mono text-[10.5px] uppercase tracking-[0.16em] text-[var(--muted-2)]">
-            Active emissions by lab miner
+            Active emission share by lab miner
           </div>
           <div className="mt-2 font-display text-[22px] font-medium tracking-[-0.025em] text-[var(--platinum)]">
-            {rows.length} hotkeys · {formatEmission(activeLabEmission)} ㄴ active emission
+            {rows.length} hotkeys · {formatPercent(activeLabEmissionPct)} active subnet emission
           </div>
           <div className="mt-1 font-mono text-[10px] text-[var(--muted-2)]">
             {totalLoops} lab loops · {hasEmissionData ? 'live metagraph emission' : 'waiting for metagraph emission'}
+            {spendWindowLabel ? ` · ${formatUsd(totalComputeSpendUsd)} compute in ${spendWindowLabel}` : ''}
           </div>
         </div>
         {selected ? (
@@ -528,10 +569,13 @@ function LabEmissionSplit({
               <HotkeyCopyButton hotkey={selected.hotkey} />
               <span className="text-right">
                 <span className="block font-display text-[18px] font-medium text-[var(--white)]">
-                  {formatEmission(selected.emission)} ㄴ
+                  {formatPercent(selected.activeSubnetPct)}
                 </span>
                 <span className="block font-mono text-[9.5px] uppercase tracking-[0.08em] text-[var(--muted-2)]">
-                  {formatPercent(selected.activeSubnetPct)} active subnet
+                  active subnet emission
+                </span>
+                <span className="mt-1 block font-mono text-[9.5px] uppercase tracking-[0.08em] text-[var(--muted-2)]">
+                  {formatUsd(selected.computeSpendUsd)} compute
                 </span>
               </span>
             </div>
@@ -560,8 +604,8 @@ function LabEmissionSplit({
                     width: `${row.labEmissionPct}%`,
                     background: labEmissionTone(index),
                   }}
-                  title={`${row.hotkey} · ${formatEmission(row.emission)} ㄴ active emission · ${formatPercent(row.activeSubnetPct)} of active subnet emission`}
-                  aria-label={`${formatEmission(row.emission)} active emission for hotkey ${row.hotkey}`}
+                  title={`${row.hotkey} · ${formatPercent(row.activeSubnetPct)} of active subnet emission · ${formatUsd(row.computeSpendUsd)} compute`}
+                  aria-label={`${formatPercent(row.activeSubnetPct)} of active subnet emission for hotkey ${row.hotkey}`}
                 >
                   {labelFits ? (
                     <span
@@ -570,7 +614,7 @@ function LabEmissionSplit({
                         index < 3 ? 'text-slate-950' : 'text-[var(--platinum)]'
                       )}
                     >
-                      {formatCompactEmission(row.emission)} ㄴ
+                      {formatPercent(row.activeSubnetPct)}
                     </span>
                   ) : null}
                 </button>
@@ -585,9 +629,10 @@ function LabEmissionSplit({
       </div>
 
       <div className="mt-5 overflow-hidden rounded-md border border-[var(--line)]">
-        <div className="hidden grid-cols-[minmax(0,1fr)_132px_72px_72px_86px_92px] gap-3 border-b border-[var(--line)] bg-[rgba(236,234,230,0.018)] px-3 py-2 font-mono text-[9.5px] uppercase tracking-[0.1em] text-[var(--muted-2)] md:grid">
+        <div className="hidden grid-cols-[minmax(0,1fr)_124px_116px_72px_72px_86px_92px] gap-3 border-b border-[var(--line)] bg-[rgba(236,234,230,0.018)] px-3 py-2 font-mono text-[9.5px] uppercase tracking-[0.1em] text-[var(--muted-2)] md:grid">
           <span>Hotkey</span>
-          <span className="text-right">Active emission</span>
+          <span className="text-right">Emission share</span>
+          <span className="text-right">Compute spent</span>
           <span className="text-right">Loops</span>
           <span className="text-right">Active</span>
           <span className="text-right">Scored</span>
@@ -607,7 +652,7 @@ function LabEmissionSplit({
                 onSelectHotkey(row.hotkey)
               }}
               className={cn(
-                'grid w-full grid-cols-[minmax(0,1fr)_104px] gap-3 border-b border-[var(--line)] px-3 py-3 text-left transition-colors last:border-b-0 md:grid-cols-[minmax(0,1fr)_132px_72px_72px_86px_92px] md:items-center',
+                'grid w-full grid-cols-[minmax(0,1fr)_104px] gap-3 border-b border-[var(--line)] px-3 py-3 text-left transition-colors last:border-b-0 md:grid-cols-[minmax(0,1fr)_124px_116px_72px_72px_86px_92px] md:items-center',
                 isSelected ? 'bg-[rgba(232,240,255,0.055)]' : 'hover-bg-warm'
               )}
             >
@@ -619,16 +664,24 @@ function LabEmissionSplit({
                 <span className="min-w-0">
                   <HotkeyCopyButton hotkey={row.hotkey} />
                   <span className="mt-1 block font-mono text-[10px] text-[var(--muted-2)] md:hidden">
-                    {row.count} loops · {row.scored} scored · {formatPercent(row.activeSubnetPct)} active subnet
+                    {row.count} loops · {row.scored} scored · {formatUsd(row.computeSpendUsd)} compute
                   </span>
                 </span>
               </span>
               <span className="text-right tabular-nums">
                 <span className="block font-display text-[16px] font-medium text-[var(--platinum)]">
-                  {formatEmission(row.emission)} ㄴ
+                  {formatPercent(row.activeSubnetPct)}
                 </span>
                 <span className="block font-mono text-[9.5px] uppercase tracking-[0.08em] text-[var(--muted-2)]">
-                  {formatPercent(row.activeSubnetPct)} subnet
+                  active subnet
+                </span>
+              </span>
+              <span className="hidden text-right tabular-nums md:block">
+                <span className="block font-display text-[15px] font-medium text-[var(--platinum)]">
+                  {formatUsd(row.computeSpendUsd)}
+                </span>
+                <span className="block font-mono text-[9.5px] uppercase tracking-[0.08em] text-[var(--muted-2)]">
+                  {row.activeAwardCount > 0 ? `${row.activeAwardCount} active ${row.activeAwardCount === 1 ? 'run' : 'runs'}` : 'no active runs'}
                 </span>
               </span>
               <span className="hidden text-right font-mono text-[11px] tabular-nums text-[var(--muted)] md:block">
@@ -652,36 +705,27 @@ function LabEmissionSplit({
   )
 }
 
-function formatEmission(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return '0.0000'
-  if (value >= 1000) {
-    return value.toLocaleString(undefined, { maximumFractionDigits: 2 })
-  }
-  if (value >= 1) {
-    return value.toLocaleString(undefined, {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 4,
-    })
-  }
-  if (value >= 0.0001) return value.toFixed(4)
-  return '<0.0001'
-}
-
-function formatCompactEmission(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return '0'
-  if (value >= 1000) return value.toLocaleString(undefined, { maximumFractionDigits: 0 })
-  if (value >= 100) return value.toFixed(0)
-  if (value >= 10) return value.toFixed(1)
-  if (value >= 1) return value.toFixed(2)
-  return '<0.0001'
-}
-
 function formatPercent(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return '0%'
   if (value >= 10) return `${value.toFixed(1)}%`
   if (value >= 1) return `${value.toFixed(2)}%`
   if (value >= 0.01) return `${value.toFixed(3)}%`
   return '<0.01%'
+}
+
+function formatUsd(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '$0.00'
+  if (value >= 1000) {
+    return `$${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+  }
+  if (value >= 1) return `$${value.toFixed(2)}`
+  if (value >= 0.01) return `$${value.toFixed(2)}`
+  return '<$0.01'
+}
+
+function labSpendWindowLabel(window: LabMinerSpendWindow | null): string {
+  if (!window?.latestEpoch || !window.epochCount) return ''
+  return `${window.epochCount}-epoch window at ${window.latestEpoch}`
 }
 
 function labEmissionTone(index: number): string {

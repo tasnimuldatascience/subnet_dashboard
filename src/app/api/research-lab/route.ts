@@ -236,6 +236,7 @@ type ResearchLabPayload = {
   benchmark: NormalizedBenchmark | null
   loops: NormalizedLoop[]
   topicGroups: TopicGroup[]
+  labMinerSpend: LabMinerSpendRollup
   stats: {
     activeLoopCount: number
     opsPendingLoopCount: number
@@ -244,6 +245,24 @@ type ResearchLabPayload = {
     totalBenchmarkIcpCount: number
   }
   fetchedAt: string
+}
+
+type LabMinerSpendRollup = {
+  window: LabMinerSpendWindow
+  byHotkey: Record<string, LabMinerSpendEntry>
+}
+
+type LabMinerSpendWindow = {
+  latestEpoch: number | null
+  epochCount: number | null
+  activeScheduleCount: number
+}
+
+type LabMinerSpendEntry = {
+  computeSpendUsd: number
+  scheduledReimbursementUsd: number
+  activeAwardCount: number
+  reimbursementEpochs: number | null
 }
 
 type NormalizedBenchmark = {
@@ -315,6 +334,22 @@ type TopicGroup = {
   latestActivityAt: string
 }
 
+type ReimbursementScheduleRow = {
+  award_id: string | null
+  schedule_status: string | null
+  start_epoch: number | null
+  epoch_count: number | null
+  total_microusd: number | string | null
+}
+
+type ReimbursementAwardRow = {
+  award_id: string
+  miner_hotkey: string | null
+  eligible_cost_microusd: number | string | null
+  target_reimbursement_microusd: number | string | null
+  reimbursement_epochs: number | null
+}
+
 let cache: CachedResponse | null = null
 
 function getSupabase() {
@@ -333,15 +368,17 @@ export async function GET() {
     }
 
     const supabase = getSupabase()
-    const [benchmark, loops] = await Promise.all([
+    const [benchmark, loops, labMinerSpend] = await Promise.all([
       fetchLatestBenchmark(supabase),
       fetchPublicLoops(supabase),
+      fetchLabMinerSpend(supabase),
     ])
     const topicGroups = groupLoopsByTopic(loops)
     const data: ResearchLabPayload = {
       benchmark,
       loops,
       topicGroups,
+      labMinerSpend,
       stats: {
         activeLoopCount: loops.filter((loop) => isActiveResearchLabLoopStatus(loop.statusKey)).length,
         opsPendingLoopCount: loops.filter((loop) =>
@@ -824,6 +861,98 @@ function stripInternalIcpFields(icps: PublicIcpEntry[]): PublicIcpEntry[] {
   })
 }
 
+async function fetchLabMinerSpend(supabase: ReturnType<typeof getSupabase>): Promise<LabMinerSpendRollup> {
+  const empty = emptyLabMinerSpend()
+  const { data: scheduleData, error: scheduleError } = await supabase
+    .from('research_reimbursement_schedules')
+    .select('award_id, schedule_status, start_epoch, epoch_count, total_microusd')
+    .eq('schedule_status', 'scheduled')
+    .order('start_epoch', { ascending: false, nullsFirst: false })
+    .limit(1000)
+
+  if (scheduleError) {
+    console.error('[Research Lab API] reimbursement schedule query failed:', scheduleError)
+    return empty
+  }
+
+  const schedules = ((scheduleData ?? []) as ReimbursementScheduleRow[])
+    .filter((row) => row.award_id && Number.isFinite(Number(row.start_epoch)))
+  if (schedules.length === 0) return empty
+
+  const latestEpoch = Math.max(...schedules.map((row) => numberOr(row.start_epoch, 0)))
+  const activeSchedules = schedules.filter((row) => {
+    const startEpoch = numberOr(row.start_epoch, 0)
+    const epochCount = Math.max(1, Math.round(numberOr(row.epoch_count, 1)))
+    return startEpoch <= latestEpoch && latestEpoch <= startEpoch + epochCount - 1
+  })
+  if (activeSchedules.length === 0) {
+    return {
+      window: { latestEpoch, epochCount: null, activeScheduleCount: 0 },
+      byHotkey: {},
+    }
+  }
+
+  const awardIds = Array.from(new Set(activeSchedules.map((row) => row.award_id).filter(Boolean))) as string[]
+  const awardRows: ReimbursementAwardRow[] = []
+  for (let i = 0; i < awardIds.length; i += 100) {
+    const batch = awardIds.slice(i, i + 100)
+    const { data: awardData, error: awardError } = await supabase
+      .from('research_reimbursement_award_current')
+      .select('award_id, miner_hotkey, eligible_cost_microusd, target_reimbursement_microusd, reimbursement_epochs')
+      .in('award_id', batch)
+
+    if (awardError) {
+      console.error('[Research Lab API] reimbursement award query failed:', awardError)
+      return {
+        window: spendWindowForSchedules(latestEpoch, activeSchedules),
+        byHotkey: {},
+      }
+    }
+    awardRows.push(...((awardData ?? []) as ReimbursementAwardRow[]))
+  }
+
+  const awardsById = new Map(awardRows.map((award) => [award.award_id, award]))
+  const byHotkey: Record<string, LabMinerSpendEntry> = {}
+  for (const schedule of activeSchedules) {
+    if (!schedule.award_id) continue
+    const award = awardsById.get(schedule.award_id)
+    if (!award) continue
+    const hotkey = award.miner_hotkey ? String(award.miner_hotkey) : ''
+    if (!hotkey) continue
+
+    const current = byHotkey[hotkey] ?? {
+      computeSpendUsd: 0,
+      scheduledReimbursementUsd: 0,
+      activeAwardCount: 0,
+      reimbursementEpochs: null,
+    }
+    current.computeSpendUsd += microusdToUsd(award.eligible_cost_microusd)
+    current.scheduledReimbursementUsd += microusdToUsd(
+      award.target_reimbursement_microusd ?? schedule.total_microusd
+    )
+    current.activeAwardCount += 1
+    current.reimbursementEpochs = Math.max(
+      current.reimbursementEpochs ?? 0,
+      Math.round(numberOr(award.reimbursement_epochs ?? schedule.epoch_count, 0))
+    ) || current.reimbursementEpochs
+    byHotkey[hotkey] = current
+  }
+
+  return {
+    window: spendWindowForSchedules(latestEpoch, activeSchedules),
+    byHotkey: Object.fromEntries(
+      Object.entries(byHotkey).map(([hotkey, entry]) => [
+        hotkey,
+        {
+          ...entry,
+          computeSpendUsd: roundUsd(entry.computeSpendUsd),
+          scheduledReimbursementUsd: roundUsd(entry.scheduledReimbursementUsd),
+        },
+      ])
+    ),
+  }
+}
+
 async function fetchPublicLoops(supabase: ReturnType<typeof getSupabase>): Promise<NormalizedLoop[]> {
   const { data, error } = await supabase
     .from('research_lab_public_loop_card_current')
@@ -928,6 +1057,39 @@ function groupLoopsByTopic(loops: NormalizedLoop[]): TopicGroup[] {
   return Array.from(groups.values()).sort(
     (a, b) => new Date(b.latestActivityAt).getTime() - new Date(a.latestActivityAt).getTime()
   )
+}
+
+function emptyLabMinerSpend(): LabMinerSpendRollup {
+  return {
+    window: {
+      latestEpoch: null,
+      epochCount: null,
+      activeScheduleCount: 0,
+    },
+    byHotkey: {},
+  }
+}
+
+function spendWindowForSchedules(
+  latestEpoch: number,
+  schedules: ReimbursementScheduleRow[],
+): LabMinerSpendWindow {
+  const epochCounts = schedules
+    .map((row) => Math.max(1, Math.round(numberOr(row.epoch_count, 0))))
+    .filter((value) => value > 0)
+  return {
+    latestEpoch,
+    epochCount: epochCounts.length > 0 ? Math.max(...epochCounts) : null,
+    activeScheduleCount: schedules.length,
+  }
+}
+
+function microusdToUsd(value: unknown): number {
+  return Math.max(0, numberOr(value, 0) / 1_000_000)
+}
+
+function roundUsd(value: number): number {
+  return Math.round(value * 1_000_000) / 1_000_000
 }
 
 function numberOr(value: unknown, fallback: number): number {
