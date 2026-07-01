@@ -222,10 +222,10 @@ export const RESEARCH_LAB_STATUS_FILTER_OPTIONS: ResearchLabStatusFilterOption[]
   { value: 'waiting_for_baseline', label: 'Waiting for baseline' },
   { value: 'needs_rescore', label: 'Needs rescore' },
   { value: 'blocked_for_credit', label: 'Blocked for credit' },
-  { value: 'scored_no_gain', label: 'Scored, no gain' },
-  { value: 'scored', label: 'Scored/promising' },
+  { value: 'scored_no_gain', label: 'Completed' },
+  { value: 'scored', label: 'Model improved' },
   { value: 'completed_no_candidate', label: 'Completed no candidate' },
-  { value: 'failed', label: 'Failed' },
+  { value: 'failed', label: 'Needs review' },
   { value: 'ops_warnings', label: 'Ops warnings' },
 ]
 
@@ -255,17 +255,17 @@ export function deriveResearchLabLoopStatus(input: ResearchLabLoopStatusInput): 
   if (promotion) return promotion
 
   if (projectedLabel === 'scored_no_gain' || projectedBand === 'no_gain' || candidateStatus === 'scored_no_gain') {
-    return status('scored_no_gain', 'Scored, no gain', 'no_gain', scoredOpsNote)
+    return status('scored_no_gain', 'Completed', 'no_gain', scoredOpsNote)
   }
 
   if (projectedLabel === 'scored') {
-    return status('scored', 'Scored', canonicalBand(projectedBand, 'completed'), scoredOpsNote)
+    return status('scored', 'Model improved', canonicalBand(projectedBand, 'completed'), scoredOpsNote)
   }
 
   if (FAILED_VALUES.has(projectedLabel)) {
-    return status('failed', 'Failed', 'failed', {
+    return status('failed', 'Needs review', 'failed', {
       tone: 'error',
-      label: 'Failed',
+      label: 'Needs review',
       detail: 'The canonical public outcome is terminal failed.',
     })
   }
@@ -444,7 +444,7 @@ function promotionStatus(
     return status('promotion_passed', 'Promotion passed', canonicalBand(projectedBand, 'passed_threshold'), note)
   }
   if (projectedLabel === 'scored_promising') {
-    return status('scored_promising', 'Scored', canonicalBand(projectedBand, 'small_gain'), note)
+    return status('scored_promising', 'Model improved', canonicalBand(projectedBand, 'small_gain'), note)
   }
   return null
 }
@@ -532,9 +532,9 @@ function deriveCanonicalResearchLabLoopStatus(input: ResearchLabLoopStatusInput)
   }
 
   if (isCanonicalTerminalFailure(publicStatus, resultState, candidateState, executionState)) {
-    return status('failed', 'Failed', 'failed', canonicalDetailNote({
+    return status('failed', 'Needs review', 'failed', canonicalDetailNote({
       tone: 'error',
-      label: 'Failed',
+      label: 'Needs review',
       detail: statusDetail || detailForReason(opsReason) || 'The canonical backend lifecycle state is terminal failed.',
     }))
   }
@@ -593,7 +593,7 @@ function canonicalModelResultStatus(
 ): ResearchLabLoopStatus | null {
   const values = [resultState, publicStatus, candidateState]
   if (hasAny(values, SCORED_NO_GAIN_VALUES)) {
-    return status('scored_no_gain', 'Scored, no gain', 'no_gain', note)
+    return status('scored_no_gain', 'Completed', 'no_gain', note)
   }
   if (hasAny(values, SCORED_PROMISING_VALUES)) {
     return promotionStatus(
@@ -601,10 +601,10 @@ function canonicalModelResultStatus(
       canonicalBand(projectedBand, 'small_gain'),
       candidateState,
       note,
-    ) ?? status('scored_promising', 'Scored', canonicalBand(projectedBand, 'small_gain'), note)
+    ) ?? status('scored_promising', 'Model improved', canonicalBand(projectedBand, 'small_gain'), note)
   }
   if (resultState === 'scored' || publicStatus === 'scored' || candidateState === 'scored') {
-    return status('scored', 'Scored', canonicalBand(projectedBand, 'completed'), note)
+    return status('scored', 'Model improved', canonicalBand(projectedBand, 'completed'), note)
   }
   return null
 }
@@ -777,14 +777,14 @@ function labelForStatus(value: string): string {
     pending: 'Pending',
     completed: 'Complete',
     completed_no_candidate: 'Completed no candidate',
-    scored: 'Scored',
-    scored_promising: 'Scored',
-    scored_no_gain: 'Scored, no gain',
+    scored: 'Model improved',
+    scored_promising: 'Model improved',
+    scored_no_gain: 'Completed',
     blocked_for_credit: 'Waiting for credits',
     needs_rescore: 'Needs rescore',
     waiting_for_baseline: 'Waiting for baseline',
     not_started: 'Not started',
-    failed: 'Failed',
+    failed: 'Needs review',
   }
   if (explicit[value]) return explicit[value]
   return value.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase())

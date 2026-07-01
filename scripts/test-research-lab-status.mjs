@@ -100,7 +100,7 @@ try {
       },
       expected: {
         key: 'scored_no_gain',
-        label: 'Scored, no gain',
+        label: 'Completed',
         band: 'no_gain',
         active: false,
         scoring: false,
@@ -108,7 +108,7 @@ try {
       },
     },
     {
-      name: 'canonical terminal stale scoring retry failure renders Failed',
+      name: 'canonical terminal stale scoring retry failure renders Needs review',
       input: {
         publicStatus: 'failed',
         paymentState: 'paid',
@@ -120,7 +120,7 @@ try {
       },
       expected: {
         key: 'failed',
-        label: 'Failed',
+        label: 'Needs review',
         band: 'failed',
         active: false,
         scoring: false,
@@ -248,7 +248,7 @@ try {
       },
     },
     {
-      name: 'terminal failed queue does not become primary Failed without canonical failed outcome',
+      name: 'terminal failed queue does not become primary Needs review without canonical failed outcome',
       input: {
         outcomeLabel: 'running',
         outcomeBand: 'stale',
@@ -267,7 +267,7 @@ try {
       },
     },
     {
-      name: 'scored candidate with no benchmark gain renders Scored, no gain',
+      name: 'scored candidate with no benchmark gain renders Completed',
       input: {
         outcomeLabel: 'running',
         outcomeBand: 'no_gain',
@@ -279,14 +279,14 @@ try {
       },
       expected: {
         key: 'scored_no_gain',
-        label: 'Scored, no gain',
+        label: 'Completed',
         band: 'no_gain',
         active: false,
         scoring: false,
       },
     },
     {
-      name: 'raw scored_no_gain renders Scored, no gain even with unscored candidate counts',
+      name: 'raw scored_no_gain renders Completed even with unscored candidate counts',
       input: {
         outcomeLabel: 'scored_no_gain',
         outcomeBand: 'no_gain',
@@ -298,14 +298,14 @@ try {
       },
       expected: {
         key: 'scored_no_gain',
-        label: 'Scored, no gain',
+        label: 'Completed',
         band: 'no_gain',
         active: false,
         scoring: false,
       },
     },
     {
-      name: 'scored_no_gain with failed band and failed queue stays Scored, no gain',
+      name: 'scored_no_gain with failed band and failed queue stays Completed',
       input: {
         outcomeLabel: 'scored_no_gain',
         outcomeBand: 'failed',
@@ -319,7 +319,7 @@ try {
       },
       expected: {
         key: 'scored_no_gain',
-        label: 'Scored, no gain',
+        label: 'Completed',
         band: 'no_gain',
         active: false,
         scoring: false,
@@ -327,7 +327,7 @@ try {
       },
     },
     {
-      name: 'canonical failed outcome renders Failed',
+      name: 'canonical failed outcome renders Needs review',
       input: {
         outcomeLabel: 'failed',
         outcomeBand: 'failed',
@@ -340,7 +340,7 @@ try {
       },
       expected: {
         key: 'failed',
-        label: 'Failed',
+        label: 'Needs review',
         band: 'failed',
         active: false,
         scoring: false,
@@ -611,17 +611,17 @@ try {
   assert.deepEqual(
     byId(filterResearchLabActivityLoops(activityLoops, { status: 'scored_no_gain' })),
     ['scored-no-gain-failed-ops'],
-    'Scored, no gain filter should include failed-ops scored_no_gain rows'
+    'Completed filter should include failed-ops scored_no_gain rows'
   )
   assert.deepEqual(
     byId(filterResearchLabActivityLoops(activityLoops, { status: 'failed' })),
     ['failed-gamma-b', 'failed-alpha-a'],
-    'Failed filter should exclude scored_no_gain rows even if ops failed'
+    'Needs review filter should exclude scored_no_gain rows even if ops failed'
   )
   assert.deepEqual(
     byId(filterResearchLabActivityLoops(activityLoops, { status: 'scored' })),
     ['scored-beta-a'],
-    'Scored status filter should include scored_promising records'
+    'Model improved status filter should include scored_promising records'
   )
   assert.deepEqual(
     byId(filterResearchLabActivityLoops(activityLoops, { direction: 'query_generation' })),
