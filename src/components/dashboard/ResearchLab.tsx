@@ -397,10 +397,10 @@ export function ResearchLab({
   return (
     <div className="w-full">
       <header>
-        <div className="flex items-center justify-between gap-3">
-          <div className="font-mono text-[11px] uppercase tracking-[0.2em] text-[var(--muted-2)]">
-            Research Lab
-          </div>
+        <div className="flex items-start justify-between gap-3">
+          <h2 className="min-w-0 max-w-[600px] font-display text-[26px] font-medium leading-[1.12] tracking-[-0.025em] text-[var(--platinum)] md:text-[30px]">
+            Model benchmark and improvement pipeline
+          </h2>
           <button
             type="button"
             onClick={() => setActivityOpen(true)}
@@ -411,9 +411,6 @@ export function ResearchLab({
             <span>Activity panel</span>
           </button>
         </div>
-        <h2 className="mt-3 max-w-[600px] font-display text-[26px] font-medium leading-[1.12] tracking-[-0.025em] text-[var(--platinum)] md:text-[30px]">
-          Model benchmark and improvement pipeline
-        </h2>
       </header>
 
       <Hero benchmark={benchmark} />
@@ -491,7 +488,7 @@ function Hero({ benchmark }: { benchmark: BenchmarkReport | null }) {
   return (
     <section className="pt-12 pb-14">
       <div className="mb-5 font-mono text-[10.5px] uppercase tracking-[0.16em] text-[var(--muted-2)]">
-        {isPromotedModel ? 'Latest promoted model' : 'Daily rebenchmark'}
+        {isPromotedModel ? 'Current model' : 'Daily rebenchmark'}
       </div>
       <div className="flex items-end gap-5">
         <div
