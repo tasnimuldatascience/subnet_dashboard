@@ -77,6 +77,59 @@ type PublicBenchmarkReportDoc = {
   icp_buckets?: unknown[]
 }
 
+type BenchmarkDisplayScore = {
+  source: 'daily_rebenchmark' | 'latest_promoted_model'
+  score: number
+  scoreBand: string
+  statusAt: string | null
+  label: string
+  deltaVsDailyBaseline: number | null
+  baselineAggregateScore: number | null
+  scoreBundleId: string | null
+  modelArtifactHash: string | null
+  privateModelVersionId: string | null
+}
+
+type ActivePromotedModelScore = {
+  privateModelVersionId: string
+  modelArtifactHash: string
+  scoreBundleId: string
+  score: number
+  scoreBand: string
+  promotedAt: string | null
+  deltaVsDailyBaseline: number | null
+  baselineAggregateScore: number | null
+  gitCommitSha: string | null
+}
+
+type PrivateModelVersionCurrentRow = {
+  private_model_version_id: string | null
+  model_artifact_hash: string | null
+  source_score_bundle_id: string | null
+  current_version_status: string | null
+  current_status_at: string | null
+  git_commit_sha: string | null
+}
+
+type ScoreBundleCurrentRow = {
+  score_bundle_id: string | null
+  bundle_status: string | null
+  candidate_artifact_hash: string | null
+  score_bundle_doc: ScoreBundleDoc | null
+  created_at: string | null
+}
+
+type ScoreBundleDoc = {
+  private_holdout_gate?: {
+    candidate_total_score?: number | string | null
+    candidate_delta_vs_daily_baseline?: number | string | null
+    baseline_aggregate_score?: number | string | null
+  }
+  aggregates?: {
+    candidate_score?: number | string | null
+  }
+}
+
 type PublicIcpEntry = {
   item_rank?: number
   icp_ref?: string
@@ -387,6 +440,8 @@ type NormalizedBenchmark = {
   intentTypes: IntentTypeRollup[]
   discovery: DiscoverySummary | null
   currentStatusAt: string | null
+  displayScore: BenchmarkDisplayScore
+  activePromotedModel: ActivePromotedModelScore | null
 }
 
 type BenchmarkIssue = {
@@ -501,17 +556,21 @@ export async function GET(request: Request) {
     }
 
     const supabase = getSupabase()
-    const [benchmark, loops, allLoops, labMinerSpend] = await Promise.all([
+    const [benchmark, activePromotedModel, loops, allLoops, labMinerSpend] = await Promise.all([
       fetchLatestBenchmark(supabase),
+      fetchActivePromotedModelScore(supabase),
       fetchPublicLoops(supabase),
       fetchPublicLoops(supabase, 5_000, 5_000),
       fetchLabMinerSpend(supabase),
     ])
+    const displayBenchmark = benchmark
+      ? withBenchmarkDisplayScore(benchmark, activePromotedModel)
+      : null
     const topicGroups = groupLoopsByTopic(loops)
     const labMinerActivity = buildLabMinerActivityRollup(allLoops)
     const promisingLoopCount = countPromisingLoopsWithTemporaryOverrides(loops)
     const data: ResearchLabPayload = {
-      benchmark,
+      benchmark: displayBenchmark,
       loops,
       topicGroups,
       labMinerSpend,
@@ -525,7 +584,7 @@ export async function GET(request: Request) {
           isScoredResearchLabLoopStatus(loop.statusKey)
         ).length,
         promisingLoopCount,
-        totalBenchmarkIcpCount: benchmark?.itemCount ?? 0,
+        totalBenchmarkIcpCount: displayBenchmark?.itemCount ?? 0,
       },
       fetchedAt: new Date().toISOString(),
     }
@@ -904,13 +963,15 @@ async function fetchLatestBenchmark(supabase: ReturnType<typeof getSupabase>): P
     numberOr(doc.visibility_split?.private_count, 0)
   )
   const itemCount = numberOr(doc.item_count, publicIcpCount + privateHoldoutIcpCount)
+  const aggregateScore = numberOr(doc.aggregate_score, row.aggregate_score)
+  const aggregateScoreBand = String(doc.aggregate_score_band || scoreBand(aggregateScore))
 
   return {
     reportId: row.report_id,
     benchmarkDate: String(doc.benchmark_date || row.benchmark_date),
     rollingWindowHash: String(doc.rolling_window_hash || row.rolling_window_hash),
-    aggregateScore: numberOr(doc.aggregate_score, row.aggregate_score),
-    aggregateScoreBand: String(doc.aggregate_score_band || scoreBand(numberOr(doc.aggregate_score, row.aggregate_score))),
+    aggregateScore,
+    aggregateScoreBand,
     itemCount,
     publicIcpCount,
     privateHoldoutIcpCount,
@@ -923,6 +984,99 @@ async function fetchLatestBenchmark(supabase: ReturnType<typeof getSupabase>): P
     intentTypes: privateDiag?.intentTypes ?? [],
     discovery: privateDiag?.discovery ?? null,
     currentStatusAt: row.current_status_at || row.created_at,
+    displayScore: {
+      source: 'daily_rebenchmark',
+      score: aggregateScore,
+      scoreBand: aggregateScoreBand,
+      statusAt: row.current_status_at || row.created_at,
+      label: 'Daily rebenchmark',
+      deltaVsDailyBaseline: null,
+      baselineAggregateScore: aggregateScore,
+      scoreBundleId: null,
+      modelArtifactHash: null,
+      privateModelVersionId: null,
+    },
+    activePromotedModel: null,
+  }
+}
+
+async function fetchActivePromotedModelScore(
+  supabase: ReturnType<typeof getSupabase>,
+): Promise<ActivePromotedModelScore | null> {
+  const { data: versionData, error: versionError } = await supabase
+    .from('research_lab_private_model_version_current')
+    .select('private_model_version_id, model_artifact_hash, source_score_bundle_id, current_version_status, current_status_at, git_commit_sha')
+    .eq('current_version_status', 'active')
+    .order('current_status_at', { ascending: false })
+    .limit(1)
+
+  if (versionError) {
+    console.error('[Research Lab API] active model version query failed:', versionError)
+    return null
+  }
+
+  const version = (versionData?.[0] ?? null) as PrivateModelVersionCurrentRow | null
+  const scoreBundleId = version?.source_score_bundle_id ? String(version.source_score_bundle_id) : ''
+  if (!version || !scoreBundleId) return null
+
+  const { data: scoreData, error: scoreError } = await supabase
+    .from('research_evaluation_score_bundle_current')
+    .select('score_bundle_id, bundle_status, candidate_artifact_hash, score_bundle_doc, created_at')
+    .eq('score_bundle_id', scoreBundleId)
+    .limit(1)
+
+  if (scoreError) {
+    console.error('[Research Lab API] active model score bundle query failed:', scoreError)
+    return null
+  }
+
+  const scoreRow = (scoreData?.[0] ?? null) as ScoreBundleCurrentRow | null
+  const doc = scoreRow?.score_bundle_doc ?? {}
+  const gate = doc.private_holdout_gate ?? {}
+  const candidateTotal = numberOr(
+    gate.candidate_total_score,
+    numberOr(doc.aggregates?.candidate_score, NaN),
+  )
+  if (!Number.isFinite(candidateTotal) || candidateTotal <= 0) return null
+
+  return {
+    privateModelVersionId: String(version.private_model_version_id || ''),
+    modelArtifactHash: String(version.model_artifact_hash || scoreRow?.candidate_artifact_hash || ''),
+    scoreBundleId,
+    score: candidateTotal,
+    scoreBand: scoreBand(candidateTotal),
+    promotedAt: version.current_status_at || scoreRow?.created_at || null,
+    deltaVsDailyBaseline: nullableNumber(gate.candidate_delta_vs_daily_baseline),
+    baselineAggregateScore: nullableNumber(gate.baseline_aggregate_score),
+    gitCommitSha: version.git_commit_sha ? String(version.git_commit_sha) : null,
+  }
+}
+
+function withBenchmarkDisplayScore(
+  benchmark: NormalizedBenchmark,
+  activePromotedModel: ActivePromotedModelScore | null,
+): NormalizedBenchmark {
+  const benchmarkTime = timestampOrZero(benchmark.currentStatusAt || benchmark.benchmarkDate)
+  const promotedTime = timestampOrZero(activePromotedModel?.promotedAt)
+  if (!activePromotedModel || promotedTime <= benchmarkTime) {
+    return { ...benchmark, activePromotedModel }
+  }
+
+  return {
+    ...benchmark,
+    activePromotedModel,
+    displayScore: {
+      source: 'latest_promoted_model',
+      score: activePromotedModel.score,
+      scoreBand: activePromotedModel.scoreBand,
+      statusAt: activePromotedModel.promotedAt,
+      label: 'Latest promoted model',
+      deltaVsDailyBaseline: activePromotedModel.deltaVsDailyBaseline,
+      baselineAggregateScore: activePromotedModel.baselineAggregateScore,
+      scoreBundleId: activePromotedModel.scoreBundleId,
+      modelArtifactHash: activePromotedModel.modelArtifactHash,
+      privateModelVersionId: activePromotedModel.privateModelVersionId,
+    },
   }
 }
 
@@ -1886,6 +2040,17 @@ function roundAlpha(value: number): number {
 function numberOr(value: unknown, fallback: number): number {
   const numeric = Number(value)
   return Number.isFinite(numeric) ? numeric : fallback
+}
+
+function nullableNumber(value: unknown): number | null {
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric : null
+}
+
+function timestampOrZero(value: unknown): number {
+  if (typeof value !== 'string' || !value.trim()) return 0
+  const time = new Date(value).getTime()
+  return Number.isFinite(time) ? time : 0
 }
 
 function arrayOfStrings(value: unknown): string[] {

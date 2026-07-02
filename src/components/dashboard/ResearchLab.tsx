@@ -117,6 +117,8 @@ type BenchmarkReport = {
   rollingWindowHash: string
   aggregateScore: number
   aggregateScoreBand: string
+  displayScore?: BenchmarkDisplayScore
+  activePromotedModel?: ActivePromotedModelScore | null
   itemCount: number
   publicIcpCount: number
   privateHoldoutIcpCount: number
@@ -129,6 +131,31 @@ type BenchmarkReport = {
   intentTypes: IntentTypeRollup[]
   discovery: DiscoverySummary | null
   currentStatusAt: string | null
+}
+
+type BenchmarkDisplayScore = {
+  source: 'daily_rebenchmark' | 'latest_promoted_model'
+  score: number
+  scoreBand: string
+  statusAt: string | null
+  label: string
+  deltaVsDailyBaseline: number | null
+  baselineAggregateScore: number | null
+  scoreBundleId: string | null
+  modelArtifactHash: string | null
+  privateModelVersionId: string | null
+}
+
+type ActivePromotedModelScore = {
+  privateModelVersionId: string
+  modelArtifactHash: string
+  scoreBundleId: string
+  score: number
+  scoreBand: string
+  promotedAt: string | null
+  deltaVsDailyBaseline: number | null
+  baselineAggregateScore: number | null
+  gitCommitSha: string | null
 }
 
 type DiscoverySummary = {
@@ -454,11 +481,19 @@ function Hero({ benchmark }: { benchmark: BenchmarkReport | null }) {
     )
   }
 
-  const score = numberOr(benchmark.aggregateScore, 0)
+  const displayScore = benchmark.displayScore
+  const score = numberOr(displayScore?.score, numberOr(benchmark.aggregateScore, 0))
   const tone = scoreTone(score)
+  const isPromotedModel = displayScore?.source === 'latest_promoted_model'
+  const scoreDate = displayScore?.statusAt || benchmark.currentStatusAt || benchmark.benchmarkDate
+  const delta = displayScore?.deltaVsDailyBaseline
+  const dailyBenchmarkScore = numberOr(benchmark.aggregateScore, 0)
 
   return (
     <section className="pt-12 pb-14">
+      <div className="mb-5 font-mono text-[10.5px] uppercase tracking-[0.16em] text-[var(--muted-2)]">
+        {isPromotedModel ? 'Latest promoted model' : 'Daily rebenchmark'}
+      </div>
       <div className="flex items-end gap-5">
         <div
           className="font-display font-medium leading-[0.84] tracking-[-0.045em] text-[clamp(52px,9vw,104px)]"
@@ -472,11 +507,23 @@ function Hero({ benchmark }: { benchmark: BenchmarkReport | null }) {
       </div>
 
       <p className="mt-7 max-w-[560px] text-[14px] leading-[1.7] text-[var(--muted)]">
-        The current benchmark score for Leadpoet&apos;s sales agent. Each loop tests whether a miner&apos;s change improves the current model.
+        {isPromotedModel
+          ? "The latest promoted model score for Leadpoet's sales agent. The next daily rebenchmark will become the displayed score once it publishes."
+          : "The current daily rebenchmark score for Leadpoet's sales agent. Each loop tests whether a miner's change improves the current model."}
       </p>
 
       <div className="mt-6 font-mono text-[11px] text-[var(--muted-2)]">
-        Published {formatDate(benchmark.benchmarkDate)}
+        {isPromotedModel ? (
+          <>
+            Promoted {formatDate(scoreDate)}
+            {Number.isFinite(delta) ? (
+              <> · {(delta ?? 0) >= 0 ? '+' : ''}{formatScore(delta ?? 0)} vs daily baseline</>
+            ) : null}
+            <> · daily rebenchmark {formatScore(dailyBenchmarkScore)}</>
+          </>
+        ) : (
+          <>Published {formatDate(benchmark.benchmarkDate)}</>
+        )}
       </div>
     </section>
   )
