@@ -369,7 +369,7 @@ export function ResearchLab({
 
   return (
     <div className="w-full">
-      <header className="pt-8 md:pt-10">
+      <header>
         <div className="flex items-center justify-between gap-3">
           <div className="font-mono text-[11px] uppercase tracking-[0.2em] text-[var(--muted-2)]">
             Research Lab
