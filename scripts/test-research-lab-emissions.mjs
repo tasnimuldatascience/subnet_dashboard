@@ -95,7 +95,7 @@ try {
   assert.match(componentSource, /Total alpha earned/)
   assert.match(componentSource, /Incentive/)
   assert.match(componentSource, /activityLoops/)
-  assert.match(componentSource, /Visible miners/)
+  assert.match(componentSource, /ActivityPanelStat label="Miners" value={visibleMinerCount}/)
   assert.match(componentSource, /metagraphIncentivePct/)
   assert.match(componentSource, /metagraph\?\.incentives/)
   assert.doesNotMatch(componentSource, /metagraph\?\.emissions/)

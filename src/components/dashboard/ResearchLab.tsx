@@ -1625,7 +1625,7 @@ function ResearchActivityDialog({
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             <ActivityPanelStat label="Visible" value={filteredLoops.length} />
             <ActivityPanelStat label="Runs" value={loops.length} />
-            <ActivityPanelStat label="Visible miners" value={visibleMinerCount} />
+            <ActivityPanelStat label="Miners" value={visibleMinerCount} />
             <ActivityPanelStat label="Directions" value={directionOptions.length} />
           </div>
 
