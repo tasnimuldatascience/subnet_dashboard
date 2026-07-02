@@ -535,6 +535,11 @@ function getSupabase() {
   return createClient(url, key, { auth: { persistSession: false } })
 }
 
+function isCompletedResearchLabExperimentStatus(key: string): boolean {
+  const normalized = String(key ?? '').trim().toLowerCase()
+  return isScoredResearchLabLoopStatus(normalized) || normalized === 'completed_no_candidate'
+}
+
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url)
@@ -576,14 +581,14 @@ export async function GET(request: Request) {
       labMinerSpend,
       labMinerActivity,
       stats: {
-        activeLoopCount: loops.filter((loop) => isActiveResearchLabLoopStatus(loop.statusKey)).length,
-        opsPendingLoopCount: loops.filter((loop) =>
+        activeLoopCount: allLoops.filter((loop) => isActiveResearchLabLoopStatus(loop.statusKey)).length,
+        opsPendingLoopCount: allLoops.filter((loop) =>
           isPendingOrBlockingResearchLabLoopStatus(loop.statusKey)
         ).length,
-        scoredLoopCount: loops.filter((loop) =>
-          isScoredResearchLabLoopStatus(loop.statusKey)
+        scoredLoopCount: allLoops.filter((loop) =>
+          isCompletedResearchLabExperimentStatus(loop.statusKey)
         ).length,
-        promisingLoopCount: loops.filter((loop) =>
+        promisingLoopCount: allLoops.filter((loop) =>
           isPromisingResearchLabLoopStatus(loop.statusKey, loop.outcomeBand)
         ).length,
         totalBenchmarkIcpCount: displayBenchmark?.itemCount ?? 0,

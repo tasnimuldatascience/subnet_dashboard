@@ -1564,14 +1564,6 @@ function ResearchActivityDialog({
     return filterResearchLabActivityLoops(loops, { minerQuery, direction, status })
   }, [loops, minerQuery, direction, status])
 
-  const visibleMinerCount = useMemo(() => {
-    const miners = new Set<string>()
-    for (const loop of filteredLoops) {
-      if (loop.minerHotkey) miners.add(loop.minerHotkey)
-    }
-    return miners.size
-  }, [filteredLoops])
-
   const statusOptions = useMemo(() => {
     return researchLabStatusFilterOptionsWithCounts(loops, { minerQuery, direction })
   }, [loops, minerQuery, direction])
@@ -1613,14 +1605,7 @@ function ResearchActivityDialog({
               </button>
             </DialogClose>
           </div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <ActivityPanelStat label="Visible" value={filteredLoops.length} />
-            <ActivityPanelStat label="Runs" value={loops.length} />
-            <ActivityPanelStat label="Miners" value={visibleMinerCount} />
-            <ActivityPanelStat label="Directions" value={directionOptions.length} />
-          </div>
-
-          <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <div className="relative sm:max-w-sm sm:flex-1">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--muted-2)]" />
               <input
@@ -1738,19 +1723,6 @@ function ResearchActivityDialog({
         }}
       />
     </Dialog>
-  )
-}
-
-function ActivityPanelStat({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-md border border-[var(--line)] bg-[rgba(236,234,230,0.018)] px-3 py-2">
-      <div className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-[var(--muted-2)]">
-        {label}
-      </div>
-      <div className="mt-1 font-display text-[20px] font-medium leading-none tabular-nums text-[var(--platinum)]">
-        {value.toLocaleString()}
-      </div>
-    </div>
   )
 }
 
@@ -1952,6 +1924,7 @@ function LoopTimelineDialog({
   const stageEvents = timeline?.runs.flatMap((run) => run.events) ?? []
   const stageCount = stageEvents.length
   const currentRunId = timeline?.currentRunId ?? loop?.runId ?? undefined
+  const finalResultLabel = loop ? loop.statusLabel || readableTag(loop.outcomeLabel) : undefined
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -2032,7 +2005,11 @@ function LoopTimelineDialog({
               No public stage timestamps are available for this loop.
             </div>
           ) : timeline ? (
-            <TimelineStageList events={stageEvents} />
+            <TimelineStageList
+              events={stageEvents}
+              finalResultBand={loop?.outcomeBand}
+              finalResultLabel={finalResultLabel}
+            />
           ) : null}
         </div>
       </DialogContent>
@@ -2051,7 +2028,15 @@ function TimelineMeta({ label, value, title }: { label: string; value: string; t
   )
 }
 
-function TimelineStageList({ events }: { events: LoopTimelineEvent[] }) {
+function TimelineStageList({
+  events,
+  finalResultBand,
+  finalResultLabel,
+}: {
+  events: LoopTimelineEvent[]
+  finalResultBand?: string
+  finalResultLabel?: string
+}) {
   return (
     <ol className="overflow-hidden rounded-md border border-[var(--line)] bg-[rgba(236,234,230,0.012)]">
       {events.map((event, index) => (
@@ -2060,6 +2045,8 @@ function TimelineStageList({ events }: { events: LoopTimelineEvent[] }) {
           event={event}
           index={index}
           isLast={index === events.length - 1}
+          resultBand={index === events.length - 1 ? finalResultBand : undefined}
+          resultLabel={index === events.length - 1 ? finalResultLabel : undefined}
         />
       ))}
     </ol>
@@ -2070,10 +2057,14 @@ function TimelineStageRow({
   event,
   index,
   isLast,
+  resultBand,
+  resultLabel,
 }: {
   event: LoopTimelineEvent
   index: number
   isLast: boolean
+  resultBand?: string
+  resultLabel?: string
 }) {
   return (
     <li
@@ -2091,6 +2082,14 @@ function TimelineStageRow({
           <div className="mt-1 font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--muted-2)]">
             Stage {index + 1}
           </div>
+          {resultLabel ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-[var(--muted-2)]">
+                Result
+              </span>
+              <OutcomeBadge label={resultLabel} band={resultBand ?? 'pending'} />
+            </div>
+          ) : null}
         </div>
       </div>
       <div className="sm:text-right">
