@@ -150,7 +150,7 @@ export function FAQ() {
   }, [])
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="w-full">
       {/* Structured data for SEO (Google FAQPage rich snippet) */}
       <script
         type="application/ld+json"
