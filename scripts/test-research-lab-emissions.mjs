@@ -93,12 +93,14 @@ try {
 
   const componentSource = await readFile(resolve('src/components/dashboard/ResearchLab.tsx'), 'utf8')
   assert.match(componentSource, /Lab Allocation/)
-  assert.match(componentSource, /Metagraph Incentive/)
-  assert.match(componentSource, /Current substrate incentive; raw emission shown below/)
+  assert.match(componentSource, /Incentive/)
   assert.match(componentSource, /labAllocationPaidAlphaPercent/)
   assert.match(componentSource, /metagraphIncentivePct/)
   assert.match(componentSource, /metagraph\?\.incentives/)
+  assert.doesNotMatch(componentSource, /metagraph\?\.emissions/)
   assert.doesNotMatch(componentSource, /Lab Emissions/)
+  assert.doesNotMatch(componentSource, /of Lab bucket/)
+  assert.doesNotMatch(componentSource, /emitted/)
 
   const routeSource = await readFile(resolve('src/app/api/research-lab/route.ts'), 'utf8')
   assert.match(routeSource, /\.from\('research_lab_emission_allocation_current'\)/)
