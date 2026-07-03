@@ -2292,7 +2292,7 @@ function DirectionRow({ group }: { group: TopicGroup }) {
         <span>{group.running} running</span>
         <span>{group.scored} scored</span>
         <span className="text-[var(--platinum)]">{group.promisingOrPromoted} promising</span>
-        <span>{group.noGainOrFailed} no gain / failed</span>
+        <span>{group.noGainOrFailed} no promotion / failed</span>
       </div>
     </div>
   )
@@ -2424,7 +2424,10 @@ function outcomeTone(band: string): { color: string; border: string; bg: string 
   if (band === 'pending' || band === 'completed') {
     return { color: 'var(--muted)', border: 'var(--line)', bg: 'transparent' }
   }
-  if (band === 'no_gain' || band === 'failed') {
+  if (band === 'no_gain') {
+    return { color: 'var(--muted)', border: 'var(--line-2)', bg: 'rgba(236,234,230,0.018)' }
+  }
+  if (band === 'failed') {
     return { color: 'var(--muted-2)', border: 'var(--line)', bg: 'transparent' }
   }
   return { color: 'var(--muted)', border: 'var(--line)', bg: 'transparent' }

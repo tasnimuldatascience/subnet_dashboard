@@ -101,11 +101,11 @@ try {
       },
       expected: {
         key: 'scored_no_gain',
-        label: 'No gain',
+        label: 'Scored · No promotion',
         band: 'no_gain',
         active: false,
         scoring: false,
-        detail: 'Final outcome: scoring did not produce a promoted candidate.',
+        detail: 'Scoring completed; candidate did not clear promotion threshold or holdout gate.',
         actionLabel: 'Review recommended',
         actionDetail: 'Queue receipt failed after scoring',
       },
@@ -273,7 +273,7 @@ try {
       },
     },
     {
-      name: 'scored candidate with no benchmark gain renders No gain',
+      name: 'scored candidate with no benchmark gain renders Scored no promotion',
       input: {
         outcomeLabel: 'running',
         outcomeBand: 'no_gain',
@@ -285,15 +285,15 @@ try {
       },
       expected: {
         key: 'scored_no_gain',
-        label: 'No gain',
+        label: 'Scored · No promotion',
         band: 'no_gain',
         active: false,
         scoring: false,
-        detail: 'Final outcome: scoring did not produce a promoted candidate.',
+        detail: 'Scoring completed; candidate did not clear promotion threshold or holdout gate.',
       },
     },
     {
-      name: 'raw scored_no_gain renders No gain even with unscored candidate counts',
+      name: 'raw scored_no_gain renders Scored no promotion even with unscored candidate counts',
       input: {
         outcomeLabel: 'scored_no_gain',
         outcomeBand: 'no_gain',
@@ -305,26 +305,25 @@ try {
       },
       expected: {
         key: 'scored_no_gain',
-        label: 'No gain',
+        label: 'Scored · No promotion',
         band: 'no_gain',
         active: false,
         scoring: false,
-        detail: 'Final outcome: scoring did not produce a promoted candidate.',
+        detail: 'Scoring completed; candidate did not clear promotion threshold or holdout gate.',
       },
     },
     {
-      name: 'scored_promising small_gain renders Promising',
+      name: 'scored_promising small_gain renders Scored promising',
       input: {
         outcomeLabel: 'scored_promising',
         outcomeBand: 'small_gain',
         currentCandidateStatus: 'scored',
-        improvementGateDecision: 'not_eligible',
         runId: 'run-small-gain',
         receiptId: 'receipt-small-gain',
       },
       expected: {
         key: 'scored_promising',
-        label: 'Promising',
+        label: 'Scored · Promising',
         band: 'small_gain',
         active: false,
         scoring: false,
@@ -332,7 +331,7 @@ try {
       },
     },
     {
-      name: 'passed threshold band renders Promising unless promoted',
+      name: 'passed threshold band renders Scored promising unless promoted',
       input: {
         outcomeLabel: 'scored_promising',
         outcomeBand: 'passed_threshold',
@@ -342,7 +341,7 @@ try {
       },
       expected: {
         key: 'scored_promising',
-        label: 'Promising',
+        label: 'Scored · Promising',
         band: 'passed_threshold',
         active: false,
         scoring: false,
@@ -350,7 +349,7 @@ try {
       },
     },
     {
-      name: 'rejected below-threshold promotion event stays Promising',
+      name: 'rejected below-threshold promotion event renders Scored no promotion',
       input: {
         outcomeLabel: 'scored_promising',
         outcomeBand: 'small_gain',
@@ -361,16 +360,17 @@ try {
         receiptId: 'receipt-rejected-promotion',
       },
       expected: {
-        key: 'scored_promising',
-        label: 'Promising',
-        band: 'small_gain',
+        key: 'scored_no_gain',
+        label: 'Scored · No promotion',
+        band: 'no_gain',
         active: false,
         scoring: false,
-        promising: true,
+        promising: false,
+        detail: 'Scoring completed; candidate did not clear promotion threshold or holdout gate.',
       },
     },
     {
-      name: 'not eligible improvement gate stays Promising',
+      name: 'not eligible improvement gate renders Scored no promotion',
       input: {
         outcomeLabel: 'scored_promising',
         outcomeBand: 'small_gain',
@@ -380,12 +380,78 @@ try {
         receiptId: 'receipt-not-eligible',
       },
       expected: {
-        key: 'scored_promising',
-        label: 'Promising',
-        band: 'small_gain',
+        key: 'scored_no_gain',
+        label: 'Scored · No promotion',
+        band: 'no_gain',
         active: false,
         scoring: false,
-        promising: true,
+        promising: false,
+        detail: 'Scoring completed; candidate did not clear promotion threshold or holdout gate.',
+      },
+    },
+    {
+      name: 'promotion_checked outcome renders Scored no promotion',
+      input: {
+        publicStatus: 'promotion_checked',
+        paymentState: 'paid',
+        executionState: 'completed',
+        candidateState: 'scored',
+        resultState: 'promotion_checked',
+        candidateCount: 1,
+        scoredCandidateCount: 1,
+      },
+      expected: {
+        key: 'scored_no_gain',
+        label: 'Scored · No promotion',
+        band: 'no_gain',
+        active: false,
+        scoring: false,
+        promising: false,
+        detail: 'Scoring completed; candidate did not clear promotion threshold or holdout gate.',
+      },
+    },
+    {
+      name: 'public holdout rejection renders Scored no promotion',
+      input: {
+        publicStatus: 'scored',
+        paymentState: 'paid',
+        executionState: 'completed',
+        candidateState: 'scored',
+        resultState: 'scored',
+        promotionEventType: 'public_holdout_rejected',
+        candidateCount: 1,
+        scoredCandidateCount: 1,
+      },
+      expected: {
+        key: 'scored_no_gain',
+        label: 'Scored · No promotion',
+        band: 'no_gain',
+        active: false,
+        scoring: false,
+        promising: false,
+        detail: 'Scoring completed; candidate did not clear promotion threshold or holdout gate.',
+      },
+    },
+    {
+      name: 'rejected promotion status renders Scored no promotion',
+      input: {
+        publicStatus: 'scored',
+        paymentState: 'paid',
+        executionState: 'completed',
+        candidateState: 'scored',
+        resultState: 'scored',
+        promotionStatus: 'rejected',
+        candidateCount: 1,
+        scoredCandidateCount: 1,
+      },
+      expected: {
+        key: 'scored_no_gain',
+        label: 'Scored · No promotion',
+        band: 'no_gain',
+        active: false,
+        scoring: false,
+        promising: false,
+        detail: 'Scoring completed; candidate did not clear promotion threshold or holdout gate.',
       },
     },
     {
@@ -400,7 +466,7 @@ try {
       },
       expected: {
         key: 'scored_promising',
-        label: 'Promising',
+        label: 'Scored · Promising',
         band: 'small_gain',
         active: false,
         scoring: false,
@@ -408,7 +474,7 @@ try {
       },
     },
     {
-      name: 'promoted outcome renders Model Improvement',
+      name: 'promoted outcome renders Promoted',
       input: {
         outcomeLabel: 'promoted',
         outcomeBand: 'promoted',
@@ -420,7 +486,7 @@ try {
       },
       expected: {
         key: 'promoted',
-        label: 'Model Improvement',
+        label: 'Promoted',
         band: 'promoted',
         active: false,
         scoring: false,
@@ -428,7 +494,7 @@ try {
       },
     },
     {
-      name: 'scored_no_gain with failed band and failed queue stays No gain',
+      name: 'scored_no_gain with failed band and failed queue stays Scored no promotion',
       input: {
         outcomeLabel: 'scored_no_gain',
         outcomeBand: 'failed',
@@ -442,11 +508,11 @@ try {
       },
       expected: {
         key: 'scored_no_gain',
-        label: 'No gain',
+        label: 'Scored · No promotion',
         band: 'no_gain',
         active: false,
         scoring: false,
-        detail: 'Final outcome: scoring did not produce a promoted candidate.',
+        detail: 'Scoring completed; candidate did not clear promotion threshold or holdout gate.',
         actionLabel: 'Review recommended',
         actionDetail: 'Queue or receipt state is terminal failed, but the final model outcome is preserved.',
       },
@@ -469,7 +535,7 @@ try {
         band: 'failed',
         active: false,
         scoring: false,
-        detail: 'Final outcome: scoring did not produce a promoted candidate.',
+        detail: 'Final outcome: scoring completed, then the loop entered a failed terminal state.',
       },
     },
     {
@@ -751,7 +817,7 @@ try {
   assert.deepEqual(
     byId(filterResearchLabActivityLoops(activityLoops, { status: 'scored' })),
     ['scored-no-gain-failed-ops', 'improved-beta-a', 'small-gain-beta-a'],
-    'Scored / No Gain filter should include promising and no-gain records'
+    'Scored / No Promotion filter should include promising and no-promotion records'
   )
   assert.deepEqual(
     byId(filterResearchLabActivityLoops(activityLoops, { direction: 'query_generation' })),

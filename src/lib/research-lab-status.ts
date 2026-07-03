@@ -151,10 +151,25 @@ const REBASE_UNAVAILABLE_VALUES = new Set([
   'parent_rebase_unavailable',
 ])
 
-const SCORED_NO_GAIN_VALUES = new Set(['scored_no_gain', 'no_gain'])
+const SCORED_NO_GAIN_VALUES = new Set([
+  'scored_no_gain',
+  'no_gain',
+  'promotion_checked',
+  'public_holdout_rejected',
+  'holdout_rejected',
+  'promotion_rejected',
+])
 const PROMOTED_VALUES = new Set(['promoted'])
 const COMPLETED_NO_CANDIDATE_VALUES = new Set(['completed_no_candidate'])
-const BELOW_THRESHOLD_VALUES = new Set(['below_threshold', 'not_eligible', 'rejected'])
+const NO_PROMOTION_VALUES = new Set([
+  'below_threshold',
+  'not_eligible',
+  'rejected',
+  'promotion_checked',
+  'public_holdout_rejected',
+  'holdout_rejected',
+  'promotion_rejected',
+])
 const PASSED_THRESHOLD_BANDS = new Set(['passed_threshold', 'promoted', 'high_gain', 'winner'])
 const PROMOTION_PASS_VALUES = new Set([
   'promotion_passed',
@@ -265,8 +280,8 @@ const PENDING_OR_BLOCKING_STATUS_KEYS = new Set([
 export const RESEARCH_LAB_STATUS_FILTER_OPTIONS: ResearchLabStatusFilterOption[] = [
   { value: 'all', label: 'All' },
   { value: 'active', label: 'Active' },
-  { value: 'promoted', label: 'Model Improvement' },
-  { value: 'scored', label: 'Scored / No Gain' },
+  { value: 'promoted', label: 'Promoted' },
+  { value: 'scored', label: 'Scored / No Promotion' },
   { value: 'completed_no_candidate', label: 'No Candidate' },
   { value: 'failed', label: 'Failed' },
   { value: 'awaiting_payment', label: 'Awaiting Funding' },
@@ -679,7 +694,7 @@ function normalizedModelOutcomeStatus(input: NormalizedModelOutcomeStatusInput):
   const improvementGateDecision = normalize(input.improvementGateDecision)
 
   if (hasAny(statusValues, PROMOTED_VALUES) || projectedLabel === 'promoted') {
-    return status('promoted', 'Model Improvement', canonicalBand(projectedBand, 'promoted'), input.note, input.action)
+    return status('promoted', 'Promoted', canonicalBand(projectedBand, 'promoted'), input.note, input.action)
   }
 
   if (hasAny(statusValues, SCORED_NO_GAIN_VALUES) || projectedBand === 'no_gain') {
@@ -690,10 +705,6 @@ function normalizedModelOutcomeStatus(input: NormalizedModelOutcomeStatusInput):
     return completedNoCandidateStatus(input.action)
   }
 
-  if (statusValues.includes('scored_promising')) {
-    return status('scored_promising', 'Promising', canonicalBand(projectedBand, 'small_gain'), input.note, input.action)
-  }
-
   const hasScoredLikeOutcome =
     projectedLabel === 'scored' ||
     candidateStatus === 'scored' ||
@@ -702,12 +713,15 @@ function normalizedModelOutcomeStatus(input: NormalizedModelOutcomeStatusInput):
     hasAny(statusValues, SCORED_PROMISING_VALUES) ||
     projectedBand === 'small_gain'
   const hasBelowThresholdSignal =
-    projectedBand === 'small_gain' ||
-    BELOW_THRESHOLD_VALUES.has(improvementGateDecision) ||
-    hasAny(promotionSignals, BELOW_THRESHOLD_VALUES)
+    NO_PROMOTION_VALUES.has(improvementGateDecision) ||
+    hasAny(promotionSignals, NO_PROMOTION_VALUES)
 
   if (hasBelowThresholdSignal && hasScoredLikeOutcome) {
-    return status('scored_promising', 'Promising', canonicalBand(projectedBand, 'small_gain'), input.note, input.action)
+    return noGainStatus(input.action)
+  }
+
+  if (statusValues.includes('scored_promising')) {
+    return status('scored_promising', 'Scored · Promising', canonicalBand(projectedBand, 'small_gain'), input.note, input.action)
   }
 
   const hasPassedThreshold =
@@ -720,7 +734,7 @@ function normalizedModelOutcomeStatus(input: NormalizedModelOutcomeStatusInput):
   }
 
   if (projectedLabel === 'scored' || resultState === 'scored' || publicStatus === 'scored') {
-    return status('scored_promising', 'Promising', canonicalBand(projectedBand, 'completed'), input.note, input.action)
+    return status('scored_promising', 'Scored · Promising', canonicalBand(projectedBand, 'completed'), input.note, input.action)
   }
 
   return null
@@ -734,23 +748,23 @@ function modelImprovedStatus(
   action?: ResearchLabLoopStatusNote,
 ): ResearchLabLoopStatus {
   if (projectedLabel === 'promoted' || candidateStatus === 'promoted' || promotionSignals.includes('promoted')) {
-    return status('promoted', 'Model Improvement', canonicalBand(projectedBand, 'promoted'), undefined, action)
+    return status('promoted', 'Promoted', canonicalBand(projectedBand, 'promoted'), undefined, action)
   }
   if (projectedLabel === 'winner' || candidateStatus === 'winner' || promotionSignals.includes('winner')) {
-    return status('promoted', 'Model Improvement', canonicalBand(projectedBand, 'promoted'), undefined, action)
+    return status('promoted', 'Promoted', canonicalBand(projectedBand, 'promoted'), undefined, action)
   }
   if (projectedLabel === 'high_gain' || candidateStatus === 'high_gain' || promotionSignals.includes('high_gain')) {
-    return status('promoted', 'Model Improvement', canonicalBand(projectedBand, 'high_gain'), undefined, action)
+    return status('promoted', 'Promoted', canonicalBand(projectedBand, 'high_gain'), undefined, action)
   }
   if (projectedLabel === 'promotion_passed' || promotionSignals.includes('promotion_passed')) {
-    return status('promoted', 'Model Improvement', canonicalBand(projectedBand, 'passed_threshold'), undefined, action)
+    return status('promoted', 'Promoted', canonicalBand(projectedBand, 'passed_threshold'), undefined, action)
   }
-  return status('scored_promising', 'Promising', canonicalBand(projectedBand, 'passed_threshold'), undefined, action)
+  return status('scored_promising', 'Scored · Promising', canonicalBand(projectedBand, 'passed_threshold'), undefined, action)
 }
 
 function noGainStatus(action?: ResearchLabLoopStatusNote): ResearchLabLoopStatus {
-  return status('scored_no_gain', 'No gain', 'no_gain', finalOutcomeNote(
-    'Final outcome: scoring did not produce a promoted candidate.'
+  return status('scored_no_gain', 'Scored · No promotion', 'no_gain', finalOutcomeNote(
+    'Scoring completed; candidate did not clear promotion threshold or holdout gate.'
   ), action)
 }
 
@@ -775,7 +789,7 @@ function terminalFailureStatus(
     ), action)
   }
   return status('failed_after_scoring', 'Failed after scoring', 'failed', finalOutcomeNote(
-    'Final outcome: scoring did not produce a promoted candidate.'
+    'Final outcome: scoring completed, then the loop entered a failed terminal state.'
   ), action)
 }
 
@@ -963,15 +977,19 @@ function labelForStatus(value: string): string {
     pending: 'Pending',
     completed: 'Complete',
     completed_no_candidate: 'No candidate',
-    scored: 'Promising',
-    scored_promising: 'Promising',
-    scored_no_gain: 'No gain',
-    promotion_passed: 'Model Improvement',
-    active_version_created: 'Model Improvement',
-    champion_reward_created: 'Model Improvement',
-    merged: 'Model Improvement',
-    reward_created: 'Model Improvement',
-    promoted: 'Model Improvement',
+    scored: 'Scored · Promising',
+    scored_promising: 'Scored · Promising',
+    scored_no_gain: 'Scored · No promotion',
+    promotion_checked: 'Scored · No promotion',
+    public_holdout_rejected: 'Scored · No promotion',
+    holdout_rejected: 'Scored · No promotion',
+    promotion_rejected: 'Scored · No promotion',
+    promotion_passed: 'Promoted',
+    active_version_created: 'Promoted',
+    champion_reward_created: 'Promoted',
+    merged: 'Promoted',
+    reward_created: 'Promoted',
+    promoted: 'Promoted',
     scoring_failed: 'Scoring failed',
     failed_after_scoring: 'Failed after scoring',
     blocked_for_credit: 'Waiting for credits',
