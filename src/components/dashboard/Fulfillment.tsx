@@ -11,12 +11,26 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import {
   AlertCircle,
   Copy,
   X,
   ChevronRight,
+  ChevronsUpDown,
   Loader2,
 } from 'lucide-react'
 import {
@@ -114,6 +128,15 @@ interface FulfillmentData {
 }
 
 type FilterMode = 'all' | 'pending' | 'completed'
+
+type HotkeyOption = {
+  hotkey: string
+  scored: number
+  fulfilled: number
+  lastActive: string | null
+  rank?: number
+  bonusPct?: number
+}
 
 const PENDING_STATUSES = ['pending', 'open', 'continued_open', 'commit_closed', 'scoring']
 
@@ -678,6 +701,57 @@ export function Fulfillment({ onSync }: { onSync?: () => void } = {}) {
     }
   }, [data])
 
+  const hotkeyOptions = useMemo<HotkeyOption[]>(() => {
+    if (!data) return []
+    const byHotkey = new Map<string, HotkeyOption>()
+
+    const ensureHotkey = (hotkey: string) => {
+      let entry = byHotkey.get(hotkey)
+      if (!entry) {
+        entry = {
+          hotkey,
+          scored: 0,
+          fulfilled: 0,
+          lastActive: null,
+        }
+        byHotkey.set(hotkey, entry)
+      }
+      return entry
+    }
+
+    for (const c of data.allConsensus) {
+      if (!c.miner_hotkey) continue
+      const entry = ensureHotkey(c.miner_hotkey)
+      entry.scored += 1
+      if (c.is_winner) entry.fulfilled += 1
+      if (
+        c.computed_at &&
+        (!entry.lastActive ||
+          new Date(c.computed_at).getTime() > new Date(entry.lastActive).getTime())
+      ) {
+        entry.lastActive = c.computed_at
+      }
+    }
+
+    for (const l of data.leaderboard) {
+      if (!l.hotkey) continue
+      const entry = ensureHotkey(l.hotkey)
+      entry.rank = l.rank
+      entry.bonusPct = l.bonusPct
+      entry.fulfilled = Math.max(entry.fulfilled, l.wins)
+    }
+
+    return Array.from(byHotkey.values()).sort((a, b) => {
+      const rankDelta = (a.rank ?? Number.MAX_SAFE_INTEGER) - (b.rank ?? Number.MAX_SAFE_INTEGER)
+      if (rankDelta !== 0) return rankDelta
+      if (b.fulfilled !== a.fulfilled) return b.fulfilled - a.fulfilled
+      if (b.scored !== a.scored) return b.scored - a.scored
+      const aTime = a.lastActive ? new Date(a.lastActive).getTime() : 0
+      const bTime = b.lastActive ? new Date(b.lastActive).getTime() : 0
+      return bTime - aTime
+    })
+  }, [data])
+
   const handleRequestActivate = useCallback(
     (req: CosmosRequest) => {
       if (!data) return
@@ -847,6 +921,7 @@ export function Fulfillment({ onSync }: { onSync?: () => void } = {}) {
         open={historyOpen}
         requests={data.activeRequests}
         leaderboard={data.leaderboard}
+        hotkeyOptions={hotkeyOptions}
         leaderboardWindowStart={data.stats.leaderboardWindowStart ?? null}
         rejectionView={rejectionView}
         cosmosStats={historyStats}
@@ -984,6 +1059,7 @@ function RequestHistoryDialog({
   open,
   requests,
   leaderboard,
+  hotkeyOptions,
   leaderboardWindowStart,
   rejectionView,
   cosmosStats,
@@ -994,6 +1070,7 @@ function RequestHistoryDialog({
   open: boolean
   requests: ActiveRequest[]
   leaderboard: { rank: number; hotkey: string; wins: number; bonusPct: number }[]
+  hotkeyOptions: HotkeyOption[]
   leaderboardWindowStart: string | null
   rejectionView: RejectionView
   cosmosStats: { submissions: number; fulfilled: number; miners: number }
@@ -1112,6 +1189,10 @@ function RequestHistoryDialog({
                 </span>
               </button>
             </div>
+            <HotkeySearchDropdown
+              options={hotkeyOptions}
+              onSelect={onSelectMiner}
+            />
             {mode === 'requests' && (
             <div className="relative sm:flex-1 sm:max-w-md">
               <input
@@ -1184,6 +1265,133 @@ function RequestHistoryDialog({
         </div>
       </DialogContent>
     </Dialog>
+  )
+}
+
+function HotkeySearchDropdown({
+  options,
+  onSelect,
+}: {
+  options: HotkeyOption[]
+  onSelect: (hotkey: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const normalizedQuery = query.trim()
+  const exactOption = normalizedQuery
+    ? options.some((opt) => opt.hotkey.toLowerCase() === normalizedQuery.toLowerCase())
+    : false
+  const canOpenTypedHotkey =
+    normalizedQuery.length >= 8 && !normalizedQuery.includes(' ') && !exactOption
+
+  const selectHotkey = (hotkey: string) => {
+    const cleaned = hotkey.trim()
+    if (!cleaned) return
+    onSelect(cleaned)
+    setOpen(false)
+    setQuery('')
+  }
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen)
+        if (!nextOpen) setQuery('')
+      }}
+    >
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="inline-flex h-8 w-full items-center justify-between gap-2 rounded-md border border-slate-700/50 bg-slate-900/60 px-3 text-[11px] font-mono text-slate-200 transition-colors hover:border-slate-600 hover:bg-slate-800/60 focus:outline-none focus-visible:ring-1 focus-visible:ring-[color:var(--brand)] sm:w-64"
+          title="Open miner detail by hotkey"
+          aria-label="Open miner detail by hotkey"
+        >
+          <span className="truncate">Hotkey</span>
+          <span className="ml-auto text-[10px] text-slate-500 tabular-nums">
+            {options.length}
+          </span>
+          <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-slate-500" aria-hidden />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="w-[min(calc(100vw-3rem),26rem)] overflow-hidden border-slate-800 bg-slate-950 p-0 text-slate-100 shadow-2xl shadow-black/50"
+      >
+        <Command className="bg-slate-950 text-slate-100 [&_[data-slot=command-input-wrapper]]:border-slate-800">
+          <CommandInput
+            value={query}
+            onValueChange={setQuery}
+            placeholder="Search or paste hotkey"
+            className="font-mono text-xs text-slate-100 placeholder:text-slate-500"
+          />
+          <CommandList className="max-h-[19rem]">
+            <CommandEmpty className="py-6 text-center text-xs text-slate-500">
+              No matching hotkeys.
+            </CommandEmpty>
+            {canOpenTypedHotkey && (
+              <CommandGroup
+                heading="Typed hotkey"
+                className="[&_[cmdk-group-heading]]:font-mono [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[0.08em] [&_[cmdk-group-heading]]:text-slate-500"
+              >
+                <CommandItem
+                  value={`open:${normalizedQuery}`}
+                  onSelect={() => selectHotkey(normalizedQuery)}
+                  className="items-start rounded-md px-2 py-2 data-[selected=true]:bg-slate-800/80 data-[selected=true]:text-slate-100"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[10px] uppercase tracking-[0.08em] text-slate-500">
+                      Open hotkey
+                    </div>
+                    <code className="mt-0.5 block truncate font-mono text-xs text-slate-100">
+                      {normalizedQuery}
+                    </code>
+                  </div>
+                </CommandItem>
+              </CommandGroup>
+            )}
+            {options.length > 0 && (
+              <CommandGroup
+                heading="Activity hotkeys"
+                className="[&_[cmdk-group-heading]]:font-mono [&_[cmdk-group-heading]]:text-[10px] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[0.08em] [&_[cmdk-group-heading]]:text-slate-500"
+              >
+                {options.map((opt) => (
+                  <CommandItem
+                    key={opt.hotkey}
+                    value={opt.hotkey}
+                    onSelect={() => selectHotkey(opt.hotkey)}
+                    className="items-start rounded-md px-2 py-2 data-[selected=true]:bg-slate-800/80 data-[selected=true]:text-slate-100"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex min-w-0 items-center gap-2">
+                        {opt.rank !== undefined && (
+                          <span className="shrink-0 font-mono text-[10px] text-slate-500 tabular-nums">
+                            #{opt.rank}
+                          </span>
+                        )}
+                        <code className="truncate font-mono text-xs text-slate-100" title={opt.hotkey}>
+                          {truncateHotkey(opt.hotkey)}
+                        </code>
+                        {opt.bonusPct !== undefined && opt.bonusPct > 0 && (
+                          <span className="ml-auto shrink-0 font-mono text-[10px] text-amber-warm tabular-nums">
+                            +{opt.bonusPct}%
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 font-mono text-[10px] text-slate-500 tabular-nums">
+                        <span>{opt.scored.toLocaleString()} scored</span>
+                        <span>{opt.fulfilled.toLocaleString()} fulfilled</span>
+                        {opt.lastActive && <span>{formatRelative(opt.lastActive)}</span>}
+                      </div>
+                    </div>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            )}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   )
 }
 
