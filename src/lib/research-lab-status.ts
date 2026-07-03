@@ -269,7 +269,7 @@ export const RESEARCH_LAB_STATUS_FILTER_OPTIONS: ResearchLabStatusFilterOption[]
   { value: 'scored', label: 'Scored / No Gain' },
   { value: 'completed_no_candidate', label: 'No Candidate' },
   { value: 'failed', label: 'Failed' },
-  { value: 'awaiting_payment', label: 'Payment Pending' },
+  { value: 'awaiting_payment', label: 'Awaiting Funding' },
 ]
 
 export const RESEARCH_LAB_OUTCOME_FILTER_OPTIONS = RESEARCH_LAB_STATUS_FILTER_OPTIONS
@@ -308,11 +308,7 @@ export function deriveResearchLabLoopStatus(input: ResearchLabLoopStatusInput): 
   if (modelOutcome) return modelOutcome
 
   if (projectedLabel === 'awaiting_payment') {
-    return status('awaiting_payment', 'Awaiting payment', 'pending', undefined, {
-      tone: 'info',
-      label: 'Payment pending',
-      detail: 'No payment has been recorded for this research loop yet.',
-    })
+    return status('awaiting_payment', 'Awaiting funding', 'pending')
   }
 
   if (FAILED_VALUES.has(projectedLabel)) {
@@ -528,11 +524,7 @@ function deriveCanonicalResearchLabLoopStatus(input: ResearchLabLoopStatusInput)
   if (modelResult) return modelResult
 
   if (hasAny(canonicalValues, NO_PAYMENT_VALUES)) {
-    return status('awaiting_payment', 'Awaiting payment', 'pending', undefined, canonicalDetailNote({
-      tone: 'info',
-      label: 'Payment pending',
-      detail: statusDetail || detailForReason(opsReason) || 'No payment has been recorded for this research loop yet.',
-    }))
+    return status('awaiting_payment', 'Awaiting funding', 'pending')
   }
 
   if (hasExplicitCreditBlock(canonicalValues, statusDetail, opsWarnings)) {
@@ -986,6 +978,7 @@ function labelForStatus(value: string): string {
     needs_rescore: 'Stale',
     stale: 'Stale',
     waiting_for_baseline: 'Waiting for baseline',
+    awaiting_payment: 'Awaiting funding',
     not_started: 'Not started',
     failed: 'Failed',
   }

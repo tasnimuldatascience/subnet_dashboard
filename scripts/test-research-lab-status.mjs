@@ -35,7 +35,7 @@ try {
 
   const cases = [
     {
-      name: 'canonical no payment renders Awaiting payment',
+      name: 'canonical no payment renders Awaiting funding without duplicate action',
       input: {
         publicStatus: 'awaiting_payment',
         paymentState: 'no_payment',
@@ -44,12 +44,11 @@ try {
       },
       expected: {
         key: 'awaiting_payment',
-        label: 'Awaiting payment',
+        label: 'Awaiting funding',
         band: 'pending',
         active: false,
         scoring: false,
-        actionLabel: 'Payment pending',
-        actionDetail: 'No payment has been recorded for this research loop yet.',
+        noAction: true,
       },
     },
     {
@@ -510,6 +509,9 @@ try {
     if (fixture.expected.actionDetail) {
       assert.equal(actual.action?.detail, fixture.expected.actionDetail, fixture.name)
     }
+    if (fixture.expected.noAction) {
+      assert.equal(actual.action, undefined, fixture.name)
+    }
   }
 
   const optionValues = RESEARCH_LAB_STATUS_FILTER_OPTIONS.map((option) => option.value)
@@ -724,7 +726,7 @@ try {
   assert.deepEqual(
     byId(filterResearchLabActivityLoops(activityLoops, { status: 'awaiting_payment' })),
     ['awaiting-payment-alpha'],
-    'status filter should find awaiting payment loops'
+    'status filter should find awaiting funding loops'
   )
   assert.deepEqual(
     byId(filterResearchLabActivityLoops(activityLoops, { status: 'active' })),
