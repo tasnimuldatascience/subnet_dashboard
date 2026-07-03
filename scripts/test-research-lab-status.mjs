@@ -409,6 +409,26 @@ try {
       },
     },
     {
+      name: 'promoted outcome renders Model Improvement',
+      input: {
+        outcomeLabel: 'promoted',
+        outcomeBand: 'promoted',
+        currentCandidateStatus: 'promoted',
+        candidateCount: 1,
+        scoredCandidateCount: 1,
+        runId: 'run-promoted',
+        receiptId: 'receipt-promoted',
+      },
+      expected: {
+        key: 'promoted',
+        label: 'Model Improvement',
+        band: 'promoted',
+        active: false,
+        scoring: false,
+        promising: true,
+      },
+    },
+    {
       name: 'scored_no_gain with failed band and failed queue stays No gain',
       input: {
         outcomeLabel: 'scored_no_gain',

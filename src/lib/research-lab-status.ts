@@ -265,7 +265,7 @@ const PENDING_OR_BLOCKING_STATUS_KEYS = new Set([
 export const RESEARCH_LAB_STATUS_FILTER_OPTIONS: ResearchLabStatusFilterOption[] = [
   { value: 'all', label: 'All' },
   { value: 'active', label: 'Active' },
-  { value: 'promoted', label: 'Promoted' },
+  { value: 'promoted', label: 'Model Improvement' },
   { value: 'scored', label: 'Scored / No Gain' },
   { value: 'completed_no_candidate', label: 'No Candidate' },
   { value: 'failed', label: 'Failed' },
@@ -687,7 +687,7 @@ function normalizedModelOutcomeStatus(input: NormalizedModelOutcomeStatusInput):
   const improvementGateDecision = normalize(input.improvementGateDecision)
 
   if (hasAny(statusValues, PROMOTED_VALUES) || projectedLabel === 'promoted') {
-    return status('promoted', 'Promoted', canonicalBand(projectedBand, 'promoted'), input.note, input.action)
+    return status('promoted', 'Model Improvement', canonicalBand(projectedBand, 'promoted'), input.note, input.action)
   }
 
   if (hasAny(statusValues, SCORED_NO_GAIN_VALUES) || projectedBand === 'no_gain') {
@@ -742,16 +742,16 @@ function modelImprovedStatus(
   action?: ResearchLabLoopStatusNote,
 ): ResearchLabLoopStatus {
   if (projectedLabel === 'promoted' || candidateStatus === 'promoted' || promotionSignals.includes('promoted')) {
-    return status('promoted', 'Promoted', canonicalBand(projectedBand, 'promoted'), undefined, action)
+    return status('promoted', 'Model Improvement', canonicalBand(projectedBand, 'promoted'), undefined, action)
   }
   if (projectedLabel === 'winner' || candidateStatus === 'winner' || promotionSignals.includes('winner')) {
-    return status('promoted', 'Promoted', canonicalBand(projectedBand, 'promoted'), undefined, action)
+    return status('promoted', 'Model Improvement', canonicalBand(projectedBand, 'promoted'), undefined, action)
   }
   if (projectedLabel === 'high_gain' || candidateStatus === 'high_gain' || promotionSignals.includes('high_gain')) {
-    return status('promoted', 'Promoted', canonicalBand(projectedBand, 'high_gain'), undefined, action)
+    return status('promoted', 'Model Improvement', canonicalBand(projectedBand, 'high_gain'), undefined, action)
   }
   if (projectedLabel === 'promotion_passed' || promotionSignals.includes('promotion_passed')) {
-    return status('promoted', 'Promoted', canonicalBand(projectedBand, 'passed_threshold'), undefined, action)
+    return status('promoted', 'Model Improvement', canonicalBand(projectedBand, 'passed_threshold'), undefined, action)
   }
   return status('scored_promising', 'Promising', canonicalBand(projectedBand, 'passed_threshold'), undefined, action)
 }
@@ -974,12 +974,12 @@ function labelForStatus(value: string): string {
     scored: 'Promising',
     scored_promising: 'Promising',
     scored_no_gain: 'No gain',
-    promotion_passed: 'Promoted',
-    active_version_created: 'Promoted',
-    champion_reward_created: 'Promoted',
-    merged: 'Promoted',
-    reward_created: 'Promoted',
-    promoted: 'Promoted',
+    promotion_passed: 'Model Improvement',
+    active_version_created: 'Model Improvement',
+    champion_reward_created: 'Model Improvement',
+    merged: 'Model Improvement',
+    reward_created: 'Model Improvement',
+    promoted: 'Model Improvement',
     scoring_failed: 'Scoring failed',
     failed_after_scoring: 'Failed after scoring',
     blocked_for_credit: 'Waiting for credits',
