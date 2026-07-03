@@ -267,6 +267,7 @@ type ResearchLoop = {
   lastActivityAt: string
   submittedAt: string
   statusNote?: LoopStatusNote
+  actionNote?: LoopStatusNote
 }
 
 type LoopTimelinePhase =
@@ -1691,7 +1692,7 @@ function ResearchActivityDialog({
             </div>
           ) : (
             <div>
-              <div className="sticky top-0 z-10 hidden grid-cols-[minmax(170px,1.05fr)_minmax(0,1.65fr)_86px_122px_86px] gap-4 border-b border-[var(--line)] bg-[var(--canvas)] px-5 py-2 font-mono text-[9.5px] uppercase tracking-[0.12em] text-[var(--muted-2)] backdrop-blur md:grid">
+              <div className="sticky top-0 z-10 hidden grid-cols-[minmax(170px,1.05fr)_minmax(0,1.65fr)_136px_138px_86px] gap-4 border-b border-[var(--line)] bg-[var(--canvas)] px-5 py-2 font-mono text-[9.5px] uppercase tracking-[0.12em] text-[var(--muted-2)] backdrop-blur md:grid">
                 <span>Miner / direction</span>
                 <span>Focus</span>
                 <span className="text-right">Candidates</span>
@@ -1798,7 +1799,7 @@ function ActivityPanelRow({
       tabIndex={0}
       onClick={() => onSelect(loop)}
       onKeyDown={handleKeyDown}
-      className="grid cursor-pointer gap-3 border-b border-[var(--line)] px-5 py-4 transition-colors last:border-b-0 hover-bg-warm premium-focus md:grid-cols-[minmax(170px,1.05fr)_minmax(0,1.65fr)_86px_122px_86px] md:items-start md:gap-4"
+      className="grid cursor-pointer gap-3 border-b border-[var(--line)] px-5 py-4 transition-colors last:border-b-0 hover-bg-warm premium-focus md:grid-cols-[minmax(170px,1.05fr)_minmax(0,1.65fr)_136px_138px_86px] md:items-start md:gap-4"
       aria-label={`Open timeline for ticket ${loop.ticketId}`}
       title="Open loop timeline"
     >
@@ -1845,17 +1846,14 @@ function ActivityPanelRow({
         ) : null}
       </div>
 
-      <div className="flex gap-4 font-mono text-[10.5px] text-[var(--muted-2)] md:block md:text-right">
-        <span>
-          <span className="text-[var(--muted)]">{loop.candidateCount}</span> candidates
-        </span>
-        <span className="md:mt-1 md:block">
-          <span className="text-[var(--muted)]">{loop.scoredCandidateCount}</span> scored
-        </span>
-      </div>
+      <CandidateCountSummary
+        candidateCount={loop.candidateCount}
+        scoredCandidateCount={loop.scoredCandidateCount}
+      />
 
-      <div className="flex min-w-0 md:justify-center">
+      <div className="flex min-w-0 flex-wrap items-start gap-1.5 md:flex-col md:items-center">
         <OutcomeBadge label={loop.statusLabel || readableTag(loop.outcomeLabel)} band={loop.outcomeBand} />
+        {loop.actionNote ? <ActionBadge note={loop.actionNote} /> : null}
       </div>
 
       <div className="font-mono text-[10.5px] text-[var(--muted-2)]">
@@ -1960,6 +1958,7 @@ function LoopTimelineDialog({
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <OutcomeBadge label={loop.statusLabel || readableTag(loop.outcomeLabel)} band={loop.outcomeBand} />
+                  {loop.actionNote ? <ActionBadge note={loop.actionNote} /> : null}
                   <span className="font-mono text-[10.5px] text-[var(--muted-2)]">
                     Ticket <span className="text-[var(--muted)]">{shortId(loop.ticketId)}</span>
                   </span>
@@ -2182,6 +2181,46 @@ function loopDirectionKeys(loop: ResearchLoop): string[] {
   return getResearchLabLoopDirectionKeys(loop)
 }
 
+function CandidateCountSummary({
+  candidateCount,
+  scoredCandidateCount,
+}: {
+  candidateCount: number
+  scoredCandidateCount: number
+}) {
+  const candidateTotal = Math.max(0, numberOr(candidateCount, 0))
+  const scoredTotal = Math.max(0, numberOr(scoredCandidateCount, 0))
+  const tooltip = candidateTotal === 1 && scoredTotal === 0
+    ? 'Candidate was created but did not complete scoring.'
+    : candidateTotal === 0
+      ? 'No candidate was produced for this loop.'
+      : `${candidateTotal.toLocaleString()} candidate${candidateTotal === 1 ? '' : 's'}; ${scoredTotal.toLocaleString()} scored.`
+  const label = candidateTotal === 0
+    ? 'No candidate produced.'
+    : `${candidateTotal.toLocaleString()} candidate${candidateTotal === 1 ? '' : 's'} · ${scoredTotal.toLocaleString()} scored`
+
+  return (
+    <div
+      className="font-mono text-[10.5px] leading-relaxed text-[var(--muted-2)] md:text-right"
+      title={tooltip}
+    >
+      {candidateTotal === 0 ? (
+        <span>{label}</span>
+      ) : (
+        <span>
+          <span className="text-[var(--muted)]">{candidateTotal.toLocaleString()}</span>
+          {' '}
+          candidate{candidateTotal === 1 ? '' : 's'}
+          <span className="text-[var(--faint)]"> · </span>
+          <span className="text-[var(--muted)]">{scoredTotal.toLocaleString()}</span>
+          {' '}
+          scored
+        </span>
+      )}
+    </div>
+  )
+}
+
 function OutcomeBadge({ label, band }: { label: string; band: string }) {
   const tone = outcomeTone(band)
   return (
@@ -2190,6 +2229,19 @@ function OutcomeBadge({ label, band }: { label: string; band: string }) {
       style={{ color: tone.color, borderColor: tone.border, background: tone.bg }}
     >
       {label}
+    </span>
+  )
+}
+
+function ActionBadge({ note }: { note: LoopStatusNote }) {
+  const tone = statusNoteTone(note.tone)
+  return (
+    <span
+      className="max-w-full whitespace-normal break-words rounded-[3px] border px-2 py-0.5 text-center font-mono text-[9px] uppercase leading-[1.25] tracking-[0.08em]"
+      style={{ color: tone.color, borderColor: tone.border, background: tone.bg }}
+      title={note.detail}
+    >
+      {note.label}
     </span>
   )
 }

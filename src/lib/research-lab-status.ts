@@ -42,6 +42,7 @@ export type ResearchLabLoopStatus = {
   label: string
   band: string
   note?: ResearchLabLoopStatusNote
+  action?: ResearchLabLoopStatusNote
   active: boolean
   scoring: boolean
   completed: boolean
@@ -61,6 +62,7 @@ export type ResearchLabActivityFilterInput = {
   statusKey?: string | null
   statusLabel?: string | null
   statusNote?: ResearchLabLoopStatusNote | null
+  actionNote?: ResearchLabLoopStatusNote | null
   opsWarnings?: string[] | null
   lastActivityAt?: string | null
 }
@@ -150,6 +152,8 @@ const REBASE_UNAVAILABLE_VALUES = new Set([
 ])
 
 const SCORED_NO_GAIN_VALUES = new Set(['scored_no_gain', 'no_gain'])
+const PROMOTED_VALUES = new Set(['promoted'])
+const COMPLETED_NO_CANDIDATE_VALUES = new Set(['completed_no_candidate'])
 const BELOW_THRESHOLD_VALUES = new Set(['below_threshold', 'not_eligible', 'rejected'])
 const PASSED_THRESHOLD_BANDS = new Set(['passed_threshold', 'promoted', 'high_gain', 'winner'])
 const PROMOTION_PASS_VALUES = new Set([
@@ -190,11 +194,10 @@ const BASELINE_NOT_READY_VALUES = new Set([
   'waiting_for_baseline',
 ])
 
-const ACTIVE_STATUS_KEYS = new Set(['queued', 'running', 'scoring'])
+const ACTIVE_STATUS_KEYS = new Set(['queued', 'running', 'started', 'scoring'])
 const SCORED_STATUS_KEYS = new Set([
   'scored',
   'scored_no_gain',
-  'small_gain',
   'scored_promising',
   'promotion_passed',
   'active_version_created',
@@ -204,13 +207,13 @@ const SCORED_STATUS_KEYS = new Set([
   'promoted',
   'winner',
   'high_gain',
+  'failed_after_scoring',
 ])
 const COMPLETED_STATUS_KEYS = new Set([
   'candidate_generation_complete',
   'completed',
   'scored',
   'scored_no_gain',
-  'small_gain',
   'scored_promising',
   'promotion_passed',
   'active_version_created',
@@ -221,10 +224,13 @@ const COMPLETED_STATUS_KEYS = new Set([
   'winner',
   'high_gain',
   'completed_no_candidate',
+  'scoring_failed',
+  'failed_after_scoring',
   'rebase_unavailable',
   'failed',
 ])
 const PROMISING_STATUS_KEYS = new Set([
+  'scored_promising',
   'promotion_passed',
   'active_version_created',
   'champion_reward_created',
@@ -235,34 +241,35 @@ const PROMISING_STATUS_KEYS = new Set([
   'high_gain',
 ])
 const PROMISING_BANDS = PASSED_THRESHOLD_BANDS
-const NO_GAIN_OR_FAILED_KEYS = new Set(['scored_no_gain', 'failed', 'rebase_unavailable'])
+const NO_GAIN_OR_FAILED_KEYS = new Set([
+  'scored_no_gain',
+  'completed_no_candidate',
+  'scoring_failed',
+  'failed_after_scoring',
+  'failed',
+  'rebase_unavailable',
+])
 const PENDING_OR_BLOCKING_STATUS_KEYS = new Set([
   'queued',
+  'started',
   'waiting_for_baseline',
   'blocked_for_credit',
   'needs_rescore',
+  'stale',
   'not_started',
   'awaiting_payment',
   'paid_not_started',
-  'failed',
   'rebase_unavailable',
 ])
 
 export const RESEARCH_LAB_STATUS_FILTER_OPTIONS: ResearchLabStatusFilterOption[] = [
-  { value: 'all', label: 'All statuses' },
-  { value: 'awaiting_payment', label: 'Awaiting payment' },
-  { value: 'paid_not_started', label: 'Paid, not started' },
-  { value: 'running', label: 'Running' },
-  { value: 'scoring', label: 'Scoring' },
-  { value: 'waiting_for_baseline', label: 'Waiting for baseline' },
-  { value: 'needs_rescore', label: 'Needs rescore' },
-  { value: 'blocked_for_credit', label: 'Blocked for credit' },
-  { value: 'scored_no_gain', label: 'Completed' },
-  { value: 'small_gain', label: 'Scored, below threshold' },
-  { value: 'scored', label: 'Model improved' },
-  { value: 'completed_no_candidate', label: 'Completed no candidate' },
-  { value: 'failed', label: 'Needs review' },
-  { value: 'ops_warnings', label: 'Ops warnings' },
+  { value: 'all', label: 'All' },
+  { value: 'active', label: 'Active' },
+  { value: 'promoted', label: 'Promoted' },
+  { value: 'scored', label: 'Scored / No Gain' },
+  { value: 'completed_no_candidate', label: 'No Candidate' },
+  { value: 'failed', label: 'Failed' },
+  { value: 'awaiting_payment', label: 'Payment Pending' },
 ]
 
 export const RESEARCH_LAB_OUTCOME_FILTER_OPTIONS = RESEARCH_LAB_STATUS_FILTER_OPTIONS
@@ -280,7 +287,7 @@ export function deriveResearchLabLoopStatus(input: ResearchLabLoopStatusInput): 
   const receiptStatus = normalize(input.currentReceiptStatus ?? input.receiptStatus)
   const currentStatus = normalize(input.currentStatus)
   const operationalValues = [candidateStatus, queueStatus, receiptStatus, currentStatus].filter(Boolean)
-  const scoredOpsNote = scoredOutcomeOpsFailureNote(
+  const scoredOpsAction = scoredOutcomeOpsFailureNote(
     projectedLabel,
     candidateStatus,
     queueStatus,
@@ -296,22 +303,26 @@ export function deriveResearchLabLoopStatus(input: ResearchLabLoopStatusInput): 
     promotionEventType: input.promotionEventType,
     promotionEvent: input.promotionEvent,
     eventType: input.eventType,
-    note: scoredOpsNote,
+    action: scoredOpsAction,
   })
   if (modelOutcome) return modelOutcome
 
-  if (FAILED_VALUES.has(projectedLabel)) {
-    return status('failed', 'Needs review', 'failed', {
-      tone: 'error',
-      label: 'Needs review',
-      detail: 'The canonical public outcome is terminal failed.',
+  if (projectedLabel === 'awaiting_payment') {
+    return status('awaiting_payment', 'Awaiting payment', 'pending', undefined, {
+      tone: 'info',
+      label: 'Payment pending',
+      detail: 'No payment has been recorded for this research loop yet.',
     })
   }
 
+  if (FAILED_VALUES.has(projectedLabel)) {
+    return terminalFailureStatus(input, scoredOpsAction)
+  }
+
   if (isNeedsRescore(projectedLabel, candidateStatus, reason)) {
-    return status('needs_rescore', 'Needs rescore', 'stale', {
+    return status('stale', 'Stale', 'stale', undefined, {
       tone: 'warning',
-      label: 'Needs rescore',
+      label: 'Stale recovery needed',
       detail: 'Candidate was created against an older parent model and needs to be rebased or rescored against the current parent.',
     })
   }
@@ -330,6 +341,7 @@ export function deriveResearchLabLoopStatus(input: ResearchLabLoopStatusInput): 
   if (ACTIVE_STATUS_KEYS.has(projectedLabel) && (!operationalValues.length || hasAny(operationalValues, ACTIVE_VALUES))) {
     if (projectedLabel === 'scoring') return status('scoring', 'Scoring', 'running')
     if (projectedLabel === 'running') return status('running', 'Running', 'running')
+    if (projectedLabel === 'started') return status('started', 'Started', 'running')
     return status('queued', 'Queued', 'pending')
   }
 
@@ -366,28 +378,25 @@ export function researchLabStatusLabel(value: string | null | undefined): string
 
 export function researchLabStatusFilterKey(
   value: string | null | undefined,
-  loop?: Pick<ResearchLabActivityFilterInput, 'outcomeBand' | 'statusNote' | 'opsWarnings'>,
+  _loop?: Pick<ResearchLabActivityFilterInput, 'statusNote' | 'opsWarnings'>,
 ): string {
+  void _loop
   const normalized = normalize(value)
-  const normalizedBand = normalize(loop?.outcomeBand)
-  if (normalized === 'ops_warnings') return 'ops_warnings'
-  if (normalized === 'small_gain') return 'small_gain'
-  if (normalized === 'scored' && normalizedBand === 'small_gain') return 'small_gain'
-  if (normalized === 'scored_promising') {
-    if (PROMISING_BANDS.has(normalizedBand)) return 'scored'
-    return 'small_gain'
-  }
-  if (normalized === 'promotion_passed') return 'scored'
-  if (normalized === 'active_version_created') return 'scored'
-  if (normalized === 'champion_reward_created') return 'scored'
-  if (normalized === 'merged') return 'scored'
-  if (normalized === 'reward_created') return 'scored'
-  if (normalized === 'promoted') return 'scored'
-  if (normalized === 'winner') return 'scored'
-  if (normalized === 'high_gain') return 'scored'
-  if (normalized === 'rebase_unavailable') return 'failed'
+  if (ACTIVE_STATUS_KEYS.has(normalized)) return 'active'
+  if (normalized === 'promoted' || normalized === 'winner' || normalized === 'high_gain') return 'promoted'
+  if (normalized === 'promotion_passed') return 'promoted'
+  if (normalized === 'active_version_created') return 'promoted'
+  if (normalized === 'champion_reward_created') return 'promoted'
+  if (normalized === 'merged') return 'promoted'
+  if (normalized === 'reward_created') return 'promoted'
+  if (normalized === 'scored_promising') return 'scored'
+  if (normalized === 'scored_no_gain') return 'scored'
+  if (normalized === 'scored') return 'scored'
+  if (normalized === 'completed_no_candidate') return 'completed_no_candidate'
+  if (normalized === 'scoring_failed' || normalized === 'failed_after_scoring') return 'failed'
+  if (normalized === 'failed' || normalized === 'rebase_unavailable') return 'failed'
+  if (normalized === 'awaiting_payment') return 'awaiting_payment'
   if (normalized === 'not_started') return 'paid_not_started'
-  if (loopHasOpsWarning(loop)) return normalized
   return normalized
 }
 
@@ -494,7 +503,7 @@ function deriveCanonicalResearchLabLoopStatus(input: ResearchLabLoopStatusInput)
     paymentState,
     opsReason,
   ].filter(Boolean)
-  const scoredNote = canonicalOpsWarningNote(opsWarnings) ??
+  const scoredAction = canonicalOpsWarningNote(opsWarnings) ??
     scoredOutcomeOpsFailureNote(
       resultState || publicStatus || legacyOutcome,
       candidateState,
@@ -514,38 +523,38 @@ function deriveCanonicalResearchLabLoopStatus(input: ResearchLabLoopStatusInput)
       promotionEvent: input.promotionEvent,
       eventType: input.eventType,
     },
-    scoredNote
+    scoredAction
   )
   if (modelResult) return modelResult
 
   if (hasAny(canonicalValues, NO_PAYMENT_VALUES)) {
-    return status('awaiting_payment', 'Awaiting payment', 'pending', canonicalDetailNote({
+    return status('awaiting_payment', 'Awaiting payment', 'pending', undefined, canonicalDetailNote({
       tone: 'info',
-      label: 'Awaiting payment',
+      label: 'Payment pending',
       detail: statusDetail || detailForReason(opsReason) || 'No payment has been recorded for this research loop yet.',
     }))
   }
 
   if (hasExplicitCreditBlock(canonicalValues, statusDetail, opsWarnings)) {
-    return status('blocked_for_credit', 'Waiting for credits', 'blocked', canonicalDetailNote({
+    return status('blocked_for_credit', 'Waiting for credits', 'blocked', undefined, canonicalDetailNote({
       tone: 'warning',
-      label: 'Blocked for credit',
+      label: 'Retry available',
       detail: statusDetail || detailForReason(opsReason) || 'The run hit a resumable credit limit and is waiting for credits.',
     }))
   }
 
   if (isRebaseUnavailable(canonicalValues, statusDetail)) {
-    return status('rebase_unavailable', 'Rebase unavailable', 'failed', canonicalDetailNote({
-      tone: 'error',
-      label: 'Rebase unavailable',
+    return status('stale', 'Stale', 'stale', undefined, canonicalDetailNote({
+      tone: 'warning',
+      label: 'Stale recovery needed',
       detail: statusDetail || detailForReason(opsReason) || 'The stale parent model could not be rebased for this loop.',
     }))
   }
 
   if (isNeedsRescore(publicStatus || resultState, candidateState, opsReason)) {
-    return status('needs_rescore', 'Needs rescore', 'stale', canonicalDetailNote({
+    return status('stale', 'Stale', 'stale', undefined, canonicalDetailNote({
       tone: 'warning',
-      label: 'Needs rescore',
+      label: 'Stale recovery needed',
       detail: statusDetail || 'Candidate was created against an older parent model and needs to be rebased or rescored against the current parent.',
     }))
   }
@@ -559,15 +568,11 @@ function deriveCanonicalResearchLabLoopStatus(input: ResearchLabLoopStatusInput)
   }
 
   if (publicStatus === 'completed_no_candidate' || resultState === 'completed_no_candidate') {
-    return status('completed_no_candidate', 'Completed no candidate', canonicalBand(projectedBand, 'completed'))
+    return completedNoCandidateStatus(scoredAction)
   }
 
   if (isCanonicalTerminalFailure(publicStatus, resultState, candidateState, executionState)) {
-    return status('failed', 'Needs review', 'failed', canonicalDetailNote({
-      tone: 'error',
-      label: 'Needs review',
-      detail: statusDetail || detailForReason(opsReason) || 'The canonical backend lifecycle state is terminal failed.',
-    }))
+    return terminalFailureStatus(input, scoredAction)
   }
 
   if (publicStatus === 'scoring' || resultState === 'scoring' || candidateState === 'scoring') {
@@ -575,6 +580,7 @@ function deriveCanonicalResearchLabLoopStatus(input: ResearchLabLoopStatusInput)
   }
 
   if (hasAny(canonicalValues, ACTIVE_VALUES)) {
+    if (publicStatus === 'started' || executionState === 'started') return status('started', 'Started', 'running')
     return status('running', 'Running', 'running')
   }
 
@@ -596,7 +602,7 @@ function deriveCanonicalResearchLabLoopStatus(input: ResearchLabLoopStatusInput)
   }
 
   const fallback = resultState || publicStatus || executionState || paymentState || candidateState || legacyOutcome || 'submitted'
-  return status(fallback, labelForStatus(fallback), canonicalBand(projectedBand, 'pending'), canonicalOpsWarningNote(opsWarnings))
+  return status(fallback, labelForStatus(fallback), canonicalBand(projectedBand, 'pending'), undefined, canonicalOpsWarningNote(opsWarnings))
 }
 
 function hasCanonicalLifecycleFields(input: ResearchLabLoopStatusInput): boolean {
@@ -627,7 +633,7 @@ function canonicalModelResultStatus(
     'promotionEventType' |
     'promotionStatus'
   >,
-  note?: ResearchLabLoopStatusNote,
+  action?: ResearchLabLoopStatusNote,
 ): ResearchLabLoopStatus | null {
   return normalizedModelOutcomeStatus({
     projectedLabel: resultState || publicStatus || candidateState,
@@ -640,7 +646,7 @@ function canonicalModelResultStatus(
     promotionEventType: signals.promotionEventType,
     promotionEvent: signals.promotionEvent,
     eventType: signals.eventType,
-    note,
+    action,
   })
 }
 
@@ -657,6 +663,7 @@ type NormalizedModelOutcomeStatusInput = Pick<ResearchLabLoopStatusInput,
   resultState?: string
   publicStatus?: string
   note?: ResearchLabLoopStatusNote
+  action?: ResearchLabLoopStatusNote
 }
 
 function normalizedModelOutcomeStatus(input: NormalizedModelOutcomeStatusInput): ResearchLabLoopStatus | null {
@@ -679,8 +686,20 @@ function normalizedModelOutcomeStatus(input: NormalizedModelOutcomeStatusInput):
   ].map(normalize).filter(Boolean)
   const improvementGateDecision = normalize(input.improvementGateDecision)
 
+  if (hasAny(statusValues, PROMOTED_VALUES) || projectedLabel === 'promoted') {
+    return status('promoted', 'Promoted', canonicalBand(projectedBand, 'promoted'), input.note, input.action)
+  }
+
   if (hasAny(statusValues, SCORED_NO_GAIN_VALUES) || projectedBand === 'no_gain') {
-    return status('scored_no_gain', 'Completed', 'no_gain', input.note)
+    return noGainStatus(input.action)
+  }
+
+  if (hasAny(statusValues, COMPLETED_NO_CANDIDATE_VALUES)) {
+    return completedNoCandidateStatus(input.action)
+  }
+
+  if (statusValues.includes('scored_promising')) {
+    return status('scored_promising', 'Promising', canonicalBand(projectedBand, 'small_gain'), input.note, input.action)
   }
 
   const hasScoredLikeOutcome =
@@ -696,7 +715,7 @@ function normalizedModelOutcomeStatus(input: NormalizedModelOutcomeStatusInput):
     hasAny(promotionSignals, BELOW_THRESHOLD_VALUES)
 
   if (hasBelowThresholdSignal && hasScoredLikeOutcome) {
-    return smallGainStatus()
+    return status('scored_promising', 'Promising', canonicalBand(projectedBand, 'small_gain'), input.note, input.action)
   }
 
   const hasPassedThreshold =
@@ -705,15 +724,11 @@ function normalizedModelOutcomeStatus(input: NormalizedModelOutcomeStatusInput):
     hasAny(promotionSignals, PROMOTION_PASS_VALUES)
 
   if (hasPassedThreshold) {
-    return modelImprovedStatus(projectedLabel, projectedBand, candidateStatus, promotionSignals, input.note)
-  }
-
-  if (hasAny(statusValues, SCORED_PROMISING_VALUES)) {
-    return smallGainStatus()
+    return modelImprovedStatus(projectedLabel, projectedBand, candidateStatus, promotionSignals, input.action)
   }
 
   if (projectedLabel === 'scored' || resultState === 'scored' || publicStatus === 'scored') {
-    return status('scored', 'Model improved', canonicalBand(projectedBand, 'completed'), input.note)
+    return status('scored_promising', 'Promising', canonicalBand(projectedBand, 'completed'), input.note, input.action)
   }
 
   return null
@@ -724,36 +739,72 @@ function modelImprovedStatus(
   projectedBand: string,
   candidateStatus: string,
   promotionSignals: string[],
-  note?: ResearchLabLoopStatusNote,
+  action?: ResearchLabLoopStatusNote,
 ): ResearchLabLoopStatus {
   if (projectedLabel === 'promoted' || candidateStatus === 'promoted' || promotionSignals.includes('promoted')) {
-    return status('promoted', 'Promoted', canonicalBand(projectedBand, 'promoted'), note)
+    return status('promoted', 'Promoted', canonicalBand(projectedBand, 'promoted'), undefined, action)
   }
   if (projectedLabel === 'winner' || candidateStatus === 'winner' || promotionSignals.includes('winner')) {
-    return status('winner', 'Winner', canonicalBand(projectedBand, 'promoted'), note)
+    return status('promoted', 'Promoted', canonicalBand(projectedBand, 'promoted'), undefined, action)
   }
   if (projectedLabel === 'high_gain' || candidateStatus === 'high_gain' || promotionSignals.includes('high_gain')) {
-    return status('high_gain', 'High gain', canonicalBand(projectedBand, 'high_gain'), note)
+    return status('promoted', 'Promoted', canonicalBand(projectedBand, 'high_gain'), undefined, action)
   }
   if (projectedLabel === 'promotion_passed' || promotionSignals.includes('promotion_passed')) {
-    return status('promotion_passed', 'Promotion passed', canonicalBand(projectedBand, 'passed_threshold'), note)
+    return status('promoted', 'Promoted', canonicalBand(projectedBand, 'passed_threshold'), undefined, action)
   }
-  return status('scored', 'Model improved', canonicalBand(projectedBand, 'passed_threshold'), note)
+  return status('scored_promising', 'Promising', canonicalBand(projectedBand, 'passed_threshold'), undefined, action)
 }
 
-function smallGainStatus(): ResearchLabLoopStatus {
-  return status('small_gain', 'Small gain', 'small_gain', {
+function noGainStatus(action?: ResearchLabLoopStatusNote): ResearchLabLoopStatus {
+  return status('scored_no_gain', 'No gain', 'no_gain', finalOutcomeNote(
+    'Final outcome: scoring did not produce a promoted candidate.'
+  ), action)
+}
+
+function completedNoCandidateStatus(action?: ResearchLabLoopStatusNote): ResearchLabLoopStatus {
+  return status('completed_no_candidate', 'No candidate', 'completed', finalOutcomeNote(
+    'Final outcome: no valid candidate was produced.'
+  ), action)
+}
+
+function terminalFailureStatus(
+  input: Pick<ResearchLabLoopStatusInput, 'candidateCount' | 'scoredCandidateCount'>,
+  action?: ResearchLabLoopStatusNote,
+): ResearchLabLoopStatus {
+  const candidateCount = countValue(input.candidateCount)
+  const scoredCandidateCount = countValue(input.scoredCandidateCount)
+  if (candidateCount === 0) {
+    return completedNoCandidateStatus(action)
+  }
+  if (scoredCandidateCount === 0) {
+    return status('scoring_failed', 'Scoring failed', 'failed', finalOutcomeNote(
+      'Final outcome: candidate scoring exhausted retry budget.'
+    ), action)
+  }
+  return status('failed_after_scoring', 'Failed after scoring', 'failed', finalOutcomeNote(
+    'Final outcome: scoring did not produce a promoted candidate.'
+  ), action)
+}
+
+function finalOutcomeNote(detail: string): ResearchLabLoopStatusNote {
+  return {
     tone: 'info',
-    label: 'Small gain',
-    detail: 'Below threshold',
-  })
+    label: 'Final',
+    detail,
+  }
+}
+
+function countValue(value: number | null | undefined): number {
+  const numeric = Number(value ?? 0)
+  return Number.isFinite(numeric) ? Math.max(0, numeric) : 0
 }
 
 function canonicalOpsWarningNote(opsWarnings: string[]): ResearchLabLoopStatusNote | undefined {
   if (opsWarnings.length === 0) return undefined
   return {
     tone: 'warning',
-    label: 'Ops warning',
+    label: 'Review recommended',
     detail: opsWarnings[0],
   }
 }
@@ -777,8 +828,8 @@ function scoredOutcomeOpsFailureNote(
   if (candidateStatus !== 'scored' && !isCanonicalScoredOutcome(projectedLabel)) return undefined
   return {
     tone: 'warning',
-    label: 'Ops warning',
-    detail: 'Queue or receipt state is terminal failed, but the canonical model outcome is preserved.',
+    label: 'Review recommended',
+    detail: 'Queue or receipt state is terminal failed, but the final model outcome is preserved.',
   }
 }
 
@@ -873,6 +924,7 @@ function status(
   label: string,
   band: string,
   note?: ResearchLabLoopStatusNote,
+  action?: ResearchLabLoopStatusNote,
 ): ResearchLabLoopStatus {
   const normalizedKey = normalize(key)
   const normalizedBand = normalize(band) || 'pending'
@@ -881,6 +933,7 @@ function status(
     label,
     band: normalizedBand,
     note,
+    action,
     active: ACTIVE_STATUS_KEYS.has(normalizedKey),
     scoring: SCORING_VALUES.has(normalizedKey),
     completed: COMPLETED_STATUS_KEYS.has(normalizedKey),
@@ -912,25 +965,29 @@ function labelForStatus(value: string): string {
   const explicit: Record<string, string> = {
     submitted: 'Submitted',
     queued: 'Queued',
+    started: 'Started',
     running: 'Running',
     scoring: 'Scoring',
     pending: 'Pending',
     completed: 'Complete',
-    completed_no_candidate: 'Completed no candidate',
-    scored: 'Model improved',
-    scored_promising: 'Model improved',
-    small_gain: 'Small gain',
-    scored_no_gain: 'Completed',
-    promotion_passed: 'Promotion passed',
-    active_version_created: 'Model improved',
-    champion_reward_created: 'Model improved',
-    merged: 'Model improved',
-    reward_created: 'Model improved',
+    completed_no_candidate: 'No candidate',
+    scored: 'Promising',
+    scored_promising: 'Promising',
+    scored_no_gain: 'No gain',
+    promotion_passed: 'Promoted',
+    active_version_created: 'Promoted',
+    champion_reward_created: 'Promoted',
+    merged: 'Promoted',
+    reward_created: 'Promoted',
+    promoted: 'Promoted',
+    scoring_failed: 'Scoring failed',
+    failed_after_scoring: 'Failed after scoring',
     blocked_for_credit: 'Waiting for credits',
-    needs_rescore: 'Needs rescore',
+    needs_rescore: 'Stale',
+    stale: 'Stale',
     waiting_for_baseline: 'Waiting for baseline',
     not_started: 'Not started',
-    failed: 'Needs review',
+    failed: 'Failed',
   }
   if (explicit[value]) return explicit[value]
   return value.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase())

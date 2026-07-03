@@ -48,7 +48,8 @@ try {
         band: 'pending',
         active: false,
         scoring: false,
-        detail: 'No payment has been recorded for this research loop yet.',
+        actionLabel: 'Payment pending',
+        actionDetail: 'No payment has been recorded for this research loop yet.',
       },
     },
     {
@@ -83,7 +84,8 @@ try {
         band: 'blocked',
         active: false,
         scoring: false,
-        detail: 'OpenRouter 402 insufficient credits',
+        actionLabel: 'Retry available',
+        actionDetail: 'OpenRouter 402 insufficient credits',
       },
     },
     {
@@ -100,15 +102,17 @@ try {
       },
       expected: {
         key: 'scored_no_gain',
-        label: 'Completed',
+        label: 'No gain',
         band: 'no_gain',
         active: false,
         scoring: false,
-        detail: 'Queue receipt failed after scoring',
+        detail: 'Final outcome: scoring did not produce a promoted candidate.',
+        actionLabel: 'Review recommended',
+        actionDetail: 'Queue receipt failed after scoring',
       },
     },
     {
-      name: 'canonical terminal stale scoring retry failure renders Needs review',
+      name: 'canonical terminal stale scoring retry failure renders Scoring failed',
       input: {
         publicStatus: 'failed',
         paymentState: 'paid',
@@ -116,19 +120,20 @@ try {
         candidateState: 'failed',
         resultState: 'failed',
         opsReason: 'stale_scoring_retry_failed',
+        candidateCount: 1,
         scoredCandidateCount: 0,
       },
       expected: {
-        key: 'failed',
-        label: 'Needs review',
+        key: 'scoring_failed',
+        label: 'Scoring failed',
         band: 'failed',
         active: false,
         scoring: false,
-        detail: 'Stale Scoring Retry Failed',
+        detail: 'Final outcome: candidate scoring exhausted retry budget.',
       },
     },
     {
-      name: 'canonical stale parent rebase unavailable renders Rebase unavailable',
+      name: 'canonical stale parent rebase unavailable renders Stale with recovery action',
       input: {
         publicStatus: 'failed',
         paymentState: 'paid',
@@ -137,12 +142,13 @@ try {
         opsReason: 'stale_parent_rebase_unavailable',
       },
       expected: {
-        key: 'rebase_unavailable',
-        label: 'Rebase unavailable',
-        band: 'failed',
+        key: 'stale',
+        label: 'Stale',
+        band: 'stale',
         active: false,
         scoring: false,
-        detail: 'Stale Parent Rebase Unavailable',
+        actionLabel: 'Stale recovery needed',
+        actionDetail: 'Stale Parent Rebase Unavailable',
       },
     },
     {
@@ -229,7 +235,7 @@ try {
       },
     },
     {
-      name: 'stale_parent_needs_rescore renders Needs rescore',
+      name: 'stale_parent_needs_rescore renders Stale with recovery action',
       input: {
         outcomeLabel: 'needs_rescore',
         outcomeBand: 'stale',
@@ -239,16 +245,17 @@ try {
         receiptId: 'receipt-2',
       },
       expected: {
-        key: 'needs_rescore',
-        label: 'Needs rescore',
+        key: 'stale',
+        label: 'Stale',
         band: 'stale',
         active: false,
         scoring: false,
-        detail: 'Candidate was created against an older parent model and needs to be rebased or rescored against the current parent.',
+        actionLabel: 'Stale recovery needed',
+        actionDetail: 'Candidate was created against an older parent model and needs to be rebased or rescored against the current parent.',
       },
     },
     {
-      name: 'terminal failed queue does not become primary Needs review without canonical failed outcome',
+      name: 'terminal failed queue does not become primary failed without canonical failed outcome',
       input: {
         outcomeLabel: 'running',
         outcomeBand: 'stale',
@@ -259,15 +266,15 @@ try {
         receiptId: 'receipt-3',
       },
       expected: {
-        key: 'needs_rescore',
-        label: 'Needs rescore',
+        key: 'stale',
+        label: 'Stale',
         band: 'stale',
         active: false,
         scoring: false,
       },
     },
     {
-      name: 'scored candidate with no benchmark gain renders Completed',
+      name: 'scored candidate with no benchmark gain renders No gain',
       input: {
         outcomeLabel: 'running',
         outcomeBand: 'no_gain',
@@ -279,14 +286,15 @@ try {
       },
       expected: {
         key: 'scored_no_gain',
-        label: 'Completed',
+        label: 'No gain',
         band: 'no_gain',
         active: false,
         scoring: false,
+        detail: 'Final outcome: scoring did not produce a promoted candidate.',
       },
     },
     {
-      name: 'raw scored_no_gain renders Completed even with unscored candidate counts',
+      name: 'raw scored_no_gain renders No gain even with unscored candidate counts',
       input: {
         outcomeLabel: 'scored_no_gain',
         outcomeBand: 'no_gain',
@@ -298,14 +306,15 @@ try {
       },
       expected: {
         key: 'scored_no_gain',
-        label: 'Completed',
+        label: 'No gain',
         band: 'no_gain',
         active: false,
         scoring: false,
+        detail: 'Final outcome: scoring did not produce a promoted candidate.',
       },
     },
     {
-      name: 'scored_promising small_gain renders Small gain below threshold',
+      name: 'scored_promising small_gain renders Promising',
       input: {
         outcomeLabel: 'scored_promising',
         outcomeBand: 'small_gain',
@@ -315,17 +324,16 @@ try {
         receiptId: 'receipt-small-gain',
       },
       expected: {
-        key: 'small_gain',
-        label: 'Small gain',
+        key: 'scored_promising',
+        label: 'Promising',
         band: 'small_gain',
         active: false,
         scoring: false,
-        promising: false,
-        detail: 'Below threshold',
+        promising: true,
       },
     },
     {
-      name: 'passed threshold band renders Model improved',
+      name: 'passed threshold band renders Promising unless promoted',
       input: {
         outcomeLabel: 'scored_promising',
         outcomeBand: 'passed_threshold',
@@ -334,8 +342,8 @@ try {
         receiptId: 'receipt-passed-threshold',
       },
       expected: {
-        key: 'scored',
-        label: 'Model improved',
+        key: 'scored_promising',
+        label: 'Promising',
         band: 'passed_threshold',
         active: false,
         scoring: false,
@@ -343,7 +351,7 @@ try {
       },
     },
     {
-      name: 'rejected below-threshold promotion event is not Model improved',
+      name: 'rejected below-threshold promotion event stays Promising',
       input: {
         outcomeLabel: 'scored_promising',
         outcomeBand: 'small_gain',
@@ -354,17 +362,16 @@ try {
         receiptId: 'receipt-rejected-promotion',
       },
       expected: {
-        key: 'small_gain',
-        label: 'Small gain',
+        key: 'scored_promising',
+        label: 'Promising',
         band: 'small_gain',
         active: false,
         scoring: false,
-        promising: false,
-        detail: 'Below threshold',
+        promising: true,
       },
     },
     {
-      name: 'not eligible improvement gate is not Model improved',
+      name: 'not eligible improvement gate stays Promising',
       input: {
         outcomeLabel: 'scored_promising',
         outcomeBand: 'small_gain',
@@ -374,17 +381,16 @@ try {
         receiptId: 'receipt-not-eligible',
       },
       expected: {
-        key: 'small_gain',
-        label: 'Small gain',
+        key: 'scored_promising',
+        label: 'Promising',
         band: 'small_gain',
         active: false,
         scoring: false,
-        promising: false,
-        detail: 'Below threshold',
+        promising: true,
       },
     },
     {
-      name: 'promotion pass event renders Model improved',
+      name: 'promotion pass event keeps scored_promising primary unless outcome is promoted',
       input: {
         outcomeLabel: 'scored_promising',
         outcomeBand: 'pending',
@@ -394,16 +400,16 @@ try {
         receiptId: 'receipt-active-version',
       },
       expected: {
-        key: 'scored',
-        label: 'Model improved',
-        band: 'passed_threshold',
+        key: 'scored_promising',
+        label: 'Promising',
+        band: 'small_gain',
         active: false,
         scoring: false,
         promising: true,
       },
     },
     {
-      name: 'scored_no_gain with failed band and failed queue stays Completed',
+      name: 'scored_no_gain with failed band and failed queue stays No gain',
       input: {
         outcomeLabel: 'scored_no_gain',
         outcomeBand: 'failed',
@@ -417,15 +423,17 @@ try {
       },
       expected: {
         key: 'scored_no_gain',
-        label: 'Completed',
+        label: 'No gain',
         band: 'no_gain',
         active: false,
         scoring: false,
-        detail: 'Queue or receipt state is terminal failed, but the canonical model outcome is preserved.',
+        detail: 'Final outcome: scoring did not produce a promoted candidate.',
+        actionLabel: 'Review recommended',
+        actionDetail: 'Queue or receipt state is terminal failed, but the final model outcome is preserved.',
       },
     },
     {
-      name: 'canonical failed outcome renders Needs review',
+      name: 'terminal failed after scoring renders Failed after scoring',
       input: {
         outcomeLabel: 'failed',
         outcomeBand: 'failed',
@@ -437,11 +445,12 @@ try {
         receiptId: 'receipt-failed',
       },
       expected: {
-        key: 'failed',
-        label: 'Needs review',
+        key: 'failed_after_scoring',
+        label: 'Failed after scoring',
         band: 'failed',
         active: false,
         scoring: false,
+        detail: 'Final outcome: scoring did not produce a promoted candidate.',
       },
     },
     {
@@ -475,25 +484,24 @@ try {
     if (fixture.expected.detail) {
       assert.equal(actual.note?.detail, fixture.expected.detail, fixture.name)
     }
+    if (fixture.expected.actionLabel) {
+      assert.equal(actual.action?.label, fixture.expected.actionLabel, fixture.name)
+    }
+    if (fixture.expected.actionDetail) {
+      assert.equal(actual.action?.detail, fixture.expected.actionDetail, fixture.name)
+    }
   }
 
   const optionValues = RESEARCH_LAB_STATUS_FILTER_OPTIONS.map((option) => option.value)
   assert.deepEqual(optionValues, [
     'all',
-    'awaiting_payment',
-    'paid_not_started',
-    'running',
-    'scoring',
-    'waiting_for_baseline',
-    'needs_rescore',
-    'blocked_for_credit',
-    'scored_no_gain',
-    'small_gain',
+    'active',
+    'promoted',
     'scored',
     'completed_no_candidate',
     'failed',
-    'ops_warnings',
-  ], 'status filter options should include required statuses')
+    'awaiting_payment',
+  ], 'status filter options should include requested public outcome buckets')
 
   const activityLoops = [
     {
@@ -626,7 +634,7 @@ try {
       researchArea: 'ops',
       outcomeLabel: 'scored_promising',
       outcomeBand: 'small_gain',
-      statusKey: 'small_gain',
+      statusKey: 'scored_promising',
       lastActivityAt: '2026-01-02T00:00:00Z',
     },
     {
@@ -637,8 +645,22 @@ try {
       researchArea: 'ops',
       outcomeLabel: 'scored_promising',
       outcomeBand: 'passed_threshold',
-      statusKey: 'scored',
+      statusKey: 'scored_promising',
       lastActivityAt: '2026-01-02T01:00:00Z',
+    },
+    {
+      id: 'promoted-eta',
+      minerHotkey: 'eta-hotkey',
+      topicSignatureHash: 'promotion',
+      topicTags: ['promotion'],
+      researchArea: 'ops',
+      outcomeLabel: 'promoted',
+      outcomeBand: 'promoted',
+      statusKey: deriveResearchLabLoopStatus({
+        outcomeLabel: 'promoted',
+        outcomeBand: 'promoted',
+      }).key,
+      lastActivityAt: '2026-01-02T02:00:00Z',
     },
     {
       id: 'scoring-alpha-b',
@@ -671,6 +693,8 @@ try {
         outcomeLabel: 'failed',
         outcomeBand: 'failed',
         currentCandidateStatus: 'scored',
+        candidateCount: 1,
+        scoredCandidateCount: 1,
       }).key,
       lastActivityAt: '2025-12-30T00:00:00Z',
     },
@@ -683,64 +707,29 @@ try {
     'status filter should find awaiting payment loops'
   )
   assert.deepEqual(
-    byId(filterResearchLabActivityLoops(activityLoops, { status: 'paid_not_started' })),
-    ['paid-not-started-beta'],
-    'status filter should find paid loops before worker start'
+    byId(filterResearchLabActivityLoops(activityLoops, { status: 'active' })),
+    ['running-delta', 'scoring-alpha-a', 'scoring-alpha-b'],
+    'Active filter should find queued/running/scoring loops'
   )
   assert.deepEqual(
-    byId(filterResearchLabActivityLoops(activityLoops, { status: 'running' })),
-    ['running-delta'],
-    'status filter should find running loops'
-  )
-  assert.deepEqual(
-    byId(filterResearchLabActivityLoops(activityLoops, { status: 'blocked_for_credit' })),
-    ['blocked-credit-delta'],
-    'status filter should find credit-blocked loops'
-  )
-  assert.deepEqual(
-    byId(filterResearchLabActivityLoops(activityLoops, { status: 'needs_rescore' })),
-    ['needs-rescore-epsilon'],
-    'status filter should find loops needing rescore'
+    byId(filterResearchLabActivityLoops(activityLoops, { status: 'promoted' })),
+    ['promoted-eta'],
+    'Promoted filter should find promoted loops'
   )
   assert.deepEqual(
     byId(filterResearchLabActivityLoops(activityLoops, { status: 'completed_no_candidate' })),
     ['completed-no-candidate-zeta'],
-    'status filter should find completed no candidate loops'
-  )
-  assert.deepEqual(
-    byId(filterResearchLabActivityLoops(activityLoops, { status: 'ops_warnings' })),
-    ['scored-no-gain-failed-ops'],
-    'Ops warnings filter should find secondary ops warning rows'
-  )
-  assert.deepEqual(
-    byId(filterResearchLabActivityLoops(activityLoops, { status: 'waiting_for_baseline' })),
-    ['waiting-alpha-a'],
-    'status filter should find explicit waiting_for_baseline status'
-  )
-  assert.deepEqual(
-    byId(filterResearchLabActivityLoops(activityLoops, { status: 'scoring' })),
-    ['scoring-alpha-a', 'scoring-alpha-b'],
-    'status filter should find only scoring statuses'
-  )
-  assert.deepEqual(
-    byId(filterResearchLabActivityLoops(activityLoops, { status: 'scored_no_gain' })),
-    ['scored-no-gain-failed-ops'],
-    'Completed filter should include failed-ops scored_no_gain rows'
+    'No Candidate filter should find no-candidate terminal loops'
   )
   assert.deepEqual(
     byId(filterResearchLabActivityLoops(activityLoops, { status: 'failed' })),
     ['failed-gamma-b', 'failed-alpha-a'],
-    'Needs review filter should exclude scored_no_gain rows even if ops failed'
+    'Failed filter should exclude scored_no_gain rows even if ops failed'
   )
   assert.deepEqual(
     byId(filterResearchLabActivityLoops(activityLoops, { status: 'scored' })),
-    ['improved-beta-a'],
-    'Model improved status filter should include only threshold-passing records'
-  )
-  assert.deepEqual(
-    byId(filterResearchLabActivityLoops(activityLoops, { status: 'small_gain' })),
-    ['small-gain-beta-a'],
-    'Small gain filter should include below-threshold scored_promising records'
+    ['scored-no-gain-failed-ops', 'improved-beta-a', 'small-gain-beta-a'],
+    'Scored / No Gain filter should include promising and no-gain records'
   )
   assert.deepEqual(
     byId(filterResearchLabActivityLoops(activityLoops, { direction: 'query_generation' })),
@@ -756,7 +745,7 @@ try {
     byId(filterResearchLabActivityLoops(activityLoops, {
       minerQuery: 'alpha',
       direction: 'query_generation',
-      status: 'scoring',
+      status: 'active',
     })),
     ['scoring-alpha-a'],
     'miner, direction, and status filters should combine'
@@ -772,8 +761,8 @@ try {
   )
   assert.deepEqual(
     countedStatusValues,
-    ['all', 'scoring', 'waiting_for_baseline', 'scored_no_gain', 'failed', 'ops_warnings'],
-    'status dropdown should hide empty buckets'
+    ['all', 'active', 'scored', 'failed'],
+    'status dropdown should hide empty requested buckets'
   )
   assert.equal(countByValue.all, 5, 'All statuses count should match visible miner+direction records')
   for (const value of countedStatusValues.filter((value) => value !== 'all')) {

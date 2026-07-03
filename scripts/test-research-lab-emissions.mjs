@@ -112,7 +112,7 @@ try {
   assert.match(routeSource, /activeLoopCount: allLoops\.filter/)
   assert.match(routeSource, /scoredLoopCount: allLoops\.filter/)
   assert.match(routeSource, /isCompletedResearchLabExperimentStatus\(loop\.statusKey\)/)
-  assert.match(routeSource, /normalized === 'completed_no_candidate'/)
+  assert.match(routeSource, /isCompletedResearchLabLoopStatus\(normalized\)/)
   assert.match(routeSource, /\.from\('published_weight_bundles'\)/)
   assert.match(routeSource, /\.select\('epoch_id'\)/)
   assert.match(routeSource, /\.eq\('netuid', 71\)/)

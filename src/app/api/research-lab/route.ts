@@ -481,6 +481,7 @@ type NormalizedLoop = {
   lastActivityAt: string
   submittedAt: string
   statusNote?: LoopStatusNote
+  actionNote?: LoopStatusNote
 }
 
 type LoopStatusNote = {
@@ -537,7 +538,7 @@ function getSupabase() {
 
 function isCompletedResearchLabExperimentStatus(key: string): boolean {
   const normalized = String(key ?? '').trim().toLowerCase()
-  return isScoredResearchLabLoopStatus(normalized) || normalized === 'completed_no_candidate'
+  return isCompletedResearchLabLoopStatus(normalized)
 }
 
 export async function GET(request: Request) {
@@ -1903,6 +1904,7 @@ async function fetchPublicLoops(
         lastActivityAt,
         submittedAt: row.created_at,
         statusNote: displayStatus.note,
+        actionNote: displayStatus.action,
       }
     })
 }
