@@ -539,6 +539,10 @@ function hasScoredResearchLabCandidate(loop: Pick<NormalizedLoop, 'scoredCandida
   return numberOr(loop.scoredCandidateCount, 0) > 0
 }
 
+function isModelImprovementResearchLabLoop(loop: Pick<NormalizedLoop, 'statusKey'>): boolean {
+  return String(loop.statusKey ?? '').trim().toLowerCase() === 'promoted'
+}
+
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url)
@@ -585,9 +589,7 @@ export async function GET(request: Request) {
           isPendingOrBlockingResearchLabLoopStatus(loop.statusKey)
         ).length,
         scoredLoopCount: allLoops.filter(hasScoredResearchLabCandidate).length,
-        promisingLoopCount: allLoops.filter((loop) =>
-          isPromisingResearchLabLoopStatus(loop.statusKey, loop.outcomeBand)
-        ).length,
+        promisingLoopCount: allLoops.filter(isModelImprovementResearchLabLoop).length,
         totalBenchmarkIcpCount: displayBenchmark?.itemCount ?? 0,
       },
       fetchedAt: new Date().toISOString(),
@@ -1971,7 +1973,7 @@ function addLabMinerActivityEntry(
   current.count += 1
   if (isActiveResearchLabLoopStatus(loop.statusKey)) current.active += 1
   if (hasScoredResearchLabCandidate(loop)) current.scored += 1
-  if (isPromisingResearchLabLoopStatus(loop.statusKey, loop.outcomeBand)) current.promising += 1
+  if (isModelImprovementResearchLabLoop(loop)) current.promising += 1
   if (new Date(loop.lastActivityAt).getTime() > new Date(current.lastActivityAt).getTime()) {
     current.lastActivityAt = loop.lastActivityAt
   }

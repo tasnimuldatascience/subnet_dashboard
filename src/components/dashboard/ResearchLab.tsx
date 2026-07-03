@@ -20,7 +20,6 @@ import { cn } from '@/lib/utils'
 import {
   filterResearchLabActivityLoops,
   isActiveResearchLabLoopStatus,
-  isPromisingResearchLabLoopStatus,
   researchLabLoopDirectionKeys as getResearchLabLoopDirectionKeys,
   researchLabStatusFilterOptionsWithCounts,
 } from '@/lib/research-lab-status'
@@ -614,7 +613,7 @@ function LabEmissionSplit({
         const statusKey = loopStatusKey(loop)
         if (isActiveResearchLabLoopStatus(statusKey)) current.active += 1
         if (numberOr(loop.scoredCandidateCount, 0) > 0) current.scored += 1
-        if (isPromisingResearchLabLoopStatus(statusKey, loop.outcomeBand)) current.promising += 1
+        if (isModelImprovementLoop(loop)) current.promising += 1
         if (new Date(loop.lastActivityAt).getTime() > new Date(current.lastActivityAt).getTime()) {
           current.lastActivityAt = loop.lastActivityAt
         }
@@ -2174,6 +2173,10 @@ function buildDirectionOptions(loops: ResearchLoop[]): DirectionOption[] {
 
 function loopStatusKey(loop: ResearchLoop): string {
   return loop.statusKey || loop.outcomeLabel
+}
+
+function isModelImprovementLoop(loop: ResearchLoop): boolean {
+  return loopStatusKey(loop).trim().toLowerCase() === 'promoted'
 }
 
 function loopDirectionKeys(loop: ResearchLoop): string[] {
