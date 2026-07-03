@@ -21,7 +21,6 @@ import {
   filterResearchLabActivityLoops,
   isActiveResearchLabLoopStatus,
   isPromisingResearchLabLoopStatus,
-  isScoredResearchLabLoopStatus,
   researchLabLoopDirectionKeys as getResearchLabLoopDirectionKeys,
   researchLabStatusFilterOptionsWithCounts,
 } from '@/lib/research-lab-status'
@@ -526,10 +525,10 @@ function Hero({ benchmark }: { benchmark: BenchmarkReport | null }) {
  * KPI rail — real stats only, hairline-separated.
  * ============================================================ */
 function KpiRail({ stats }: { stats: ResearchLabData['stats'] }) {
-  const completedTestCount = Math.max(0, numberOr(stats.scoredLoopCount, 0))
+  const scoredTestCount = Math.max(0, numberOr(stats.scoredLoopCount, 0))
   const items = [
     { label: 'Live experiments', value: stats.activeLoopCount },
-    { label: 'Completed tests', value: completedTestCount },
+    { label: 'Scored tests', value: scoredTestCount },
     { label: 'Model improvements', value: stats.promisingLoopCount },
   ]
   return (
@@ -614,7 +613,7 @@ function LabEmissionSplit({
         current.count += 1
         const statusKey = loopStatusKey(loop)
         if (isActiveResearchLabLoopStatus(statusKey)) current.active += 1
-        if (isScoredResearchLabLoopStatus(statusKey)) current.scored += 1
+        if (numberOr(loop.scoredCandidateCount, 0) > 0) current.scored += 1
         if (isPromisingResearchLabLoopStatus(statusKey, loop.outcomeBand)) current.promising += 1
         if (new Date(loop.lastActivityAt).getTime() > new Date(current.lastActivityAt).getTime()) {
           current.lastActivityAt = loop.lastActivityAt

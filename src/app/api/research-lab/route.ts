@@ -7,7 +7,6 @@ import {
   isNoGainOrFailedResearchLabLoopStatus,
   isPendingOrBlockingResearchLabLoopStatus,
   isPromisingResearchLabLoopStatus,
-  isScoredResearchLabLoopStatus,
   type ResearchLabLoopStatusNote,
 } from '@/lib/research-lab-status'
 import {
@@ -536,9 +535,8 @@ function getSupabase() {
   return createClient(url, key, { auth: { persistSession: false } })
 }
 
-function isCompletedResearchLabExperimentStatus(key: string): boolean {
-  const normalized = String(key ?? '').trim().toLowerCase()
-  return isCompletedResearchLabLoopStatus(normalized)
+function hasScoredResearchLabCandidate(loop: Pick<NormalizedLoop, 'scoredCandidateCount'>): boolean {
+  return numberOr(loop.scoredCandidateCount, 0) > 0
 }
 
 export async function GET(request: Request) {
@@ -586,9 +584,7 @@ export async function GET(request: Request) {
         opsPendingLoopCount: allLoops.filter((loop) =>
           isPendingOrBlockingResearchLabLoopStatus(loop.statusKey)
         ).length,
-        scoredLoopCount: allLoops.filter((loop) =>
-          isCompletedResearchLabExperimentStatus(loop.statusKey)
-        ).length,
+        scoredLoopCount: allLoops.filter(hasScoredResearchLabCandidate).length,
         promisingLoopCount: allLoops.filter((loop) =>
           isPromisingResearchLabLoopStatus(loop.statusKey, loop.outcomeBand)
         ).length,
@@ -1933,7 +1929,7 @@ function groupLoopsByTopic(loops: NormalizedLoop[]): TopicGroup[] {
     if (isCompletedResearchLabLoopStatus(loop.statusKey)) {
       group.completed += 1
     }
-    if (isScoredResearchLabLoopStatus(loop.statusKey)) group.scored += 1
+    if (hasScoredResearchLabCandidate(loop)) group.scored += 1
     if (isPromisingResearchLabLoopStatus(loop.statusKey, loop.outcomeBand)) group.promisingOrPromoted += 1
     if (isNoGainOrFailedResearchLabLoopStatus(loop.statusKey)) group.noGainOrFailed += 1
     if (new Date(loop.lastActivityAt).getTime() > new Date(group.latestActivityAt).getTime()) {
@@ -1974,7 +1970,7 @@ function addLabMinerActivityEntry(
   }
   current.count += 1
   if (isActiveResearchLabLoopStatus(loop.statusKey)) current.active += 1
-  if (isScoredResearchLabLoopStatus(loop.statusKey)) current.scored += 1
+  if (hasScoredResearchLabCandidate(loop)) current.scored += 1
   if (isPromisingResearchLabLoopStatus(loop.statusKey, loop.outcomeBand)) current.promising += 1
   if (new Date(loop.lastActivityAt).getTime() > new Date(current.lastActivityAt).getTime()) {
     current.lastActivityAt = loop.lastActivityAt
