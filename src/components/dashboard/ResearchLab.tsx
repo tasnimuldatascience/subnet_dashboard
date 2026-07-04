@@ -650,9 +650,12 @@ function LabEmissionSplit({
           : windowSpendEntry?.reimbursementEpochs) ?? null,
       }
     })
-    const displayedEmissionTotal = rowsWithEmission.reduce((sum, row) => sum + row.metagraphIncentivePct, 0)
-    const totalAlphaEarned = rowsWithEmission.reduce((sum, row) => sum + row.alphaEarned, 0)
-    return rowsWithEmission
+    const visibleRows = mode === 'all_time'
+      ? rowsWithEmission
+      : rowsWithEmission.filter((row) => row.computeSpendUsd > 0)
+    const displayedEmissionTotal = visibleRows.reduce((sum, row) => sum + row.metagraphIncentivePct, 0)
+    const totalAlphaEarned = visibleRows.reduce((sum, row) => sum + row.alphaEarned, 0)
+    return visibleRows
       .map((row) => ({
         ...row,
         displayedEmissionPct: displayedEmissionTotal > 0 ? (row.metagraphIncentivePct / displayedEmissionTotal) * 100 : 0,
