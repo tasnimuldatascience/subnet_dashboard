@@ -101,7 +101,7 @@ try {
       },
       expected: {
         key: 'scored_no_gain',
-        label: 'Scored · No promotion',
+        label: 'Scored',
         band: 'no_gain',
         active: false,
         scoring: false,
@@ -273,7 +273,7 @@ try {
       },
     },
     {
-      name: 'scored candidate with no benchmark gain renders Scored no promotion',
+      name: 'scored candidate with no benchmark gain renders Scored',
       input: {
         outcomeLabel: 'running',
         outcomeBand: 'no_gain',
@@ -285,7 +285,7 @@ try {
       },
       expected: {
         key: 'scored_no_gain',
-        label: 'Scored · No promotion',
+        label: 'Scored',
         band: 'no_gain',
         active: false,
         scoring: false,
@@ -293,7 +293,7 @@ try {
       },
     },
     {
-      name: 'raw scored_no_gain renders Scored no promotion even with unscored candidate counts',
+      name: 'raw scored_no_gain renders Scored even with unscored candidate counts',
       input: {
         outcomeLabel: 'scored_no_gain',
         outcomeBand: 'no_gain',
@@ -305,7 +305,7 @@ try {
       },
       expected: {
         key: 'scored_no_gain',
-        label: 'Scored · No promotion',
+        label: 'Scored',
         band: 'no_gain',
         active: false,
         scoring: false,
@@ -349,7 +349,7 @@ try {
       },
     },
     {
-      name: 'rejected below-threshold promotion event renders Scored no promotion',
+      name: 'rejected below-threshold promotion event renders Scored',
       input: {
         outcomeLabel: 'scored_promising',
         outcomeBand: 'small_gain',
@@ -361,7 +361,7 @@ try {
       },
       expected: {
         key: 'scored_no_gain',
-        label: 'Scored · No promotion',
+        label: 'Scored',
         band: 'no_gain',
         active: false,
         scoring: false,
@@ -370,7 +370,7 @@ try {
       },
     },
     {
-      name: 'not eligible improvement gate renders Scored no promotion',
+      name: 'not eligible improvement gate renders Scored',
       input: {
         outcomeLabel: 'scored_promising',
         outcomeBand: 'small_gain',
@@ -381,7 +381,7 @@ try {
       },
       expected: {
         key: 'scored_no_gain',
-        label: 'Scored · No promotion',
+        label: 'Scored',
         band: 'no_gain',
         active: false,
         scoring: false,
@@ -390,7 +390,7 @@ try {
       },
     },
     {
-      name: 'promotion_checked outcome renders Scored no promotion',
+      name: 'promotion_checked outcome renders Scored',
       input: {
         publicStatus: 'promotion_checked',
         paymentState: 'paid',
@@ -402,7 +402,7 @@ try {
       },
       expected: {
         key: 'scored_no_gain',
-        label: 'Scored · No promotion',
+        label: 'Scored',
         band: 'no_gain',
         active: false,
         scoring: false,
@@ -411,7 +411,7 @@ try {
       },
     },
     {
-      name: 'public holdout rejection renders Scored no promotion',
+      name: 'public holdout rejection renders Scored',
       input: {
         publicStatus: 'scored',
         paymentState: 'paid',
@@ -424,7 +424,7 @@ try {
       },
       expected: {
         key: 'scored_no_gain',
-        label: 'Scored · No promotion',
+        label: 'Scored',
         band: 'no_gain',
         active: false,
         scoring: false,
@@ -433,7 +433,7 @@ try {
       },
     },
     {
-      name: 'rejected promotion status renders Scored no promotion',
+      name: 'rejected promotion status renders Scored',
       input: {
         publicStatus: 'scored',
         paymentState: 'paid',
@@ -446,7 +446,7 @@ try {
       },
       expected: {
         key: 'scored_no_gain',
-        label: 'Scored · No promotion',
+        label: 'Scored',
         band: 'no_gain',
         active: false,
         scoring: false,
@@ -494,7 +494,7 @@ try {
       },
     },
     {
-      name: 'scored_no_gain with failed band and failed queue stays Scored no promotion',
+      name: 'scored_no_gain with failed band and failed queue stays Scored',
       input: {
         outcomeLabel: 'scored_no_gain',
         outcomeBand: 'failed',
@@ -508,7 +508,7 @@ try {
       },
       expected: {
         key: 'scored_no_gain',
-        label: 'Scored · No promotion',
+        label: 'Scored',
         band: 'no_gain',
         active: false,
         scoring: false,

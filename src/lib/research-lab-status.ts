@@ -763,7 +763,7 @@ function modelImprovedStatus(
 }
 
 function noGainStatus(action?: ResearchLabLoopStatusNote): ResearchLabLoopStatus {
-  return status('scored_no_gain', 'Scored · No promotion', 'no_gain', finalOutcomeNote(
+  return status('scored_no_gain', 'Scored', 'no_gain', finalOutcomeNote(
     'Scoring completed; candidate did not clear promotion threshold or holdout gate.'
   ), action)
 }
@@ -979,11 +979,11 @@ function labelForStatus(value: string): string {
     completed_no_candidate: 'No candidate',
     scored: 'Scored · Promising',
     scored_promising: 'Scored · Promising',
-    scored_no_gain: 'Scored · No promotion',
-    promotion_checked: 'Scored · No promotion',
-    public_holdout_rejected: 'Scored · No promotion',
-    holdout_rejected: 'Scored · No promotion',
-    promotion_rejected: 'Scored · No promotion',
+    scored_no_gain: 'Scored',
+    promotion_checked: 'Scored',
+    public_holdout_rejected: 'Scored',
+    holdout_rejected: 'Scored',
+    promotion_rejected: 'Scored',
     promotion_passed: 'Model Improvement',
     active_version_created: 'Model Improvement',
     champion_reward_created: 'Model Improvement',
