@@ -510,7 +510,7 @@ function Hero({ benchmark }: { benchmark: BenchmarkReport | null }) {
       <div className="mt-6 font-mono text-[11px] text-[var(--muted-2)]">
         {isPromotedModel ? (
           <>
-            Promoted {formatDate(scoreDate)}
+            Model Improvement {formatDate(scoreDate)}
           </>
         ) : (
           <>Published {formatDate(benchmark.benchmarkDate)}</>

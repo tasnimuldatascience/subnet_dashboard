@@ -474,7 +474,7 @@ try {
       },
     },
     {
-      name: 'promoted outcome renders Promoted',
+      name: 'promoted outcome renders Model Improvement',
       input: {
         outcomeLabel: 'promoted',
         outcomeBand: 'promoted',
@@ -486,7 +486,7 @@ try {
       },
       expected: {
         key: 'promoted',
-        label: 'Promoted',
+        label: 'Model Improvement',
         band: 'promoted',
         active: false,
         scoring: false,
@@ -802,7 +802,7 @@ try {
   assert.deepEqual(
     byId(filterResearchLabActivityLoops(activityLoops, { status: 'promoted' })),
     ['promoted-eta'],
-    'Promoted filter should find promoted loops'
+    'Model Improvement filter should find promoted loops'
   )
   assert.deepEqual(
     byId(filterResearchLabActivityLoops(activityLoops, { status: 'completed_no_candidate' })),
@@ -817,7 +817,7 @@ try {
   assert.deepEqual(
     byId(filterResearchLabActivityLoops(activityLoops, { status: 'scored' })),
     ['scored-no-gain-failed-ops', 'improved-beta-a', 'small-gain-beta-a'],
-    'Scored / No Promotion filter should include promising and no-promotion records'
+    'Scored filter should include promising and no-promotion records'
   )
   assert.deepEqual(
     byId(filterResearchLabActivityLoops(activityLoops, { direction: 'query_generation' })),
