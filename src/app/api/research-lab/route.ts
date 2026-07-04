@@ -30,6 +30,9 @@ export const dynamic = 'force-dynamic'
 const CACHE_TTL = 60_000
 const LOOP_LIMIT = 50
 const LOOP_FETCH_LIMIT = LOOP_LIMIT + 100
+const LAB_MINER_SPEND_BATCH_SIZE = 1_000
+const SUPABASE_IN_FILTER_BATCH_SIZE = 100
+const LAB_MINER_SPEND_WINDOW_MS = 24 * 60 * 60 * 1000
 const HIDDEN_LOOP_MINER_PREFIXES = [
   '5FEtvB',
   '5FBhsXVWpezSHcpogXo4CjMcgTBctLcZ7VnNoKzn3oEGST44',
@@ -512,9 +515,38 @@ type ReimbursementScheduleRow = {
 type ReimbursementAwardRow = {
   award_id: string
   miner_hotkey: string | null
-  eligible_cost_microusd: number | string | null
   target_reimbursement_microusd: number | string | null
   reimbursement_epochs: number | null
+}
+
+type ResearchLoopReceiptEventRow = {
+  ticket_id: string | null
+  receipt_id: string | null
+  event_type: string | null
+  event_doc: Record<string, unknown> | null
+  created_at: string | null
+}
+
+type ResearchLoopTicketSpendRow = {
+  ticket_id: string
+  miner_hotkey: string | null
+}
+
+type ResearchLoopReceiptRunRow = {
+  receipt_id: string
+  run_id: string | null
+}
+
+type LabMinerComputeSpendRollup = {
+  allTime: Record<string, number>
+  last24h: Record<string, number>
+}
+
+type LabMinerTerminalSpendEvent = {
+  minerHotkey: string
+  runId: string
+  createdAtMs: number
+  costMicrousd: number
 }
 
 type EmissionAllocationSnapshotRow = {
@@ -1488,7 +1520,8 @@ function stripInternalIcpFields(icps: PublicIcpEntry[]): PublicIcpEntry[] {
 
 async function fetchLabMinerSpend(supabase: ReturnType<typeof getSupabase>): Promise<LabMinerSpendRollup> {
   const empty = emptyLabMinerSpend()
-  const [scheduleResult, allAwardsResult, allocationResult] = await Promise.all([
+  const [computeSpend, scheduleResult, allAwardsResult, allocationResult] = await Promise.all([
+    fetchLabMinerComputeSpend(supabase),
     supabase
       .from('research_reimbursement_schedules')
       .select('award_id, schedule_status, start_epoch, epoch_count, total_microusd')
@@ -1497,7 +1530,7 @@ async function fetchLabMinerSpend(supabase: ReturnType<typeof getSupabase>): Pro
       .limit(5_000),
     supabase
       .from('research_reimbursement_awards')
-      .select('award_id, miner_hotkey, eligible_cost_microusd, target_reimbursement_microusd, reimbursement_epochs')
+      .select('award_id, miner_hotkey, target_reimbursement_microusd, reimbursement_epochs')
       .limit(5_000),
     supabase
       .from('research_lab_emission_allocation_snapshots')
@@ -1518,8 +1551,10 @@ async function fetchLabMinerSpend(supabase: ReturnType<typeof getSupabase>): Pro
 
   const allTime = buildLabMinerAllTimeRollup(
     (allAwardsResult.data ?? []) as ReimbursementAwardRow[],
-    (allocationResult.data ?? []) as EmissionAllocationSnapshotRow[]
+    (allocationResult.data ?? []) as EmissionAllocationSnapshotRow[],
+    computeSpend.allTime
   )
+  const byHotkey = buildLabMinerSpendEntriesFromCompute(computeSpend.last24h)
   const allocationSnapshots = (allocationResult.data ?? []) as EmissionAllocationSnapshotRow[]
   const latestPublishedWeightEpoch = await fetchLatestPublishedWeightEpoch(supabase)
   const currentAllocation = await fetchCurrentLabAllocation(
@@ -1528,11 +1563,25 @@ async function fetchLabMinerSpend(supabase: ReturnType<typeof getSupabase>): Pro
     allocationSnapshots,
   )
 
-  if (scheduleResult.error) return { ...empty, allTime, currentAllocation }
+  if (scheduleResult.error) {
+    return {
+      ...empty,
+      byHotkey: finalizeLabMinerSpendEntries(byHotkey),
+      allTime,
+      currentAllocation,
+    }
+  }
 
   const schedules = ((scheduleResult.data ?? []) as ReimbursementScheduleRow[])
     .filter((row) => row.award_id && Number.isFinite(Number(row.start_epoch)))
-  if (schedules.length === 0) return { ...empty, allTime, currentAllocation }
+  if (schedules.length === 0) {
+    return {
+      ...empty,
+      byHotkey: finalizeLabMinerSpendEntries(byHotkey),
+      allTime,
+      currentAllocation,
+    }
+  }
 
   const latestEpoch = Math.max(...schedules.map((row) => numberOr(row.start_epoch, 0)))
   const activeSchedules = schedules.filter((row) => {
@@ -1543,7 +1592,7 @@ async function fetchLabMinerSpend(supabase: ReturnType<typeof getSupabase>): Pro
   if (activeSchedules.length === 0) {
     return {
       window: { latestEpoch, epochCount: null, activeScheduleCount: 0 },
-      byHotkey: {},
+      byHotkey: finalizeLabMinerSpendEntries(byHotkey),
       allTime,
       currentAllocation,
     }
@@ -1555,14 +1604,14 @@ async function fetchLabMinerSpend(supabase: ReturnType<typeof getSupabase>): Pro
     const batch = awardIds.slice(i, i + 100)
     const { data: awardData, error: awardError } = await supabase
       .from('research_reimbursement_award_current')
-      .select('award_id, miner_hotkey, eligible_cost_microusd, target_reimbursement_microusd, reimbursement_epochs')
+      .select('award_id, miner_hotkey, target_reimbursement_microusd, reimbursement_epochs')
       .in('award_id', batch)
 
     if (awardError) {
       console.error('[Research Lab API] reimbursement award query failed:', awardError)
       return {
         window: spendWindowForSchedules(latestEpoch, activeSchedules),
-        byHotkey: {},
+        byHotkey: finalizeLabMinerSpendEntries(byHotkey),
         allTime,
         currentAllocation,
       }
@@ -1571,7 +1620,6 @@ async function fetchLabMinerSpend(supabase: ReturnType<typeof getSupabase>): Pro
   }
 
   const awardsById = new Map(awardRows.map((award) => [award.award_id, award]))
-  const byHotkey: Record<string, LabMinerSpendEntry> = {}
   for (const schedule of activeSchedules) {
     if (!schedule.award_id) continue
     const award = awardsById.get(schedule.award_id)
@@ -1579,13 +1627,7 @@ async function fetchLabMinerSpend(supabase: ReturnType<typeof getSupabase>): Pro
     const hotkey = award.miner_hotkey ? String(award.miner_hotkey) : ''
     if (!hotkey) continue
 
-    const current = byHotkey[hotkey] ?? {
-      computeSpendUsd: 0,
-      scheduledReimbursementUsd: 0,
-      activeAwardCount: 0,
-      reimbursementEpochs: null,
-    }
-    current.computeSpendUsd += microusdToUsd(award.eligible_cost_microusd)
+    const current = byHotkey[hotkey] ?? emptyLabMinerSpendEntry()
     current.scheduledReimbursementUsd += microusdToUsd(
       award.target_reimbursement_microusd ?? schedule.total_microusd
     )
@@ -1599,19 +1641,223 @@ async function fetchLabMinerSpend(supabase: ReturnType<typeof getSupabase>): Pro
 
   return {
     window: spendWindowForSchedules(latestEpoch, activeSchedules),
-    byHotkey: Object.fromEntries(
-      Object.entries(byHotkey).map(([hotkey, entry]) => [
-        hotkey,
-        {
-          ...entry,
-          computeSpendUsd: roundUsd(entry.computeSpendUsd),
-          scheduledReimbursementUsd: roundUsd(entry.scheduledReimbursementUsd),
-        },
-      ])
-    ),
+    byHotkey: finalizeLabMinerSpendEntries(byHotkey),
     allTime,
     currentAllocation,
   }
+}
+
+async function fetchLabMinerComputeSpend(
+  supabase: ReturnType<typeof getSupabase>
+): Promise<LabMinerComputeSpendRollup> {
+  const empty = { allTime: {}, last24h: {} }
+  const terminalEvents = await fetchTerminalReceiptEvents(supabase)
+  if (terminalEvents.length === 0) return empty
+
+  const ticketIds = uniqueStrings(terminalEvents.map((event) => event.ticket_id))
+  const receiptIds = uniqueStrings(terminalEvents.map((event) => event.receipt_id))
+  const [ticketHotkeys, receiptRunIds] = await Promise.all([
+    fetchTicketHotkeysById(supabase, ticketIds),
+    fetchReceiptRunIdsById(supabase, receiptIds),
+  ])
+
+  const allTimeLatest = new Map<string, LabMinerTerminalSpendEvent>()
+  const last24hLatest = new Map<string, LabMinerTerminalSpendEvent>()
+  const windowStartedAtMs = Date.now() - LAB_MINER_SPEND_WINDOW_MS
+
+  for (const row of terminalEvents) {
+    const ticketId = stringOr(row.ticket_id)
+    const minerHotkey = ticketId ? ticketHotkeys.get(ticketId) : undefined
+    if (!minerHotkey) continue
+
+    const eventDoc = objectRecord(row.event_doc) ?? {}
+    const receiptId = stringOr(row.receipt_id)
+    const runId = stringOr(eventDoc.run_id) ?? (receiptId ? receiptRunIds.get(receiptId) : undefined)
+    if (!runId) continue
+
+    const createdAtMs = timestampOrZero(row.created_at)
+    if (createdAtMs <= 0) continue
+
+    const terminalSpend: LabMinerTerminalSpendEvent = {
+      minerHotkey,
+      runId,
+      createdAtMs,
+      costMicrousd: receiptEventCostMicrousd(eventDoc),
+    }
+    addLatestTerminalSpend(allTimeLatest, terminalSpend)
+    if (createdAtMs >= windowStartedAtMs) addLatestTerminalSpend(last24hLatest, terminalSpend)
+  }
+
+  return {
+    allTime: aggregateTerminalSpendByHotkey(allTimeLatest),
+    last24h: aggregateTerminalSpendByHotkey(last24hLatest),
+  }
+}
+
+async function fetchTerminalReceiptEvents(
+  supabase: ReturnType<typeof getSupabase>
+): Promise<ResearchLoopReceiptEventRow[]> {
+  const rows: ResearchLoopReceiptEventRow[] = []
+  for (let offset = 0; ; offset += LAB_MINER_SPEND_BATCH_SIZE) {
+    const { data, error } = await supabase
+      .from('research_loop_receipt_events')
+      .select('ticket_id, receipt_id, event_type, event_doc, created_at')
+      .in('event_type', ['completed', 'failed'])
+      .order('created_at', { ascending: false, nullsFirst: false })
+      .range(offset, offset + LAB_MINER_SPEND_BATCH_SIZE - 1)
+
+    if (error) {
+      console.error('[Research Lab API] terminal receipt event query failed:', error)
+      return []
+    }
+
+    const batch = (data ?? []) as ResearchLoopReceiptEventRow[]
+    rows.push(...batch)
+    if (batch.length < LAB_MINER_SPEND_BATCH_SIZE) break
+  }
+  return rows
+}
+
+async function fetchTicketHotkeysById(
+  supabase: ReturnType<typeof getSupabase>,
+  ticketIds: string[]
+): Promise<Map<string, string>> {
+  const hotkeys = new Map<string, string>()
+  for (let i = 0; i < ticketIds.length; i += SUPABASE_IN_FILTER_BATCH_SIZE) {
+    const batch = ticketIds.slice(i, i + SUPABASE_IN_FILTER_BATCH_SIZE)
+    if (batch.length === 0) continue
+
+    const { data, error } = await supabase
+      .from('research_loop_tickets')
+      .select('ticket_id, miner_hotkey')
+      .in('ticket_id', batch)
+
+    if (error) {
+      console.error('[Research Lab API] terminal receipt ticket query failed:', error)
+      return hotkeys
+    }
+
+    for (const row of (data ?? []) as ResearchLoopTicketSpendRow[]) {
+      const ticketId = stringOr(row.ticket_id)
+      const minerHotkey = stringOr(row.miner_hotkey)
+      if (ticketId && minerHotkey) hotkeys.set(ticketId, minerHotkey)
+    }
+  }
+  return hotkeys
+}
+
+async function fetchReceiptRunIdsById(
+  supabase: ReturnType<typeof getSupabase>,
+  receiptIds: string[]
+): Promise<Map<string, string>> {
+  const runIds = new Map<string, string>()
+  for (let i = 0; i < receiptIds.length; i += SUPABASE_IN_FILTER_BATCH_SIZE) {
+    const batch = receiptIds.slice(i, i + SUPABASE_IN_FILTER_BATCH_SIZE)
+    if (batch.length === 0) continue
+
+    const { data, error } = await supabase
+      .from('research_loop_receipts')
+      .select('receipt_id, run_id')
+      .in('receipt_id', batch)
+
+    if (error) {
+      console.error('[Research Lab API] terminal receipt run query failed:', error)
+      return runIds
+    }
+
+    for (const row of (data ?? []) as ResearchLoopReceiptRunRow[]) {
+      const receiptId = stringOr(row.receipt_id)
+      const runId = stringOr(row.run_id)
+      if (receiptId && runId) runIds.set(receiptId, runId)
+    }
+  }
+  return runIds
+}
+
+function addLatestTerminalSpend(
+  latestByMinerRun: Map<string, LabMinerTerminalSpendEvent>,
+  event: LabMinerTerminalSpendEvent,
+) {
+  const key = `${event.minerHotkey}\u0000${event.runId}`
+  const current = latestByMinerRun.get(key)
+  if (!current || event.createdAtMs > current.createdAtMs) {
+    latestByMinerRun.set(key, event)
+  }
+}
+
+function aggregateTerminalSpendByHotkey(
+  latestByMinerRun: Map<string, LabMinerTerminalSpendEvent>
+): Record<string, number> {
+  const byHotkey: Record<string, number> = {}
+  for (const event of latestByMinerRun.values()) {
+    byHotkey[event.minerHotkey] = (byHotkey[event.minerHotkey] ?? 0) + microusdToUsd(event.costMicrousd)
+  }
+  return Object.fromEntries(
+    Object.entries(byHotkey).map(([hotkey, computeSpendUsd]) => [
+      hotkey,
+      roundUsd(computeSpendUsd),
+    ])
+  )
+}
+
+function receiptEventCostMicrousd(eventDoc: Record<string, unknown>): number {
+  const ledger = objectRecord(eventDoc.final_cost_ledger)
+  if (!ledger) return 0
+
+  const directMicrousd = nullableCostNumber(ledger.actual_openrouter_cost_microusd)
+  if (directMicrousd !== null) return Math.max(0, Math.round(directMicrousd))
+
+  const openRouterUsd = nullableCostNumber(ledger.actual_openrouter_cost_usd)
+  const totalUsd = nullableCostNumber(ledger.total_usd)
+  return Math.max(0, Math.round((openRouterUsd ?? totalUsd ?? 0) * 1_000_000))
+}
+
+function nullableCostNumber(value: unknown): number | null {
+  if (typeof value === 'string' && value.trim() === '') return null
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric : null
+}
+
+function uniqueStrings(values: Array<string | null | undefined>): string[] {
+  return Array.from(new Set(values.map((value) => stringOr(value)).filter(Boolean))) as string[]
+}
+
+function buildLabMinerSpendEntriesFromCompute(
+  computeSpendByHotkey: Record<string, number>
+): Record<string, LabMinerSpendEntry> {
+  const byHotkey: Record<string, LabMinerSpendEntry> = {}
+  for (const [hotkey, computeSpendUsd] of Object.entries(computeSpendByHotkey)) {
+    if (!hotkey) continue
+    byHotkey[hotkey] = {
+      ...emptyLabMinerSpendEntry(),
+      computeSpendUsd,
+    }
+  }
+  return byHotkey
+}
+
+function emptyLabMinerSpendEntry(): LabMinerSpendEntry {
+  return {
+    computeSpendUsd: 0,
+    scheduledReimbursementUsd: 0,
+    activeAwardCount: 0,
+    reimbursementEpochs: null,
+  }
+}
+
+function finalizeLabMinerSpendEntries(
+  byHotkey: Record<string, LabMinerSpendEntry>
+): Record<string, LabMinerSpendEntry> {
+  return Object.fromEntries(
+    Object.entries(byHotkey).map(([hotkey, entry]) => [
+      hotkey,
+      {
+        ...entry,
+        computeSpendUsd: roundUsd(entry.computeSpendUsd),
+        scheduledReimbursementUsd: roundUsd(entry.scheduledReimbursementUsd),
+      },
+    ])
+  )
 }
 
 async function fetchLatestPublishedWeightEpoch(
@@ -1680,13 +1926,13 @@ async function fetchCurrentLabAllocationRow(
 function buildLabMinerAllTimeRollup(
   awards: ReimbursementAwardRow[],
   snapshots: EmissionAllocationSnapshotRow[],
+  computeSpendByHotkey: Record<string, number>,
 ): LabMinerAllTimeRollup {
   const byHotkey: Record<string, LabMinerAllTimeEntry> = {}
   for (const award of awards) {
     const hotkey = award.miner_hotkey ? String(award.miner_hotkey) : ''
     if (!hotkey) continue
     const current = byHotkey[hotkey] ?? emptyLabMinerAllTimeEntry()
-    current.computeSpendUsd += microusdToUsd(award.eligible_cost_microusd)
     current.scheduledReimbursementUsd += microusdToUsd(award.target_reimbursement_microusd)
     current.awardCount += 1
     current.reimbursementEpochs = Math.max(
@@ -1709,6 +1955,13 @@ function buildLabMinerAllTimeRollup(
       current.alphaAllocationCount += 1
       byHotkey[hotkey] = current
     }
+  }
+
+  for (const [hotkey, computeSpendUsd] of Object.entries(computeSpendByHotkey)) {
+    if (!hotkey) continue
+    const current = byHotkey[hotkey] ?? emptyLabMinerAllTimeEntry()
+    current.computeSpendUsd = computeSpendUsd
+    byHotkey[hotkey] = current
   }
 
   return {
