@@ -306,11 +306,22 @@ type LoopTimelineRun = {
   events: LoopTimelineEvent[]
 }
 
+type LoopCandidateDiagnostic = {
+  candidate: string
+  status: string
+  gate: 'passed' | 'rejected' | ''
+  candidateScore: number
+  delta: number
+  icpCount: number
+  externalFailures: number
+}
+
 type LoopTimeline = {
   ticketId: string
   currentRunId?: string
   runs: LoopTimelineRun[]
   sourceNotes?: string[]
+  candidateDiagnostics?: LoopCandidateDiagnostic[]
 }
 
 type LoopStatusNote = {
@@ -2000,20 +2011,83 @@ function LoopTimelineDialog({
                 Retry
               </button>
             </div>
-          ) : timeline && stageCount === 0 ? (
-            <div className="flex min-h-[260px] items-center justify-center text-center text-[13px] text-[var(--muted-2)]">
-              No public stage timestamps are available for this loop.
-            </div>
           ) : timeline ? (
-            <TimelineStageList
-              events={stageEvents}
-              finalResultBand={loop?.outcomeBand}
-              finalResultLabel={finalResultLabel}
-            />
+            <div className="space-y-8">
+              {stageCount === 0 ? (
+                <div className="flex min-h-[160px] items-center justify-center text-center text-[13px] text-[var(--muted-2)]">
+                  No public stage timestamps are available for this loop.
+                </div>
+              ) : (
+                <TimelineStageList
+                  events={stageEvents}
+                  finalResultBand={loop?.outcomeBand}
+                  finalResultLabel={finalResultLabel}
+                />
+              )}
+              {(timeline.candidateDiagnostics?.length ?? 0) > 0 ? (
+                <LoopCandidateDiagnostics items={timeline.candidateDiagnostics ?? []} />
+              ) : null}
+            </div>
           ) : null}
         </div>
       </DialogContent>
     </Dialog>
+  )
+}
+
+/* ============================================================
+ * Per-candidate diagnostics inside the loop timeline dialog.
+ * Public-safe subset only: status / gate / score / Δ-vs-base /
+ * ICP count / "scraping failed" count. No patch, no per-ICP, no
+ * company data, no external-service name.
+ * ============================================================ */
+function LoopCandidateDiagnostics({ items }: { items: LoopCandidateDiagnostic[] }) {
+  return (
+    <div>
+      <div className="mb-3 font-mono text-[10px] uppercase tracking-[0.12em] text-[var(--muted-2)]">
+        Candidates · {items.length}
+      </div>
+      <div className="space-y-2.5">
+        {items.map((c) => {
+          const gate =
+            c.gate === 'passed'
+              ? { label: '✓ passed gate', color: 'var(--platinum)' }
+              : c.gate === 'rejected'
+                ? { label: '✗ rejected at gate', color: 'var(--faint)' }
+                : { label: c.status || 'not scored', color: 'var(--muted-2)' }
+          return (
+            <div key={c.candidate} className="border-l-2 border-[var(--line-2)] py-2 pl-3">
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                <span className="font-mono text-[11px] text-[var(--muted)]">{c.candidate}</span>
+                <span className="font-mono text-[10.5px]" style={{ color: gate.color }}>
+                  {gate.label}
+                </span>
+              </div>
+              <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[10.5px] text-[var(--muted-2)]">
+                <span>
+                  score <span className="tabular-nums text-[var(--platinum)]">{c.candidateScore.toFixed(1)}</span>
+                </span>
+                <span>
+                  Δ vs base{' '}
+                  <span className="tabular-nums" style={{ color: c.delta >= 0 ? 'var(--platinum)' : 'var(--faint)' }}>
+                    {c.delta >= 0 ? '+' : ''}
+                    {c.delta.toFixed(1)}
+                  </span>
+                </span>
+                <span>
+                  <span className="tabular-nums text-[var(--muted)]">{c.icpCount}</span> ICPs
+                </span>
+                {c.externalFailures > 0 ? (
+                  <span>
+                    <span className="tabular-nums text-[var(--muted)]">{c.externalFailures}</span> scraping failed
+                  </span>
+                ) : null}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
   )
 }
 

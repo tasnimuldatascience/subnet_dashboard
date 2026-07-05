@@ -11,6 +11,7 @@ import {
 } from '@/lib/research-lab-status'
 import {
   buildResearchLabLoopTimeline,
+  type ResearchLabCandidateDiagnostic,
   type ResearchLabLoopTimeline,
   type ResearchLabTimelineEvent,
   type ResearchLabTimelinePhase,
@@ -637,6 +638,70 @@ export async function GET(request: Request) {
   }
 }
 
+// Public-safe per-candidate diagnostics for a ticket, built on-demand from the
+// score bundles. The raw bundle (per-ICP detail, patch, provider errors) is read
+// server-side but NEVER emitted — only the sanitized subset below reaches the
+// browser. External-service failures collapse to one opaque "scraping failed"
+// count so no third-party name / HTTP code / endpoint is ever exposed.
+async function fetchCandidateDiagnostics(
+  supabase: ReturnType<typeof getSupabase>,
+  ticketId: string,
+): Promise<ResearchLabCandidateDiagnostic[]> {
+  const [candRes, bundleRes] = await Promise.all([
+    supabase
+      .from('research_lab_candidate_evaluation_current')
+      .select('candidate_id, current_candidate_status, current_score_bundle_id, candidate_artifact_hash')
+      .eq('ticket_id', ticketId)
+      .order('created_at', { ascending: false })
+      .limit(200),
+    supabase
+      .from('research_evaluation_score_bundle_current')
+      .select('score_bundle_id, candidate_artifact_hash, score_bundle_doc')
+      .eq('ticket_id', ticketId)
+      .limit(200),
+  ])
+  if (candRes.error || bundleRes.error) return []
+
+  const byBundleId = new Map<string, ScoreBundleDoc>()
+  const byArtifact = new Map<string, ScoreBundleDoc>()
+  for (const b of (bundleRes.data ?? []) as ScoreBundleCurrentRow[]) {
+    const doc = (b.score_bundle_doc ?? {}) as ScoreBundleDoc
+    if (b.score_bundle_id) byBundleId.set(String(b.score_bundle_id), doc)
+    if (b.candidate_artifact_hash) byArtifact.set(String(b.candidate_artifact_hash), doc)
+  }
+
+  const TERMINAL = new Set(['scored', 'rejected', 'failed'])
+  const out: ResearchLabCandidateDiagnostic[] = []
+  for (const c of (candRes.data ?? []) as Array<Record<string, unknown>>) {
+    const status = String(c.current_candidate_status ?? '')
+    if (!TERMINAL.has(status)) continue
+    const doc =
+      byBundleId.get(String(c.current_score_bundle_id ?? '')) ??
+      byArtifact.get(String(c.candidate_artifact_hash ?? '')) ??
+      {}
+    const agg = (doc as Record<string, unknown>).aggregates as Record<string, unknown> | undefined
+    const gateDoc = (doc as Record<string, unknown>).private_holdout_gate as Record<string, unknown> | undefined
+    const perIcp = Array.isArray(agg?.per_icp_results) ? (agg!.per_icp_results as Array<Record<string, unknown>>) : []
+    const decision = String(gateDoc?.decision ?? '')
+    const gate: ResearchLabCandidateDiagnostic['gate'] =
+      decision === 'private_holdout_approved' ? 'passed' : decision === 'rejected_before_private_holdout' ? 'rejected' : ''
+    const externalFailures = perIcp.filter((r) => {
+      const blob = `${r.status ?? ''} ${r.failure_reason ?? ''}`.toLowerCase()
+      return blob.includes('provider') || blob.includes('infra_excluded')
+    }).length
+    out.push({
+      candidate: String(c.candidate_id ?? '').slice(0, 18),
+      status,
+      gate,
+      candidateScore: numberOr(agg?.candidate_score, 0),
+      delta: numberOr(gateDoc?.candidate_delta_vs_daily_baseline ?? agg?.mean_delta, 0),
+      icpCount: perIcp.length,
+      externalFailures,
+    })
+  }
+  return out
+}
+
 async function fetchLoopTimeline(
   supabase: ReturnType<typeof getSupabase>,
   ticketId: string,
@@ -693,6 +758,8 @@ async function fetchLoopTimeline(
     sourceNotes.push('Only the current public loop projection is available for this ticket.')
   }
 
+  const candidateDiagnostics = await fetchCandidateDiagnostics(supabase, ticketId)
+
   const detailedTimeline = buildResearchLabLoopTimeline({
     ticketId,
     currentRunId,
@@ -714,7 +781,8 @@ async function fetchLoopTimeline(
     sourceNotes,
   })
 
-  return summarizePublicLoopTimeline(detailedTimeline, currentRow)
+  const summarized = summarizePublicLoopTimeline(detailedTimeline, currentRow)
+  return { ...summarized, candidateDiagnostics }
 }
 
 type PublicTimelineStageId =

@@ -36,11 +36,25 @@ export type ResearchLabTimelineRun = {
   events: ResearchLabTimelineEvent[]
 }
 
+// Public-safe per-candidate diagnostics shown in the loop timeline dialog.
+// Never carries the patch, per-ICP detail, company data, or any external-
+// service name/HTTP code — only the outcome a miner can act on.
+export type ResearchLabCandidateDiagnostic = {
+  candidate: string
+  status: string
+  gate: 'passed' | 'rejected' | ''
+  candidateScore: number
+  delta: number
+  icpCount: number
+  externalFailures: number
+}
+
 export type ResearchLabLoopTimeline = {
   ticketId: string
   currentRunId?: string
   runs: ResearchLabTimelineRun[]
   sourceNotes?: string[]
+  candidateDiagnostics?: ResearchLabCandidateDiagnostic[]
 }
 
 export type ResearchLabTimelineRawRow = Record<string, unknown>
