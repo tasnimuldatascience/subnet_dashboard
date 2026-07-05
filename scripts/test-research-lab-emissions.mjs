@@ -101,6 +101,8 @@ try {
   assert.match(componentSource, /activityLoops/)
   assert.match(componentSource, /metagraphIncentivePct/)
   assert.match(componentSource, /metagraph\?\.incentives/)
+  assert.match(componentSource, /hasCurrentReward: metagraphIncentivePct > 0 \|\| hasCurrentChampionReward/)
+  assert.match(componentSource, /row\.computeSpendUsd > 0 \|\| row\.hasCurrentReward/)
   assert.doesNotMatch(componentSource, /ActivityPanelStat/)
   assert.doesNotMatch(componentSource, /metagraph\?\.emissions/)
   assert.doesNotMatch(componentSource, /spendHotkeys/)

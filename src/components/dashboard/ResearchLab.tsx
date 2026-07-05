@@ -585,6 +585,7 @@ type LabMinerRow = {
   computeSpendUsd: number
   scheduledReimbursementUsd: number
   activeAwardCount: number
+  hasCurrentReward: boolean
   awardCount: number
   reimbursementEpochs: number | null
   lastActivityAt: string
@@ -644,6 +645,10 @@ function LabEmissionSplit({
       const metagraphIncentivePct = Math.max(0, incentives[hotkey] ?? 0) * 100
       const windowSpendEntry = spend?.byHotkey?.[hotkey]
       const allTimeSpendEntry = spend?.allTime?.byHotkey?.[hotkey]
+      const currentAllocationEntry = spend?.currentAllocation?.byHotkey?.[hotkey]
+      const currentAllocationPaidAlphaPercent = Math.max(0, currentAllocationEntry?.paidAlphaPercent ?? 0)
+      const hasCurrentChampionReward = currentAllocationPaidAlphaPercent > 0
+        && (currentAllocationEntry?.reasons ?? []).some((reason) => reason.toLowerCase().includes('champion'))
       const computeSpendUsd = mode === 'all_time'
         ? Math.max(0, allTimeSpendEntry?.computeSpendUsd ?? 0)
         : Math.max(0, windowSpendEntry?.computeSpendUsd ?? 0)
@@ -664,6 +669,7 @@ function LabEmissionSplit({
         computeSpendUsd,
         scheduledReimbursementUsd,
         activeAwardCount: Math.max(0, windowSpendEntry?.activeAwardCount ?? 0),
+        hasCurrentReward: metagraphIncentivePct > 0 || hasCurrentChampionReward,
         awardCount: Math.max(0, allTimeSpendEntry?.awardCount ?? 0),
         reimbursementEpochs: (mode === 'all_time'
           ? allTimeSpendEntry?.reimbursementEpochs
@@ -672,7 +678,7 @@ function LabEmissionSplit({
     })
     const visibleRows = mode === 'all_time'
       ? rowsWithEmission
-      : rowsWithEmission.filter((row) => row.computeSpendUsd > 0)
+      : rowsWithEmission.filter((row) => row.computeSpendUsd > 0 || row.hasCurrentReward)
     const displayedEmissionTotal = visibleRows.reduce((sum, row) => sum + row.metagraphIncentivePct, 0)
     const totalAlphaEarned = visibleRows.reduce((sum, row) => sum + row.alphaEarned, 0)
     return visibleRows
@@ -701,6 +707,7 @@ function LabEmissionSplit({
     mode,
     spend?.allTime?.byHotkey,
     spend?.byHotkey,
+    spend?.currentAllocation?.byHotkey,
   ])
 
   const barRows = rows.filter((row) => mode === 'all_time' ? row.alphaEarned > 0 : row.metagraphIncentivePct > 0)
