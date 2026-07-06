@@ -6,10 +6,6 @@ import {
   type AdminSubmittedLeadsPayload,
 } from './_components/AdminSubmittedLeads'
 import {
-  AdminModelCompetition,
-  type AdminModelCompetitionPayload,
-} from './_components/AdminModelCompetition'
-import {
   AdminResearchLab,
   type AdminResearchLabPayload,
 } from './_components/AdminResearchLab'
@@ -17,7 +13,7 @@ import { cn } from '@/lib/utils'
 
 export const dynamic = 'force-dynamic'
 
-type AdminView = 'fulfillment' | 'model-competition' | 'lab'
+type AdminView = 'lab' | 'fulfillment'
 type FulfillmentTab = 'requests' | 'submitted-leads'
 
 async function fetchChains(): Promise<ChainSummary[]> {
@@ -40,22 +36,6 @@ async function fetchChains(): Promise<ChainSummary[]> {
   }
   const body = await res.json()
   return body.chains ?? []
-}
-
-async function fetchModelCompetition(): Promise<AdminModelCompetitionPayload> {
-  const h = await headers()
-  const host = h.get('x-forwarded-host') ?? h.get('host')
-  const proto = h.get('x-forwarded-proto') ?? 'https'
-  const base = host ? `${proto}://${host}` : ''
-  const auth = h.get('authorization')
-  const res = await fetch(`${base}/api/admin/model-competition`, {
-    cache: 'no-store',
-    headers: auth ? { authorization: auth } : undefined,
-  })
-  if (!res.ok) {
-    throw new Error(`API returned ${res.status}: ${await res.text()}`)
-  }
-  return (await res.json()) as AdminModelCompetitionPayload
 }
 
 async function fetchSubmittedLeads(): Promise<AdminSubmittedLeadsPayload> {
@@ -92,17 +72,8 @@ async function fetchResearchLab(): Promise<AdminResearchLabPayload> {
 
 function AdminViewTabs({ active }: { active: AdminView }) {
   const tabs: Array<{ key: AdminView; label: string; href: string }> = [
-    { key: 'fulfillment', label: 'Fulfillment', href: '/admin' },
-    {
-      key: 'model-competition',
-      label: 'Model competition',
-      href: '/admin?view=model-competition',
-    },
-    {
-      key: 'lab',
-      label: 'Lab',
-      href: '/admin?view=lab',
-    },
+    { key: 'lab', label: 'Lab', href: '/admin' },
+    { key: 'fulfillment', label: 'Fulfillment', href: '/admin?view=fulfillment' },
   ]
 
   return (
@@ -133,9 +104,8 @@ function AdminViewTabs({ active }: { active: AdminView }) {
 
 function getAdminView(value: string | string[] | undefined): AdminView {
   const view = Array.isArray(value) ? value[0] : value
-  if (view === 'model-competition') return 'model-competition'
-  if (view === 'lab') return 'lab'
-  return 'fulfillment'
+  if (view === 'fulfillment') return 'fulfillment'
+  return 'lab'
 }
 
 function getFulfillmentTab(value: string | string[] | undefined): FulfillmentTab {
@@ -145,11 +115,11 @@ function getFulfillmentTab(value: string | string[] | undefined): FulfillmentTab
 
 function FulfillmentTabs({ active }: { active: FulfillmentTab }) {
   const tabs: Array<{ key: FulfillmentTab; label: string; href: string }> = [
-    { key: 'requests', label: 'Requests', href: '/admin' },
+    { key: 'requests', label: 'Requests', href: '/admin?view=fulfillment' },
     {
       key: 'submitted-leads',
       label: 'Submitted leads',
-      href: '/admin?tab=submitted-leads',
+      href: '/admin?view=fulfillment&tab=submitted-leads',
     },
   ]
 
@@ -182,14 +152,11 @@ export default async function AdminLandingPage({
   const activeView = getAdminView(params.view)
   const fulfillmentTab = getFulfillmentTab(params.tab)
   let chains: ChainSummary[] = []
-  let modelPayload: AdminModelCompetitionPayload | null = null
   let labPayload: AdminResearchLabPayload | null = null
   let submittedLeadsPayload: AdminSubmittedLeadsPayload | null = null
   let error: string | null = null
   try {
-    if (activeView === 'model-competition') {
-      modelPayload = await fetchModelCompetition()
-    } else if (activeView === 'lab') {
+    if (activeView === 'lab') {
       labPayload = await fetchResearchLab()
     } else if (fulfillmentTab === 'submitted-leads') {
       submittedLeadsPayload = await fetchSubmittedLeads()
@@ -200,19 +167,15 @@ export default async function AdminLandingPage({
     error =
       e instanceof Error
         ? e.message
-        : activeView === 'model-competition'
-          ? 'Unknown error loading model competition'
-          : activeView === 'lab'
-            ? 'Unknown error loading Lab activity'
+        : activeView === 'lab'
+          ? 'Unknown error loading Lab activity'
           : 'Unknown error loading requests'
   }
 
   return (
     <div className="space-y-6">
       <AdminViewTabs active={activeView} />
-      {activeView === 'model-competition' ? (
-        <AdminModelCompetition payload={modelPayload} error={error} />
-      ) : activeView === 'lab' ? (
+      {activeView === 'lab' ? (
         <AdminResearchLab payload={labPayload} error={error} />
       ) : fulfillmentTab === 'submitted-leads' ? (
         <>
