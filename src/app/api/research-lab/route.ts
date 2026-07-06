@@ -1277,7 +1277,7 @@ async function fetchPrivateDiagnostics(
     .select('benchmark_date, created_at, benchmark_quality, score_summary_doc')
     .eq('benchmark_quality', 'passed')
     .order('created_at', { ascending: false })
-    .limit(1)
+    .limit(10)
   if (benchmarkDate) query = query.eq('benchmark_date', benchmarkDate)
 
   const { data, error } = await query
@@ -1285,7 +1285,21 @@ async function fetchPrivateDiagnostics(
     console.error('[Research Lab API] private bundle query failed:', error)
     return null
   }
-  const row = (data?.[0] ?? null) as PrivateBundleRow | null
+  // Promotion rebenchmarks rebuild summaries from stored per-ICP score rows,
+  // which no longer carry signal detail, so their per_signal maps are always
+  // empty. Prefer the newest bundle WITH per-signal coverage so the intent
+  // type panel reflects the latest bundle that actually has the data; fall
+  // back to the newest bundle overall when none in the window have it.
+  const rows = (data ?? []) as PrivateBundleRow[]
+  const hasSignalCoverage = (r: PrivateBundleRow): boolean => {
+    const summaries = Array.isArray(r?.score_summary_doc?.per_icp_summaries)
+      ? (r.score_summary_doc.per_icp_summaries as Array<{ diagnostics?: { per_signal?: Record<string, unknown> } }>)
+      : []
+    return summaries.some(
+      (it) => it?.diagnostics?.per_signal && Object.keys(it.diagnostics.per_signal).length > 0,
+    )
+  }
+  const row = (rows.find(hasSignalCoverage) ?? rows[0] ?? null) as PrivateBundleRow | null
   if (!row?.score_summary_doc) return null
 
   const summaries = Array.isArray(row.score_summary_doc.per_icp_summaries)
