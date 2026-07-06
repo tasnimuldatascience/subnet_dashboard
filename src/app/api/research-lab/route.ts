@@ -117,6 +117,12 @@ type ScoreBundleCurrentRow = {
   score_bundle_id: string | null
   bundle_status: string | null
   candidate_artifact_hash: string | null
+  ticket_id?: string | null
+  run_id?: string | null
+  current_event_status?: string | null
+  current_event_type?: string | null
+  current_reason?: string | null
+  current_status_at?: string | null
   score_bundle_doc: ScoreBundleDoc | null
   created_at: string | null
 }
@@ -130,22 +136,42 @@ type CandidateEvaluationCurrentStatusRow = {
   created_at: string | null
 }
 
-type RunQueueEventStatusRow = {
+type AutoResearchLoopCurrentStatusRow = {
   ticket_id: string | null
   run_id: string | null
-  event_type: string | null
-  reason: string | null
-  event_doc: Record<string, unknown> | null
-  created_at: string | null
+  current_loop_status: string | null
+  current_event_type: string | null
+  current_status_at: string | null
+}
+
+type RunQueueCurrentStatusRow = {
+  ticket_id: string | null
+  run_id: string | null
+  current_queue_status: string | null
+  current_reason: string | null
+  current_status_at: string | null
+}
+
+type TicketCurrentStatusRow = {
+  ticket_id: string | null
+  current_ticket_status: string | null
+  current_reason: string | null
+  current_status_at: string | null
 }
 
 type LoopProjectionOverlay = {
   candidateCount: number
   scoredCandidateCount: number
+  scoreBundleCount: number
+  currentScoreBundleStatus?: string
   currentCandidateStatus?: string
   currentReason?: string
+  currentLoopStatus?: string
+  currentLoopReason?: string
   currentQueueStatus?: string
-  currentStatus?: string
+  currentQueueReason?: string
+  currentTicketStatus?: string
+  currentTicketReason?: string
   lastActivityAt?: string
 }
 
@@ -2223,6 +2249,9 @@ async function fetchPublicLoops(
         receiptId: row.current_receipt_id,
         candidateCount,
         scoredCandidateCount,
+        scoreBundleCount: overlay?.scoreBundleCount ?? 0,
+        currentScoreBundleStatus: overlay?.currentScoreBundleStatus,
+        hasCanonicalCandidateStatus: Boolean(overlay?.currentCandidateStatus),
         currentCandidateStatus:
           overlay?.currentCandidateStatus ??
           row.current_candidate_status ??
@@ -2236,9 +2265,18 @@ async function fetchPublicLoops(
           stringOr(doc.candidate_reason) ??
           dominantCountKey(doc.candidate_reason_counts) ??
           doc.projection_reason,
+        hasCanonicalLoopStatus: Boolean(overlay?.currentLoopStatus),
+        currentLoopStatus: overlay?.currentLoopStatus,
+        currentLoopReason: overlay?.currentLoopReason,
+        hasCanonicalQueueStatus: Boolean(overlay?.currentQueueStatus),
         currentQueueStatus: overlay?.currentQueueStatus ?? row.current_queue_status ?? doc.queue_status,
+        queueStatus: overlay?.currentQueueStatus,
+        currentQueueReason: overlay?.currentQueueReason,
+        hasCanonicalTicketStatus: Boolean(overlay?.currentTicketStatus),
+        currentTicketStatus: overlay?.currentTicketStatus,
+        currentTicketReason: overlay?.currentTicketReason,
         currentReceiptStatus: row.current_receipt_status ?? doc.receipt_status,
-        currentStatus: overlay?.currentStatus ?? row.current_status,
+        currentStatus: row.current_status,
         improvementGateDecision,
         promotionStatus,
         promotionEventType,
@@ -2290,9 +2328,50 @@ async function fetchLoopProjectionOverlays(
   const ticketIds = uniqueStrings(rows.map((row) => row.ticket_id))
   if (ticketIds.length === 0) return overlays
 
+  await applyScoreBundleOverlays(supabase, ticketIds, overlays)
   await applyCandidateEvaluationOverlays(supabase, ticketIds, overlays)
-  await applyRunQueueEventOverlays(supabase, ticketIds, overlays)
+  await applyAutoResearchLoopOverlays(supabase, ticketIds, overlays)
+  await applyRunQueueCurrentOverlays(supabase, ticketIds, overlays)
+  await applyTicketCurrentOverlays(supabase, ticketIds, overlays)
   return overlays
+}
+
+async function applyScoreBundleOverlays(
+  supabase: ReturnType<typeof getSupabase>,
+  ticketIds: string[],
+  overlays: Map<string, LoopProjectionOverlay>,
+) {
+  for (const batch of chunked(ticketIds, SUPABASE_IN_FILTER_BATCH_SIZE)) {
+    const { data, error } = await supabase
+      .from('research_evaluation_score_bundle_current')
+      .select('ticket_id, run_id, bundle_status, current_event_status, current_event_type, current_reason, current_status_at, created_at')
+      .in('ticket_id', batch)
+      .order('current_status_at', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false, nullsFirst: false })
+      .limit(5_000)
+
+    if (error) {
+      console.error('[Research Lab API] score bundle projection overlay query failed:', error)
+      continue
+    }
+
+    for (const row of (data ?? []) as ScoreBundleCurrentRow[]) {
+      const ticketId = stringOr(row.ticket_id)
+      if (!ticketId) continue
+      const status =
+        stringOr(row.current_event_status) ??
+        stringOr(row.bundle_status) ??
+        stringOr(row.current_event_type) ??
+        'scored'
+      const statusAt = row.current_status_at || row.created_at || undefined
+      const current = overlays.get(ticketId) ?? emptyLoopProjectionOverlay()
+      current.scoreBundleCount += 1
+      current.currentScoreBundleStatus = current.currentScoreBundleStatus ?? status
+      current.scoredCandidateCount = Math.max(current.scoredCandidateCount, 1)
+      current.lastActivityAt = latestIso(current.lastActivityAt, statusAt)
+      overlays.set(ticketId, current)
+    }
+  }
 }
 
 async function applyCandidateEvaluationOverlays(
@@ -2341,42 +2420,97 @@ async function applyCandidateEvaluationOverlays(
   }
 }
 
-async function applyRunQueueEventOverlays(
+async function applyAutoResearchLoopOverlays(
   supabase: ReturnType<typeof getSupabase>,
   ticketIds: string[],
   overlays: Map<string, LoopProjectionOverlay>,
 ) {
   for (const batch of chunked(ticketIds, SUPABASE_IN_FILTER_BATCH_SIZE)) {
     const { data, error } = await supabase
-      .from('research_loop_run_queue_events')
-      .select('ticket_id, run_id, event_type, reason, event_doc, created_at')
+      .from('research_lab_auto_research_loop_current')
+      .select('ticket_id, run_id, current_loop_status, current_event_type, current_status_at')
       .in('ticket_id', batch)
-      .order('created_at', { ascending: false, nullsFirst: false })
+      .order('current_status_at', { ascending: false, nullsFirst: false })
       .limit(5_000)
 
     if (error) {
-      console.error('[Research Lab API] queue projection overlay query failed:', error)
+      console.error('[Research Lab API] auto loop projection overlay query failed:', error)
       continue
     }
 
     const seenTickets = new Set<string>()
-    for (const row of (data ?? []) as RunQueueEventStatusRow[]) {
+    for (const row of (data ?? []) as AutoResearchLoopCurrentStatusRow[]) {
       const ticketId = stringOr(row.ticket_id)
       if (!ticketId || seenTickets.has(ticketId)) continue
       seenTickets.add(ticketId)
-      const doc = row.event_doc ?? {}
-      const queueStatus =
-        stringOr(row.event_type) ??
-        stringOr(doc.queue_status) ??
-        stringOr(doc.status)
-      const currentStatus =
-        stringOr(doc.current_status) ??
-        stringOr(doc.public_status) ??
-        queueStatus
       const current = overlays.get(ticketId) ?? emptyLoopProjectionOverlay()
-      current.currentQueueStatus = queueStatus
-      current.currentStatus = current.currentStatus ?? currentStatus
-      current.lastActivityAt = latestIso(current.lastActivityAt, row.created_at || undefined)
+      current.currentLoopStatus = stringOr(row.current_loop_status) ?? stringOr(row.current_event_type)
+      current.currentLoopReason = stringOr(row.current_event_type)
+      current.lastActivityAt = latestIso(current.lastActivityAt, row.current_status_at || undefined)
+      overlays.set(ticketId, current)
+    }
+  }
+}
+
+async function applyRunQueueCurrentOverlays(
+  supabase: ReturnType<typeof getSupabase>,
+  ticketIds: string[],
+  overlays: Map<string, LoopProjectionOverlay>,
+) {
+  for (const batch of chunked(ticketIds, SUPABASE_IN_FILTER_BATCH_SIZE)) {
+    const { data, error } = await supabase
+      .from('research_loop_run_queue_current')
+      .select('ticket_id, run_id, current_queue_status, current_reason, current_status_at')
+      .in('ticket_id', batch)
+      .order('current_status_at', { ascending: false, nullsFirst: false })
+      .limit(5_000)
+
+    if (error) {
+      console.error('[Research Lab API] queue current projection overlay query failed:', error)
+      continue
+    }
+
+    const seenTickets = new Set<string>()
+    for (const row of (data ?? []) as RunQueueCurrentStatusRow[]) {
+      const ticketId = stringOr(row.ticket_id)
+      if (!ticketId || seenTickets.has(ticketId)) continue
+      seenTickets.add(ticketId)
+      const current = overlays.get(ticketId) ?? emptyLoopProjectionOverlay()
+      current.currentQueueStatus = stringOr(row.current_queue_status)
+      current.currentQueueReason = stringOr(row.current_reason)
+      current.lastActivityAt = latestIso(current.lastActivityAt, row.current_status_at || undefined)
+      overlays.set(ticketId, current)
+    }
+  }
+}
+
+async function applyTicketCurrentOverlays(
+  supabase: ReturnType<typeof getSupabase>,
+  ticketIds: string[],
+  overlays: Map<string, LoopProjectionOverlay>,
+) {
+  for (const batch of chunked(ticketIds, SUPABASE_IN_FILTER_BATCH_SIZE)) {
+    const { data, error } = await supabase
+      .from('research_loop_ticket_current')
+      .select('ticket_id, current_ticket_status, current_reason, current_status_at')
+      .in('ticket_id', batch)
+      .order('current_status_at', { ascending: false, nullsFirst: false })
+      .limit(5_000)
+
+    if (error) {
+      console.error('[Research Lab API] ticket current projection overlay query failed:', error)
+      continue
+    }
+
+    const seenTickets = new Set<string>()
+    for (const row of (data ?? []) as TicketCurrentStatusRow[]) {
+      const ticketId = stringOr(row.ticket_id)
+      if (!ticketId || seenTickets.has(ticketId)) continue
+      seenTickets.add(ticketId)
+      const current = overlays.get(ticketId) ?? emptyLoopProjectionOverlay()
+      current.currentTicketStatus = stringOr(row.current_ticket_status)
+      current.currentTicketReason = stringOr(row.current_reason)
+      current.lastActivityAt = latestIso(current.lastActivityAt, row.current_status_at || undefined)
       overlays.set(ticketId, current)
     }
   }
@@ -2386,6 +2520,7 @@ function emptyLoopProjectionOverlay(): LoopProjectionOverlay {
   return {
     candidateCount: 0,
     scoredCandidateCount: 0,
+    scoreBundleCount: 0,
   }
 }
 

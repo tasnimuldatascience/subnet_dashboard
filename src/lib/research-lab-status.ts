@@ -23,10 +23,27 @@ export type ResearchLabLoopStatusInput = {
   scoredCandidateCount?: number | null
   candidateStatus?: string | null
   currentCandidateStatus?: string | null
+  scoreBundleStatus?: string | null
+  currentScoreBundleStatus?: string | null
+  scoreBundleCount?: number | null
+  hasCanonicalCandidateStatus?: boolean | null
+  loopStatus?: string | null
+  currentLoopStatus?: string | null
+  hasCanonicalLoopStatus?: boolean | null
+  loopReason?: string | null
+  currentLoopReason?: string | null
+  ticketStatus?: string | null
+  currentTicketStatus?: string | null
+  hasCanonicalTicketStatus?: boolean | null
+  ticketReason?: string | null
+  currentTicketReason?: string | null
   reason?: string | null
   currentReason?: string | null
   queueStatus?: string | null
   currentQueueStatus?: string | null
+  hasCanonicalQueueStatus?: boolean | null
+  queueReason?: string | null
+  currentQueueReason?: string | null
   receiptStatus?: string | null
   currentReceiptStatus?: string | null
   currentStatus?: string | null
@@ -219,6 +236,22 @@ const BASELINE_NOT_READY_VALUES = new Set([
   'waiting_for_baseline',
 ])
 
+const NO_CANDIDATE_REASON_VALUES = new Set([
+  'no_valid_image_build_finalists',
+  'completed_no_candidate_produced',
+])
+
+const CANONICAL_ACTIVE_CANDIDATE_VALUES = new Set([
+  'queued',
+  'assigned',
+  'evaluating',
+  'evaluation_running',
+  'scoring',
+  'started',
+])
+
+const CANONICAL_ACTIVE_QUEUE_VALUES = new Set(['queued', 'started'])
+
 const ACTIVE_STATUS_KEYS = new Set(['queued', 'running', 'started', 'scoring'])
 const SCORED_STATUS_KEYS = new Set([
   'scored',
@@ -304,6 +337,9 @@ export const RESEARCH_LAB_STATUS_FILTER_OPTIONS: ResearchLabStatusFilterOption[]
 export const RESEARCH_LAB_OUTCOME_FILTER_OPTIONS = RESEARCH_LAB_STATUS_FILTER_OPTIONS
 
 export function deriveResearchLabLoopStatus(input: ResearchLabLoopStatusInput): ResearchLabLoopStatus {
+  const canonicalStatus = canonicalProjectionStatus(input)
+  if (canonicalStatus) return canonicalStatus
+
   if (hasCanonicalLifecycleFields(input)) {
     return deriveCanonicalResearchLabLoopStatus(input)
   }
@@ -811,7 +847,7 @@ function noGainStatus(action?: ResearchLabLoopStatusNote): ResearchLabLoopStatus
 }
 
 function notPromotedStatus(action?: ResearchLabLoopStatusNote): ResearchLabLoopStatus {
-  return status('scored_no_gain', 'Scored', 'no_gain', finalOutcomeNote(
+  return status('not_promoted', 'Not promoted', 'no_gain', finalOutcomeNote(
     'Final outcome: candidate did not advance to promotion.'
   ), action)
 }
@@ -823,7 +859,7 @@ function completedNoCandidateStatus(action?: ResearchLabLoopStatusNote): Researc
 }
 
 function completedStatus(action?: ResearchLabLoopStatusNote): ResearchLabLoopStatus {
-  return status('completed', 'Complete', 'completed', finalOutcomeNote(
+  return status('completed', 'Completed', 'completed', finalOutcomeNote(
     'Final outcome: loop completed.'
   ), action)
 }
@@ -838,6 +874,86 @@ function failedTerminalStatus(action?: ResearchLabLoopStatusNote): ResearchLabLo
   return status('failed', 'Failed', 'failed', finalOutcomeNote(
     'Final outcome: loop failed terminally.'
   ), action)
+}
+
+function runFailedStatus(action?: ResearchLabLoopStatusNote): ResearchLabLoopStatus {
+  return status('failed', 'Run failed', 'failed', finalOutcomeNote(
+    'Final outcome: run failed terminally.'
+  ), action)
+}
+
+function runningStatus(): ResearchLabLoopStatus {
+  return status('running', 'Running', 'running')
+}
+
+function canonicalProjectionStatus(input: ResearchLabLoopStatusInput): ResearchLabLoopStatus | null {
+  const projectedLabel = normalize(input.outcomeLabel)
+  const projectedBand = normalize(input.outcomeBand)
+  const hasProjectedModelOutcome = hasExplicitProjectedModelOutcome(projectedLabel, projectedBand)
+  const scoreBundleStatus = normalize(input.currentScoreBundleStatus ?? input.scoreBundleStatus)
+  const scoreBundleCount = countValue(input.scoreBundleCount)
+  if ((scoreBundleCount > 0 || scoreBundleStatus) && !hasProjectedModelOutcome) return noGainStatus()
+
+  const candidateStatus = normalize(input.currentCandidateStatus ?? input.candidateStatus)
+  const reason = normalize(input.currentReason ?? input.reason)
+  if (
+    candidateStatus === 'scored' &&
+    !hasProjectedModelOutcome &&
+    !FAILED_VALUES.has(projectedLabel)
+  ) {
+    return noGainStatus()
+  }
+  if (isNoCandidateReason(reason)) return completedNoCandidateStatus()
+  if (candidateStatus === 'failed') {
+    return status('scoring_failed', 'Scoring failed', 'failed', finalOutcomeNote(
+      'Final outcome: candidate scoring exhausted retry budget.'
+    ))
+  }
+  if (candidateStatus === 'rejected') return notPromotedStatus()
+  if (input.hasCanonicalCandidateStatus && CANONICAL_ACTIVE_CANDIDATE_VALUES.has(candidateStatus)) return runningStatus()
+
+  const loopStatus = normalize(input.currentLoopStatus ?? input.loopStatus)
+  const loopReason = normalize(input.currentLoopReason ?? input.loopReason)
+  if (input.hasCanonicalLoopStatus && isNoCandidateReason(loopReason)) return completedNoCandidateStatus()
+  if (input.hasCanonicalLoopStatus && COMPLETED_VALUES.has(loopStatus)) return completedStatus()
+  if (input.hasCanonicalLoopStatus && FAILED_VALUES.has(loopStatus)) {
+    return CANCELLED_VALUES.has(loopStatus) ? cancelledStatus() : runFailedStatus()
+  }
+
+  const queueStatus = normalize(input.currentQueueStatus ?? input.queueStatus)
+  const queueReason = normalize(input.currentQueueReason ?? input.queueReason)
+  if (input.hasCanonicalQueueStatus && isNoCandidateReason(queueReason)) return completedNoCandidateStatus()
+  if (input.hasCanonicalQueueStatus && CANONICAL_ACTIVE_QUEUE_VALUES.has(queueStatus)) return runningStatus()
+  if (input.hasCanonicalQueueStatus && COMPLETED_VALUES.has(queueStatus)) return completedStatus()
+  if (input.hasCanonicalQueueStatus && FAILED_VALUES.has(queueStatus)) {
+    return CANCELLED_VALUES.has(queueStatus) ? cancelledStatus() : runFailedStatus()
+  }
+
+  const ticketStatus = normalize(input.currentTicketStatus ?? input.ticketStatus)
+  if (
+    input.hasCanonicalTicketStatus &&
+    (ticketStatus === 'running' || ticketStatus === 'queued' || ticketStatus === 'started')
+  ) {
+    return status('submitted', 'Submitted', 'pending')
+  }
+
+  return null
+}
+
+function isNoCandidateReason(reason: string): boolean {
+  return NO_CANDIDATE_REASON_VALUES.has(reason)
+}
+
+function hasExplicitProjectedModelOutcome(projectedLabel: string, projectedBand: string): boolean {
+  return (
+    SCORED_NO_GAIN_VALUES.has(projectedLabel) ||
+    SCORED_PROMISING_VALUES.has(projectedLabel) ||
+    PROMOTED_VALUES.has(projectedLabel) ||
+    PROMOTION_PASS_VALUES.has(projectedLabel) ||
+    projectedBand === 'no_gain' ||
+    projectedBand === 'small_gain' ||
+    PASSED_THRESHOLD_BANDS.has(projectedBand)
+  )
 }
 
 function legacyTerminalOverrideStatus(input: {
@@ -1102,7 +1218,7 @@ function labelForStatus(value: string): string {
     running: 'Running',
     scoring: 'Scoring',
     pending: 'Pending',
-    completed: 'Complete',
+    completed: 'Completed',
     completed_no_candidate: 'No candidate',
     scored: 'Scored · Promising',
     scored_promising: 'Scored · Promising',
@@ -1111,7 +1227,7 @@ function labelForStatus(value: string): string {
     public_holdout_rejected: 'Scored',
     holdout_rejected: 'Scored',
     promotion_rejected: 'Scored',
-    not_promoted: 'Scored',
+    not_promoted: 'Not promoted',
     promotion_passed: 'Model Improvement',
     active_version_created: 'Model Improvement',
     champion_reward_created: 'Model Improvement',
