@@ -811,7 +811,7 @@ function noGainStatus(action?: ResearchLabLoopStatusNote): ResearchLabLoopStatus
 }
 
 function notPromotedStatus(action?: ResearchLabLoopStatusNote): ResearchLabLoopStatus {
-  return status('not_promoted', 'Not promoted', 'no_gain', finalOutcomeNote(
+  return status('scored_no_gain', 'Scored', 'no_gain', finalOutcomeNote(
     'Final outcome: candidate did not advance to promotion.'
   ), action)
 }
@@ -1111,7 +1111,7 @@ function labelForStatus(value: string): string {
     public_holdout_rejected: 'Scored',
     holdout_rejected: 'Scored',
     promotion_rejected: 'Scored',
-    not_promoted: 'Not promoted',
+    not_promoted: 'Scored',
     promotion_passed: 'Model Improvement',
     active_version_created: 'Model Improvement',
     champion_reward_created: 'Model Improvement',

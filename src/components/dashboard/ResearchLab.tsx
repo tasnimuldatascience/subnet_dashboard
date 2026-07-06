@@ -1814,7 +1814,8 @@ function ActivityPanelRow({
   loop: ResearchLoop
   onSelect: (loop: ResearchLoop) => void
 }) {
-  const statusTone = loop.statusNote ? statusNoteTone(loop.statusNote.tone) : null
+  const visibleStatusNote = loop.statusNote?.label.toLowerCase() === 'final' ? null : loop.statusNote
+  const statusTone = visibleStatusNote ? statusNoteTone(visibleStatusNote.tone) : null
   const handleKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'Enter' && event.key !== ' ') return
     event.preventDefault()
@@ -1857,18 +1858,18 @@ function ActivityPanelRow({
             {loop.bestCandidatePublicSummary}
           </p>
         ) : null}
-        {loop.statusNote && statusTone ? (
+        {visibleStatusNote && statusTone ? (
           <div
             className="mt-3 border-l-2 py-2 pl-3"
             style={{ borderColor: statusTone.border, background: statusTone.bg }}
           >
             <div className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: statusTone.color }}>
-              {loop.statusNote.label}
+              {visibleStatusNote.label}
             </div>
             <p className="mt-1 text-[11.5px] leading-relaxed text-[var(--muted-2)]">
               <span className="font-mono text-[var(--muted)]">Ticket {shortId(loop.ticketId)}</span>
               <span className="text-[var(--faint)]"> · </span>
-              {loop.statusNote.detail}
+              {visibleStatusNote.detail}
             </p>
           </div>
         ) : null}

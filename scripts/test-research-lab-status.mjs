@@ -315,6 +315,27 @@ try {
       },
     },
     {
+      name: 'stale running ticket with rejected candidate renders Scored',
+      input: {
+        outcomeLabel: 'running',
+        outcomeBand: 'running',
+        currentCandidateStatus: 'rejected',
+        currentQueueStatus: 'running',
+        candidateCount: 1,
+        scoredCandidateCount: 0,
+        runId: 'run-stale-running-rejected',
+        receiptId: 'receipt-stale-running-rejected',
+      },
+      expected: {
+        key: 'scored_no_gain',
+        label: 'Scored',
+        band: 'no_gain',
+        active: false,
+        scoring: false,
+        detail: 'Final outcome: candidate did not advance to promotion.',
+      },
+    },
+    {
       name: 'stale running ticket with no candidate produced renders No candidate',
       input: {
         outcomeLabel: 'running',
