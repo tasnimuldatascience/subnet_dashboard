@@ -1298,6 +1298,13 @@ async function fetchPrivateDiagnostics(
   const byRef = new Map<string, PrivateIcpDiagnostics>()
   // Companies that PASSED each intent type (numerator), from per_signal.
   const fulfilledAcc = new Map<string, { fulfilled: number; signalsPassed: number; scoreSum: number }>()
+  // Whether ANY scored ICP actually carried a per-signal breakdown. The
+  // numerator (fulfilled) is sourced entirely from per_signal; when the
+  // benchmark bundle emits only funnel counts and leaves per_signal empty,
+  // every type would render a misleading 0% against a populated ICP-definition
+  // denominator. Track coverage so we can suppress the chart in that case — a
+  // genuine 0% (per_signal present, nothing passed) still shows.
+  let perSignalCoverage = false
 
   const discovery: DiscoverySummary = {
     totalIcps: 0, noCompanies: 0, weak: 0, healthy: 0,
@@ -1331,7 +1338,9 @@ async function fetchPrivateDiagnostics(
     aggregateFunnel.intent_valid += numberOr(f.intent_valid, 0)
     aggregateFunnel.scored += numberOr(f.scored, 0)
 
-    for (const stat of Object.values(diag.per_signal ?? {})) {
+    const signalStats = Object.values(diag.per_signal ?? {})
+    if (signalStats.length > 0) perSignalCoverage = true
+    for (const stat of signalStats) {
       const type = (stat.evidence_type || 'UNSPECIFIED').toUpperCase()
       const entry = fulfilledAcc.get(type) ?? { fulfilled: 0, signalsPassed: 0, scoreSum: 0 }
       entry.fulfilled += numberOr(stat.companies_passed, 0)
@@ -1366,7 +1375,17 @@ async function fetchPrivateDiagnostics(
     })
     .sort((a, b) => b.pass_pct - a.pass_pct || b.icp_count - a.icp_count)
 
-  return { aggregateFunnel, sourcingFailedCount, scoredIcpCount, intentTypes, discovery, byRef }
+  // Without per-signal coverage the numerator is structurally 0 for every
+  // type, so the chart would falsely read 0% across the board even when the
+  // funnel shows companies cleared intent validation. Suppress it instead.
+  return {
+    aggregateFunnel,
+    sourcingFailedCount,
+    scoredIcpCount,
+    intentTypes: perSignalCoverage ? intentTypes : [],
+    discovery,
+    byRef,
+  }
 }
 
 // Count, per intent/evidence type, how many benchmark ICPs required it — read
