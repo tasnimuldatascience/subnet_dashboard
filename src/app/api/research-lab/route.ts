@@ -28,7 +28,14 @@ import {
 
 export const dynamic = 'force-dynamic'
 
-const CACHE_TTL = 60_000
+// Keep the server-side snapshot short-lived so a freshly published benchmark
+// (or an intraday republish where the score climbs) surfaces within ~30s.
+const CACHE_TTL = 30_000
+// The hero benchmark number must never be pinned by a CDN/edge cache — always
+// serve it fresh so a new publish shows up within ~1 min of the API returning it.
+const NO_STORE_HEADERS = {
+  'Cache-Control': 'no-store, max-age=0, must-revalidate',
+} as const
 const LOOP_LIMIT = 50
 const LOOP_FETCH_LIMIT = LOOP_LIMIT + 100
 const LAB_MINER_SPEND_BATCH_SIZE = 1_000
@@ -437,7 +444,26 @@ type ResearchLabPayload = {
     promisingLoopCount: number
     totalBenchmarkIcpCount: number
   }
+  scoringStatus: BenchmarkScoringStatus | null
   fetchedAt: string
+}
+
+// Signals whether the current UTC day's baseline benchmark is still being
+// scored (i.e. the day has rolled over but today's report hasn't published
+// yet). Drives the "SCORING TODAY'S BENCHMARK" hero state.
+type BenchmarkScoringStatus = {
+  scoring: boolean
+  utcDate: string
+  benchmarkDateInProgress: string | null
+  // Progress is only known via the gateway scoring-status endpoint; null when
+  // derived from the fallback (latest.benchmark_date < todayUTC) alone.
+  icpsDone: number | null
+  icpsTotal: number | null
+  lastPublished: {
+    benchmarkDate: string
+    aggregateScore: number
+    publishedAt: string | null
+  } | null
 }
 
 type LabMinerSpendRollup = {
@@ -658,20 +684,23 @@ export async function GET(request: Request) {
     }
 
     if (cache && Date.now() - cache.ts < CACHE_TTL) {
-      return NextResponse.json({ success: true, data: cache.data })
+      return NextResponse.json({ success: true, data: cache.data }, { headers: NO_STORE_HEADERS })
     }
 
     const supabase = getSupabase()
-    const [benchmark, activePromotedModel, loops, allLoops, labMinerSpend] = await Promise.all([
-      fetchLatestBenchmark(supabase),
-      fetchActivePromotedModelScore(supabase),
-      fetchPublicLoops(supabase),
-      fetchPublicLoops(supabase, 5_000, 5_000),
-      fetchLabMinerSpend(supabase),
-    ])
+    const [benchmark, activePromotedModel, loops, allLoops, labMinerSpend, gatewayScoringStatus] =
+      await Promise.all([
+        fetchLatestBenchmark(supabase),
+        fetchActivePromotedModelScore(supabase),
+        fetchPublicLoops(supabase),
+        fetchPublicLoops(supabase, 5_000, 5_000),
+        fetchLabMinerSpend(supabase),
+        fetchScoringStatusFromGateway(),
+      ])
     const displayBenchmark = benchmark
       ? withBenchmarkDisplayScore(benchmark, activePromotedModel)
       : null
+    const scoringStatus = gatewayScoringStatus ?? buildBenchmarkScoringStatus(displayBenchmark)
     const topicGroups = groupLoopsByTopic(loops)
     const labMinerActivity = buildLabMinerActivityRollup(allLoops)
     const data: ResearchLabPayload = {
@@ -690,10 +719,11 @@ export async function GET(request: Request) {
         promisingLoopCount: allLoops.filter(isModelImprovementResearchLabLoop).length,
         totalBenchmarkIcpCount: displayBenchmark?.itemCount ?? 0,
       },
+      scoringStatus,
       fetchedAt: new Date().toISOString(),
     }
     cache = { data, ts: Date.now() }
-    return NextResponse.json({ success: true, data })
+    return NextResponse.json({ success: true, data }, { headers: NO_STORE_HEADERS })
   } catch (error) {
     console.error('[Research Lab API] failed:', error)
     return NextResponse.json(
@@ -1190,6 +1220,111 @@ async function fetchLatestBenchmark(supabase: ReturnType<typeof getSupabase>): P
       privateModelVersionId: null,
     },
     activePromotedModel: null,
+  }
+}
+
+// Current date in UTC as YYYY-MM-DD. All benchmark dates are UTC.
+function currentUtcDate(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
+// Fallback derivation (no gateway endpoint): today's benchmark is "scoring" when
+// the newest published report predates the current UTC day. Progress (X/20) is
+// not available here, so it is left null. This is intentionally driven by the
+// pipeline's own publish state (a missing report for today), not by a bare
+// clock check — a stalled run stays honestly "scoring" rather than claiming
+// fake progress.
+function buildBenchmarkScoringStatus(
+  benchmark: NormalizedBenchmark | null,
+): BenchmarkScoringStatus {
+  const utcDate = currentUtcDate()
+  if (!benchmark) {
+    return {
+      scoring: false,
+      utcDate,
+      benchmarkDateInProgress: null,
+      icpsDone: null,
+      icpsTotal: null,
+      lastPublished: null,
+    }
+  }
+  const benchmarkDate = String(benchmark.benchmarkDate || '')
+  const scoring = benchmarkDate.slice(0, 10) < utcDate
+  return {
+    scoring,
+    utcDate,
+    benchmarkDateInProgress: scoring ? utcDate : null,
+    icpsDone: null,
+    icpsTotal: null,
+    lastPublished: {
+      benchmarkDate,
+      aggregateScore: benchmark.aggregateScore,
+      publishedAt: benchmark.currentStatusAt,
+    },
+  }
+}
+
+// Preferred source: the gateway's scoring-status endpoint, which knows about an
+// in-progress baseline run and its ICP progress. Guarded behind an env var so it
+// activates only once the gateway team ships it; any failure falls back to the
+// derivation above. `scoring` here already means "run in progress AND no report
+// for utc_date yet", so we trust it verbatim.
+async function fetchScoringStatusFromGateway(): Promise<BenchmarkScoringStatus | null> {
+  const base = process.env.RESEARCH_LAB_GATEWAY_URL?.trim()
+  if (!base) return null
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 2_500)
+  try {
+    const res = await fetch(
+      `${base.replace(/\/+$/, '')}/research-lab/benchmarks/public/scoring-status`,
+      { cache: 'no-store', signal: controller.signal },
+    )
+    if (!res.ok) return null
+    const json = (await res.json()) as GatewayScoringStatusResponse
+    return normalizeGatewayScoringStatus(json)
+  } catch (error) {
+    console.error('[Research Lab API] scoring-status gateway fetch failed:', error)
+    return null
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+type GatewayScoringStatusResponse = {
+  utc_date?: string
+  scoring?: boolean
+  benchmark_date_in_progress?: string | null
+  icps_done?: number | string | null
+  icps_total?: number | string | null
+  last_published?: {
+    benchmark_date?: string
+    aggregate_score?: number | string | null
+    published_at?: string | null
+  } | null
+}
+
+function normalizeGatewayScoringStatus(
+  json: GatewayScoringStatusResponse,
+): BenchmarkScoringStatus | null {
+  if (!json || typeof json !== 'object') return null
+  const utcDate = String(json.utc_date || currentUtcDate())
+  const last = json.last_published
+  const lastPublished = last && last.benchmark_date
+    ? {
+        benchmarkDate: String(last.benchmark_date),
+        aggregateScore: numberOr(last.aggregate_score, 0),
+        publishedAt: last.published_at ? String(last.published_at) : null,
+      }
+    : null
+  return {
+    scoring: Boolean(json.scoring),
+    utcDate,
+    benchmarkDateInProgress: json.benchmark_date_in_progress
+      ? String(json.benchmark_date_in_progress)
+      : null,
+    icpsDone: nullableNumber(json.icps_done),
+    icpsTotal: nullableNumber(json.icps_total),
+    lastPublished,
   }
 }
 

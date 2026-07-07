@@ -39,7 +39,21 @@ type ResearchLabData = {
     promisingLoopCount: number
     totalBenchmarkIcpCount: number
   }
+  scoringStatus?: BenchmarkScoringStatus | null
   fetchedAt: string
+}
+
+type BenchmarkScoringStatus = {
+  scoring: boolean
+  utcDate: string
+  benchmarkDateInProgress: string | null
+  icpsDone: number | null
+  icpsTotal: number | null
+  lastPublished: {
+    benchmarkDate: string
+    aggregateScore: number
+    publishedAt: string | null
+  } | null
 }
 
 type LabMinerSpendRollup = {
@@ -432,7 +446,7 @@ export function ResearchLab({
         </div>
       </header>
 
-      <Hero benchmark={benchmark} />
+      <Hero benchmark={benchmark} scoringStatus={data?.scoringStatus ?? null} />
 
       <KpiRail stats={stats} />
 
@@ -482,7 +496,13 @@ function ResearchLabLoading() {
 /* ============================================================
  * Hero — the benchmark score, bound to real data only.
  * ============================================================ */
-function Hero({ benchmark }: { benchmark: BenchmarkReport | null }) {
+function Hero({
+  benchmark,
+  scoringStatus,
+}: {
+  benchmark: BenchmarkReport | null
+  scoringStatus?: BenchmarkScoringStatus | null
+}) {
   if (!benchmark) {
     return (
       <section className="pt-12 pb-14">
@@ -503,6 +523,13 @@ function Hero({ benchmark }: { benchmark: BenchmarkReport | null }) {
   const tone = scoreTone(score)
   const isPromotedModel = displayScore?.source === 'latest_promoted_model'
   const scoreDate = displayScore?.statusAt || benchmark.currentStatusAt || benchmark.benchmarkDate
+
+  // Only pre-empt the daily-rebenchmark number while today's baseline is still
+  // scoring. A promoted "Current model" score is fresh and stands on its own, so
+  // it is never masked by the scoring state.
+  if (scoringStatus?.scoring && !isPromotedModel) {
+    return <ScoringHero status={scoringStatus} />
+  }
 
   return (
     <section className="pt-12 pb-14">
@@ -536,6 +563,61 @@ function Hero({ benchmark }: { benchmark: BenchmarkReport | null }) {
           <>Published {formatDate(benchmark.benchmarkDate)}</>
         )}
       </div>
+    </section>
+  )
+}
+
+/* ============================================================
+ * Scoring state — shown after 00:00 UTC while today's baseline
+ * benchmark is still being scored and hasn't published yet.
+ * Keeps the prior published number visible, clearly labeled.
+ * ============================================================ */
+function ScoringHero({ status }: { status: BenchmarkScoringStatus }) {
+  const total = numberOr(status.icpsTotal, 0)
+  const done = Math.max(0, numberOr(status.icpsDone, 0))
+  const hasProgress = status.icpsTotal != null && total > 0
+  const last = status.lastPublished
+  const dayLabel = formatDayShort(status.benchmarkDateInProgress || status.utcDate)
+
+  return (
+    <section className="pt-12 pb-14">
+      <div className="mb-5 flex items-center gap-2 font-mono text-[10.5px] uppercase tracking-[0.16em] text-[var(--muted-2)]">
+        <span className="relative flex h-1.5 w-1.5" aria-hidden>
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--muted)] opacity-60" />
+          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-[var(--muted)]" />
+        </span>
+        Scoring today&apos;s benchmark
+      </div>
+
+      <div className="flex items-end gap-5">
+        <div className="font-display font-medium leading-[0.9] tracking-[-0.03em] text-[clamp(40px,7vw,72px)] text-[var(--platinum)]">
+          {hasProgress ? (
+            <>
+              <CountUp value={done} />
+              <span className="text-[var(--faint)]">/{total}</span>
+              <span className="ml-3.5 align-baseline font-display text-[20px] tracking-normal text-[var(--faint)] md:text-[24px]">
+                ICPs
+              </span>
+            </>
+          ) : (
+            <span>In&nbsp;progress</span>
+          )}
+        </div>
+      </div>
+
+      <p className="mt-7 max-w-[560px] text-[14px] leading-[1.7] text-[var(--muted)]">
+        {hasProgress
+          ? `Today's baseline is scoring across all ${total} ideal customer profiles. The new benchmark for ${dayLabel} publishes once every ICP finishes.`
+          : `Today's baseline benchmark is being scored. The new number for ${dayLabel} publishes once scoring finishes.`}
+      </p>
+
+      {last && (
+        <div className="mt-6 font-mono text-[11px] text-[var(--muted-2)]">
+          Last published:{' '}
+          <span className="text-[var(--muted)]">{last.aggregateScore.toFixed(1)}</span> /100 ·{' '}
+          {formatDayShort(last.benchmarkDate)}
+        </div>
+      )}
     </section>
   )
 }
@@ -2594,6 +2676,13 @@ function formatDate(value: string): string {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
+}
+
+// Short UTC day label (e.g. "Jul 6") for the scoring-state "Last published" line.
+function formatDayShort(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
 }
 
 function formatRelative(value: string): string {
