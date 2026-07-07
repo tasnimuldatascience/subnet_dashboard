@@ -1120,14 +1120,23 @@ async function fetchLatestBenchmark(supabase: ReturnType<typeof getSupabase>): P
     .eq('current_report_status', 'published')
     .order('benchmark_date', { ascending: false })
     .order('created_at', { ascending: false })
-    .limit(1)
+    .limit(8)
 
   if (error) {
     console.error('[Research Lab API] benchmark query failed:', error)
     return null
   }
 
-  const row = (data?.[0] ?? null) as PublicBenchmarkReportRow | null
+  // Reports generated from promotion rebenchmarks carry sparse diagnostics
+  // and often no model_issue_counts, which blanks the Model issues panel.
+  // Prefer the newest published report that actually carries issue counts;
+  // fall back to the newest overall when none in the window have them.
+  const reportRows = (data ?? []) as PublicBenchmarkReportRow[]
+  const hasIssueCounts = (r: PublicBenchmarkReportRow): boolean => {
+    const counts = (r.report_doc ?? {}).model_issue_counts
+    return !!counts && Object.keys(counts).length > 0
+  }
+  const row = (reportRows.find(hasIssueCounts) ?? reportRows[0] ?? null) as PublicBenchmarkReportRow | null
   if (!row) return null
   const doc = row.report_doc ?? {}
   const benchmarkDate = String(doc.benchmark_date || row.benchmark_date)
