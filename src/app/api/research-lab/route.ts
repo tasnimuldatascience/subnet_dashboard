@@ -1157,18 +1157,23 @@ async function fetchLatestBenchmark(supabase: ReturnType<typeof getSupabase>): P
     return null
   }
 
-  // Reports generated from promotion rebenchmarks carry sparse diagnostics
-  // and often no model_issue_counts, which blanks the Model issues panel.
-  // Prefer the newest published report that actually carries issue counts;
-  // fall back to the newest overall when none in the window have them.
+  // The headline (score, band, date, ICPs) MUST come from the newest published
+  // report — the benchmark republishes several times a day and the score climbs
+  // intraday, so anything older understates the current model.
   const reportRows = (data ?? []) as PublicBenchmarkReportRow[]
+  const row = (reportRows[0] ?? null) as PublicBenchmarkReportRow | null
+  if (!row) return null
+  const doc = row.report_doc ?? {}
+
+  // Model issues are a separate concern: promotion-rebenchmark reports (often the
+  // newest publish) carry sparse diagnostics and omit model_issue_counts, which
+  // would blank the panel. Source ONLY the issue counts from the newest report in
+  // the window that actually has them — never the headline score.
   const hasIssueCounts = (r: PublicBenchmarkReportRow): boolean => {
     const counts = (r.report_doc ?? {}).model_issue_counts
     return !!counts && Object.keys(counts).length > 0
   }
-  const row = (reportRows.find(hasIssueCounts) ?? reportRows[0] ?? null) as PublicBenchmarkReportRow | null
-  if (!row) return null
-  const doc = row.report_doc ?? {}
+  const issuesDoc = reportRows.find(hasIssueCounts)?.report_doc ?? doc
   const benchmarkDate = String(doc.benchmark_date || row.benchmark_date)
   // Pull per-stage funnel + per-signal coverage from the private bundle and
   // attach it ONLY to the already-revealed public ICPs (no holdout leak).
@@ -1200,7 +1205,7 @@ async function fetchLatestBenchmark(supabase: ReturnType<typeof getSupabase>): P
     privateHoldoutIcpCount,
     scoreBandCounts: doc.score_band_counts ?? {},
     failureCategoryCounts: doc.failure_category_counts ?? {},
-    issues: buildBenchmarkIssues(doc),
+    issues: buildBenchmarkIssues(issuesDoc),
     publicIcps,
     aggregateFunnel: privateDiag?.aggregateFunnel ?? null,
     sourcingFailedCount: privateDiag?.sourcingFailedCount ?? 0,
