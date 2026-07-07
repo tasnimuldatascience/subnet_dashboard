@@ -581,14 +581,6 @@ function ScoringHero({ status }: { status: BenchmarkScoringStatus }) {
 
   return (
     <section className="pt-12 pb-14">
-      <div className="mb-5 flex items-center gap-2 font-mono text-[10.5px] uppercase tracking-[0.16em] text-[var(--muted-2)]">
-        <span className="relative flex h-1.5 w-1.5" aria-hidden>
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--muted)] opacity-60" />
-          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-[var(--muted)]" />
-        </span>
-        Scoring today&apos;s benchmark
-      </div>
-
       <div className="flex items-end gap-5">
         <div className="font-display font-medium leading-[0.9] tracking-[-0.03em] text-[clamp(40px,7vw,72px)] text-[var(--platinum)]">
           {hasProgress ? (
