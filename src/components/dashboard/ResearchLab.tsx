@@ -328,6 +328,20 @@ type LoopCandidateFunnel = {
   scored: number
 }
 
+type LoopIcpDeltaRow = {
+  icp: string
+  candidateScore: number
+  baseScore: number
+  delta: number
+  movement: 'helped' | 'hurt' | 'flat' | 'infra'
+}
+
+type LoopIcpDeltaBreakdown = {
+  flatBand: number
+  publicIcps: LoopIcpDeltaRow[]
+  sealed: { helped: number; hurt: number; flat: number; infraExcluded: number }
+}
+
 type LoopCandidateDiagnostic = {
   candidate: string
   status: string
@@ -337,6 +351,7 @@ type LoopCandidateDiagnostic = {
   icpCount: number
   externalFailures: number
   funnel?: LoopCandidateFunnel
+  icpDeltas?: LoopIcpDeltaBreakdown
 }
 
 type LoopTimeline = {
@@ -2175,6 +2190,7 @@ function LoopCandidateDiagnostics({ items }: { items: LoopCandidateDiagnostic[] 
                 ) : null}
               </div>
               {c.funnel ? <CandidateFunnelStrip funnel={c.funnel} /> : null}
+              {c.icpDeltas ? <CandidateIcpDeltaStrip breakdown={c.icpDeltas} /> : null}
             </div>
           )
         })}
@@ -2212,6 +2228,81 @@ function CandidateFunnelStrip({ funnel }: { funnel: LoopCandidateFunnel }) {
           </div>
         )
       })}
+    </div>
+  )
+}
+
+/* ============================================================
+ * Per-ICP delta — which ICPs moved vs didn't for this candidate.
+ * Public-visibility ICPs are itemized with signed delta bars;
+ * the sealed pool is shown as movement counts only (never
+ * per-ICP), and infra-excluded ICPs sit outside helped/hurt/flat.
+ * ============================================================ */
+const ICP_MOVEMENT_COLOR: Record<LoopIcpDeltaRow['movement'], string> = {
+  helped: 'var(--platinum)',
+  hurt: '#b3574f',
+  flat: 'var(--muted-2)',
+  infra: 'var(--faint)',
+}
+
+function CandidateIcpDeltaStrip({ breakdown }: { breakdown: LoopIcpDeltaBreakdown }) {
+  const { publicIcps, sealed } = breakdown
+  const maxAbs = Math.max(1, ...publicIcps.map((r) => Math.abs(r.delta)))
+  const sealedTotal = sealed.helped + sealed.hurt + sealed.flat + sealed.infraExcluded
+  return (
+    <div className="mt-3">
+      <div className="mb-1.5 font-mono text-[9px] uppercase tracking-[0.12em] text-[var(--muted-2)]">
+        Per-ICP delta · which ICPs moved
+      </div>
+      {publicIcps.length > 0 ? (
+        <div className="space-y-1">
+          {publicIcps.map((row) => {
+            const color = ICP_MOVEMENT_COLOR[row.movement]
+            const width = Math.min(100, (Math.abs(row.delta) / maxAbs) * 100)
+            return (
+              <div
+                key={row.icp}
+                className="grid grid-cols-[108px_minmax(0,1fr)_88px] items-center gap-2"
+                title={`base ${row.baseScore.toFixed(1)} → candidate ${row.candidateScore.toFixed(1)}`}
+              >
+                <span className="truncate font-mono text-[9.5px] text-[var(--muted-2)]">{row.icp}</span>
+                <span className="relative h-[5px] overflow-hidden rounded-full bg-[rgba(236,234,230,0.06)]">
+                  <span className="absolute inset-y-0 left-1/2 w-px bg-[rgba(236,234,230,0.14)]" />
+                  <span
+                    className="absolute inset-y-0 block rounded-full"
+                    style={{
+                      backgroundColor: color,
+                      width: `${width / 2}%`,
+                      left: row.delta >= 0 ? '50%' : undefined,
+                      right: row.delta < 0 ? '50%' : undefined,
+                    }}
+                  />
+                </span>
+                <span className="text-right font-mono text-[10px] tabular-nums" style={{ color }}>
+                  {row.movement === 'infra' ? 'infra · ' : ''}
+                  {row.delta >= 0 ? '+' : ''}
+                  {row.delta.toFixed(1)}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      ) : null}
+      {sealedTotal > 0 ? (
+        <div className="mt-1.5 font-mono text-[10px] text-[var(--muted-2)]">
+          sealed pool · <span className="tabular-nums text-[var(--platinum)]">{sealed.helped} helped</span>
+          {' · '}
+          <span className="tabular-nums" style={{ color: '#b3574f' }}>{sealed.hurt} hurt</span>
+          {' · '}
+          <span className="tabular-nums">{sealed.flat} flat</span>
+          {sealed.infraExcluded > 0 ? (
+            <>
+              {' · '}
+              <span className="tabular-nums text-[var(--faint)]">{sealed.infraExcluded} infra-excluded (not the patch)</span>
+            </>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   )
 }

@@ -47,6 +47,26 @@ export type ResearchLabCandidateFunnel = {
   scored: number
 }
 
+// Per-ICP delta breakdown for a scored candidate ("which ICPs moved").
+// Privacy contract (mirrors the benchmark visibility split): full per-ICP
+// detail ONLY for public-visibility ICPs; sealed-pool ICPs are aggregated to
+// movement counts and never itemized. An ICP whose visibility is unknown is
+// treated as sealed (fail-closed). Infra/provider-excluded ICPs sit outside
+// helped/hurt/flat so provider weather never reads as patch quality.
+export type ResearchLabIcpDeltaRow = {
+  icp: string
+  candidateScore: number
+  baseScore: number
+  delta: number
+  movement: 'helped' | 'hurt' | 'flat' | 'infra'
+}
+
+export type ResearchLabIcpDeltaBreakdown = {
+  flatBand: number
+  publicIcps: ResearchLabIcpDeltaRow[]
+  sealed: { helped: number; hurt: number; flat: number; infraExcluded: number }
+}
+
 export type ResearchLabCandidateDiagnostic = {
   candidate: string
   status: string
@@ -56,6 +76,7 @@ export type ResearchLabCandidateDiagnostic = {
   icpCount: number
   externalFailures: number
   funnel?: ResearchLabCandidateFunnel
+  icpDeltas?: ResearchLabIcpDeltaBreakdown
 }
 
 export type ResearchLabLoopTimeline = {

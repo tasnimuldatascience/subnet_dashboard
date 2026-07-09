@@ -12,6 +12,8 @@ import {
 import {
   buildResearchLabLoopTimeline,
   type ResearchLabCandidateDiagnostic,
+  type ResearchLabIcpDeltaBreakdown,
+  type ResearchLabIcpDeltaRow,
   type ResearchLabLoopTimeline,
   type ResearchLabTimelineEvent,
   type ResearchLabTimelinePhase,
@@ -738,6 +740,89 @@ export async function GET(request: Request) {
 // server-side but NEVER emitted — only the sanitized subset below reaches the
 // browser. External-service failures collapse to one opaque "scraping failed"
 // count so no third-party name / HTTP code / endpoint is ever exposed.
+// |delta| below this band counts as "flat": tiny per-ICP movements are noise
+// (and quantizing them also blunts any attempt to use sealed-pool movement
+// counts as a fine-grained measurement channel).
+const ICP_DELTA_FLAT_BAND = 1.0
+
+// ref -> 'public' | 'sealed', from the newest daily benchmark bundle's
+// visibility split. Unknown refs are treated as sealed (fail-closed).
+async function fetchBenchmarkVisibilityMap(
+  supabase: ReturnType<typeof getSupabase>,
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>()
+  const res = await supabase
+    .from('research_lab_private_model_benchmark_bundles')
+    .select('score_summary_doc')
+    .order('created_at', { ascending: false })
+    .limit(1)
+  if (res.error) return map
+  const doc = (res.data?.[0]?.score_summary_doc ?? {}) as Record<string, unknown>
+  const split = doc.visibility_split as Record<string, unknown> | undefined
+  const items = Array.isArray(split?.items) ? (split!.items as Array<Record<string, unknown>>) : []
+  for (const item of items) {
+    const ref = String(item.icp_ref ?? '').trim()
+    if (ref) map.set(ref, String(item.visibility ?? '').trim().toLowerCase())
+  }
+  return map
+}
+
+// "qualification_private_icp_sets:20260708:icp_20260708_014" -> "20260708 / 014"
+function shortIcpLabel(ref: string): string {
+  const parts = String(ref).split(':')
+  const setId = parts.length >= 2 ? parts[1] : ''
+  const icpId = parts.length >= 3 ? parts[2] : parts[parts.length - 1] ?? ''
+  const tail = icpId.split('_').pop() ?? icpId
+  return setId ? `${setId} / ${tail}` : icpId
+}
+
+// Per-ICP delta breakdown for one candidate's per_icp_results rows. Public
+// ICPs get itemized rows; sealed ICPs collapse to movement counts.
+function buildIcpDeltaBreakdown(
+  perIcp: Array<Record<string, unknown>>,
+  visibility: Map<string, string>,
+): ResearchLabIcpDeltaBreakdown | undefined {
+  if (perIcp.length === 0) return undefined
+  const publicIcps: ResearchLabIcpDeltaRow[] = []
+  const sealed = { helped: 0, hurt: 0, flat: 0, infraExcluded: 0 }
+  let sawDelta = false
+  for (const r of perIcp) {
+    const ref = String(r.icp_ref ?? '').trim()
+    const candidateScore = numberOr(r.candidate_per_icp_score, 0)
+    const baseScore = numberOr(r.base_per_icp_score, 0)
+    const rawDelta = r.delta_vs_base
+    const delta = rawDelta === null || rawDelta === undefined
+      ? candidateScore - baseScore
+      : numberOr(rawDelta, 0)
+    if (rawDelta !== null && rawDelta !== undefined) sawDelta = true
+    const blob = `${r.status ?? ''} ${r.failure_reason ?? ''}`.toLowerCase()
+    const infra = r.provider_excluded === true || blob.includes('provider') || blob.includes('infra_excluded')
+    const movement: ResearchLabIcpDeltaRow['movement'] = infra
+      ? 'infra'
+      : delta > ICP_DELTA_FLAT_BAND
+        ? 'helped'
+        : delta < -ICP_DELTA_FLAT_BAND
+          ? 'hurt'
+          : 'flat'
+    if (visibility.get(ref) === 'public') {
+      publicIcps.push({
+        icp: shortIcpLabel(ref),
+        candidateScore: Math.round(candidateScore * 10) / 10,
+        baseScore: Math.round(baseScore * 10) / 10,
+        delta: Math.round(delta * 10) / 10,
+        movement,
+      })
+    } else if (movement === 'infra') {
+      sealed.infraExcluded += 1
+    } else {
+      sealed[movement] += 1
+    }
+  }
+  if (!sawDelta && publicIcps.every((row) => row.delta === 0)) return undefined
+  publicIcps.sort((a, b) => b.delta - a.delta)
+  return { flatBand: ICP_DELTA_FLAT_BAND, publicIcps, sealed }
+}
+
 async function fetchCandidateDiagnostics(
   supabase: ReturnType<typeof getSupabase>,
   ticketId: string,
@@ -756,6 +841,7 @@ async function fetchCandidateDiagnostics(
       .limit(200),
   ])
   if (candRes.error || bundleRes.error) return []
+  const visibilityMap = await fetchBenchmarkVisibilityMap(supabase)
 
   const byBundleId = new Map<string, ScoreBundleDoc>()
   const byArtifact = new Map<string, ScoreBundleDoc>()
@@ -805,6 +891,7 @@ async function fetchCandidateDiagnostics(
       icpCount: perIcp.length,
       externalFailures,
       funnel: hasFunnel ? funnelTotals : undefined,
+      icpDeltas: buildIcpDeltaBreakdown(perIcp, visibilityMap),
     })
   }
   return out
