@@ -197,7 +197,7 @@ type AdminLabAlert = {
 type AdminLabAttestationSummary = {
   state: AdminHealthState
   source: 'ops_attestation_current' | 'published_weight_bundles' | 'none'
-  verificationMode: 'expected_match' | 'observation_only'
+  verificationMode: 'expected_match' | 'gateway_acceptance' | 'observation_only'
   sourceAvailable: boolean
   unavailableReason: string | null
   totalNodes: number
@@ -207,6 +207,8 @@ type AdminLabAttestationSummary = {
   expectedPcr0: string | null
   latestAttestedAt: string | null
   latestEpoch: number | null
+  acceptanceCheckedAt: string | null
+  acceptanceDetail: string | null
   nodes: AdminLabAttestationNode[]
 }
 
@@ -223,6 +225,8 @@ type AdminLabAttestationNode = {
   attestedAt: string | null
   epoch: number | null
   transparencyEventHash: string | null
+  acceptanceCheckedAt: string | null
+  acceptanceDetail: string | null
 }
 
 type AdminLabDataFreshness = {
@@ -247,6 +251,15 @@ type AdminLabComputeSpendSummary = {
   averageDailyUsd: number
   latestDayUsd: number
   runCount: number
+  reconciliation: {
+    sourceAvailable: boolean
+    unavailableReason: string | null
+    reachedScoringCount: number
+    candidateNotScoredCount: number
+    noCandidateCount: number
+    noCandidateFailedCount: number
+    noCandidateCompletedCount: number
+  }
 }
 
 type AdminLabOpsSummary = {
@@ -635,29 +648,37 @@ function OpsHealthStrip({ ops }: { ops: AdminLabOpsSummary }) {
 
 function HealthSignalCard({ signal }: { signal: AdminLabHealthSignal }) {
   const Icon = signalIcon(signal.id, signal.state)
+  const emphasizedMismatch = signal.id === 'pcr0' && signal.value === 'Mismatch'
   return (
     <div
       className="rounded-lg border p-3"
       style={{
-        borderColor: 'var(--surface-border)',
-        background: 'var(--surface-base)',
+        borderColor: emphasizedMismatch ? 'rgba(232, 240, 255, 0.34)' : 'var(--surface-border)',
+        background: emphasizedMismatch ? 'rgba(232, 240, 255, 0.075)' : 'var(--surface-base)',
+        boxShadow: emphasizedMismatch ? 'inset 2px 0 0 rgba(232, 240, 255, 0.9)' : undefined,
       }}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <Icon className={cn('h-3.5 w-3.5 shrink-0', stateTextClass(signal.state))} />
+            <Icon
+              className={cn('h-3.5 w-3.5 shrink-0', stateTextClass(signal.state))}
+              style={emphasizedMismatch ? { color: 'var(--white)' } : undefined}
+            />
             <div className="truncate text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-tertiary)' }}>
               {signal.label}
             </div>
           </div>
-          <div className="mt-2 truncate text-lg font-medium tabular-nums" style={{ color: 'var(--text-primary)' }}>
+          <div className="mt-2 truncate text-lg font-medium tabular-nums" style={{ color: emphasizedMismatch ? 'var(--white)' : 'var(--text-primary)' }}>
             {signal.value}
           </div>
         </div>
-        <span className={cn('mt-1 h-2 w-2 shrink-0 rounded-full', stateDotClass(signal.state))} />
+        <span
+          className={cn('mt-1 h-2 w-2 shrink-0 rounded-full', stateDotClass(signal.state))}
+          style={emphasizedMismatch ? { background: 'var(--white)' } : undefined}
+        />
       </div>
-      <div className="mt-2 line-clamp-2 text-[11px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+      <div className="mt-2 line-clamp-2 text-[11px] leading-relaxed" style={{ color: emphasizedMismatch ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
         {signal.detail}
       </div>
       {signal.updatedAt ? (
@@ -741,15 +762,87 @@ function ComputeSpendPanel({ spend }: { spend: AdminLabComputeSpendSummary }) {
               Finalized OpenRouter cost from completed and failed receipt events, assigned to the UTC day the run ended.
             </p>
           </div>
-          <div className="grid grid-cols-2 gap-2 self-start xl:grid-cols-1">
-            <MetricBox label={`${spend.days}d spend`} value={formatUsd(spend.totalUsd)} />
-            <MetricBox label="Daily average" value={formatUsd(spend.averageDailyUsd)} />
-            <MetricBox label="Today (UTC)" value={formatUsd(spend.latestDayUsd)} />
-            <MetricBox label="Finalized runs" value={spend.runCount} />
+          <div className="self-start">
+            <div className="grid grid-cols-2 gap-2 xl:grid-cols-1">
+              <MetricBox label={`${spend.days}d spend`} value={formatUsd(spend.totalUsd)} />
+              <MetricBox label="Daily average" value={formatUsd(spend.averageDailyUsd)} />
+              <MetricBox label="Today (UTC)" value={formatUsd(spend.latestDayUsd)} />
+              <MetricBox label="Finalized runs" value={spend.runCount} />
+            </div>
+            <FinalizedRunReconciliation reconciliation={spend.reconciliation} />
           </div>
         </div>
       )}
     </section>
+  )
+}
+
+function FinalizedRunReconciliation({
+  reconciliation,
+}: {
+  reconciliation: AdminLabComputeSpendSummary['reconciliation']
+}) {
+  return (
+    <div
+      className="mt-2 rounded-lg border px-3 py-3"
+      style={{ borderColor: 'var(--surface-border)', background: 'var(--surface-base)' }}
+    >
+      <div className="text-[10px] uppercase tracking-[0.12em]" style={{ color: 'var(--text-tertiary)' }}>
+        Finalized run outcomes
+      </div>
+      {!reconciliation.sourceAvailable ? (
+        <p className="mt-2 text-[11px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+          Outcome reconciliation is unavailable.
+        </p>
+      ) : (
+        <>
+          <div className="mt-2 divide-y" style={{ borderColor: 'var(--surface-border)' }}>
+            <ReconciliationRow
+              label="Reached scoring"
+              value={reconciliation.reachedScoringCount}
+              tone="positive"
+            />
+            <ReconciliationRow
+              label="Candidate, not scored"
+              value={reconciliation.candidateNotScoredCount}
+            />
+            <ReconciliationRow label="No candidate" value={reconciliation.noCandidateCount} />
+          </div>
+          <div
+            className="mt-2 flex items-center justify-between gap-3 border-t pt-2 text-[10px] xl:block"
+            style={{ borderColor: 'var(--surface-border)', color: 'var(--text-tertiary)' }}
+          >
+            <span>No-candidate split</span>
+            <span className="shrink-0 tabular-nums xl:mt-1 xl:block">
+              {reconciliation.noCandidateFailedCount.toLocaleString()} failed ·{' '}
+              {reconciliation.noCandidateCompletedCount.toLocaleString()} completed
+            </span>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+function ReconciliationRow({
+  label,
+  value,
+  tone = 'neutral',
+}: {
+  label: string
+  value: number
+  tone?: 'neutral' | 'positive'
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 py-1.5 text-[11px]">
+      <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
+      <span
+        className="font-mono font-medium tabular-nums"
+        style={{ color: tone === 'positive' ? 'var(--accent-positive)' : 'var(--text-primary)' }}
+      >
+        {value.toLocaleString()}
+      </span>
+    </div>
   )
 }
 
@@ -1059,27 +1152,69 @@ function AlertsPanel({ alerts }: { alerts: AdminLabAlertSummary }) {
 
 function AttestationPanel({ attestation }: { attestation: AdminLabAttestationSummary }) {
   const observationOnly = attestation.verificationMode === 'observation_only'
+  const gatewayAcceptance = attestation.verificationMode === 'gateway_acceptance'
+  const hasMismatch = attestation.mismatchedNodes > 0
   const observedNodes = attestation.totalNodes - attestation.missingNodes
   const latestNode = attestation.nodes[0] ?? null
-  const sourceLabel = attestation.source === 'published_weight_bundles'
-    ? 'Published weight bundles'
+  const sourceLabel = gatewayAcceptance
+    ? 'Production gateway readiness'
+    : attestation.source === 'published_weight_bundles'
+      ? 'Published weight bundles'
     : attestation.source === 'ops_attestation_current'
       ? 'Attestation comparison'
       : 'Unavailable'
+  const statusLabel = !attestation.sourceAvailable
+    ? 'Not wired'
+    : hasMismatch
+      ? 'Mismatch'
+      : gatewayAcceptance
+        ? 'Match'
+        : stateLabel(attestation.state)
 
   return (
-    <section className="rounded-xl border" style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)' }}>
+    <section
+      className="rounded-xl border"
+      style={{
+        borderColor: hasMismatch ? 'rgba(232, 240, 255, 0.24)' : 'var(--surface-border)',
+        background: 'var(--surface)',
+      }}
+    >
       <PanelHeader
         icon={attestation.state === 'critical' ? <ShieldX className="h-4 w-4 text-burgundy" /> : <ShieldCheck className={cn('h-4 w-4', stateTextClass(attestation.state))} />}
         title="PCR0"
-        aside={<StatePill state={attestation.state} label={attestation.sourceAvailable ? stateLabel(attestation.state) : 'Not wired'} />}
+        aside={<StatePill state={attestation.state} label={statusLabel} emphasized={hasMismatch} />}
       />
       <div className="space-y-4 p-4">
+        {hasMismatch ? (
+          <div
+            role="alert"
+            className="rounded-lg border p-3"
+            style={{
+              borderColor: 'rgba(232, 240, 255, 0.42)',
+              background: 'rgba(232, 240, 255, 0.09)',
+              boxShadow: 'inset 3px 0 0 var(--white)',
+              color: 'var(--text-primary)',
+            }}
+          >
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <div>
+                <div className="text-xs font-semibold">PCR0 mismatch — weight publication blocked</div>
+                <p className="mt-1 text-[11px] leading-relaxed">
+                  The production gateway rejects the validator&apos;s published PCR0. Validators that require audited gateway publication will not submit chain weights until the gateway accepts this PCR0.
+                </p>
+              </div>
+            </div>
+          </div>
+        ) : null}
         <div className="grid grid-cols-3 gap-2">
           <MetricBox label="Nodes" value={attestation.totalNodes} />
-          <MetricBox label={observationOnly ? 'Observed' : 'Matched'} value={observationOnly ? observedNodes : attestation.matchedNodes} />
           <MetricBox
-            label={observationOnly ? 'Missing' : 'Mismatch'}
+            label={gatewayAcceptance ? 'Accepted' : observationOnly ? 'Observed' : 'Matched'}
+            value={observationOnly ? observedNodes : attestation.matchedNodes}
+          />
+          <MetricBox
+            label={gatewayAcceptance ? 'Rejected' : observationOnly ? 'Missing' : 'Mismatch'}
             value={observationOnly ? attestation.missingNodes : attestation.mismatchedNodes}
             tone={(observationOnly ? attestation.missingNodes : attestation.mismatchedNodes) > 0 ? 'critical' : 'neutral'}
           />
@@ -1088,10 +1223,10 @@ function AttestationPanel({ attestation }: { attestation: AdminLabAttestationSum
         {attestation.expectedPcr0 ? (
           <MiniMeta label="Expected PCR0" value={compactHash(attestation.expectedPcr0)} title={attestation.expectedPcr0} />
         ) : null}
-        {observationOnly && latestNode?.observedPcr0 ? (
+        {attestation.source === 'published_weight_bundles' && latestNode?.observedPcr0 ? (
           <MiniMeta label="Observed PCR0" value={compactHash(latestNode.observedPcr0)} title={latestNode.observedPcr0} />
         ) : null}
-        {observationOnly && (attestation.latestEpoch !== null || latestNode?.gitSha) ? (
+        {attestation.source === 'published_weight_bundles' && (attestation.latestEpoch !== null || latestNode?.gitSha) ? (
           <div className="grid grid-cols-2 gap-2">
             <MiniMeta label="Epoch" value={attestation.latestEpoch === null ? '—' : String(Math.round(attestation.latestEpoch))} />
             <MiniMeta
@@ -1101,10 +1236,15 @@ function AttestationPanel({ attestation }: { attestation: AdminLabAttestationSum
             />
           </div>
         ) : null}
-        {observationOnly && attestation.sourceAvailable ? (
-          <p className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-            This is the validator-published PCR0. Add an expected-PCR0 allowlist to <span className="font-mono">ops_attestation_current</span> to enforce a match.
+        {gatewayAcceptance && attestation.acceptanceDetail ? (
+          <p className="text-xs leading-relaxed" style={{ color: hasMismatch ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+            {attestation.acceptanceDetail}
           </p>
+        ) : null}
+        {observationOnly && attestation.sourceAvailable ? (
+          <div className="rounded-lg border border-gold-soft bg-gold-soft p-3 text-xs leading-relaxed text-gold">
+            Gateway comparison unavailable. {attestation.acceptanceDetail ?? 'The dashboard cannot verify whether the published PCR0 is accepted.'}
+          </div>
         ) : null}
         {!attestation.sourceAvailable ? (
           <p className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
@@ -1130,8 +1270,9 @@ function AttestationPanel({ attestation }: { attestation: AdminLabAttestationSum
                     ? node.observedPcr0 ? 'healthy' : 'critical'
                     : node.matched === false ? 'critical' : node.matched === null ? 'degraded' : 'healthy'}
                   label={observationOnly
-                    ? node.observedPcr0 ? 'Observed' : 'Missing'
-                    : node.matched === false ? 'Mismatch' : node.matched === null ? 'Missing' : 'Match'}
+                    ? node.observedPcr0 ? 'Unverified' : 'Missing'
+                    : node.matched === false ? 'Mismatch' : node.matched === null ? 'Unverified' : 'Match'}
+                  emphasized={node.matched === false}
                 />
               </div>
             ))}
@@ -1178,7 +1319,7 @@ function MetricBox({
       <div className="text-[10px] uppercase tracking-[0.12em]" style={{ color: 'var(--text-tertiary)' }}>
         {label}
       </div>
-      <div className="mt-1 text-lg font-medium tabular-nums" style={{ color: tone === 'critical' ? 'var(--accent-negative)' : 'var(--text-primary)' }}>
+      <div className="mt-1 text-lg font-medium tabular-nums" style={{ color: tone === 'critical' ? 'var(--white)' : 'var(--text-primary)' }}>
         {typeof value === 'number' ? value.toLocaleString() : value}
       </div>
     </div>
@@ -1194,10 +1335,28 @@ function MiniMeta({ label, value, title }: { label: string; value: string; title
   )
 }
 
-function StatePill({ state, label }: { state: AdminHealthState; label: string }) {
+function StatePill({
+  state,
+  label,
+  emphasized = false,
+}: {
+  state: AdminHealthState
+  label: string
+  emphasized?: boolean
+}) {
   return (
-    <span className={cn('inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em]', statePillClass(state))}>
-      <span className={cn('h-1.5 w-1.5 rounded-full', stateDotClass(state))} />
+    <span
+      className={cn('inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em]', statePillClass(state))}
+      style={emphasized ? {
+        borderColor: 'rgba(232, 240, 255, 0.42)',
+        background: 'rgba(232, 240, 255, 0.10)',
+        color: 'var(--white)',
+      } : undefined}
+    >
+      <span
+        className={cn('h-1.5 w-1.5 rounded-full', stateDotClass(state))}
+        style={emphasized ? { background: 'var(--white)' } : undefined}
+      />
       {label}
     </span>
   )

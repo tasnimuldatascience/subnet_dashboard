@@ -2,6 +2,7 @@ const DAY_MS = 24 * 60 * 60 * 1000
 
 export type ResearchLabTerminalReceiptEvent = {
   receipt_id?: string | null
+  event_type?: string | null
   event_doc?: Record<string, unknown> | null
   created_at?: string | null
 }
@@ -21,9 +22,18 @@ export type ResearchLabDailyComputeSpend = {
   runCount: number
 }
 
-type LatestTerminalSpend = {
+export type ResearchLabFinalizedRunReconciliation = {
+  reachedScoringCount: number
+  candidateNotScoredCount: number
+  noCandidateCount: number
+  noCandidateFailedCount: number
+  noCandidateCompletedCount: number
+}
+
+type LatestTerminalRun = {
   createdAtMs: number
   costMicrousd: number
+  eventType?: string
 }
 
 export function buildResearchLabDailyComputeSpend({
@@ -40,25 +50,7 @@ export function buildResearchLabDailyComputeSpend({
   const dayCount = Math.max(1, Math.floor(days))
   const endDayMs = utcDayStart(now.getTime())
   const startDayMs = endDayMs - (dayCount - 1) * DAY_MS
-  const latestByRun = new Map<string, LatestTerminalSpend>()
-
-  for (const row of events) {
-    const doc = objectRecord(row.event_doc) ?? {}
-    const receiptId = stringOr(row.receipt_id)
-    const runId = stringOr(doc.run_id) ?? (receiptId ? receiptRunIds.get(receiptId) : undefined)
-    if (!runId) continue
-
-    const createdAtMs = timestampOrZero(row.created_at)
-    if (createdAtMs < startDayMs || createdAtMs >= endDayMs + DAY_MS) continue
-
-    const current = latestByRun.get(runId)
-    if (!current || createdAtMs > current.createdAtMs) {
-      latestByRun.set(runId, {
-        createdAtMs,
-        costMicrousd: receiptEventCostMicrousd(doc),
-      })
-    }
-  }
+  const latestByRun = latestTerminalRunsByRun({ events, receiptRunIds, startDayMs, endDayMs })
 
   const byDate = new Map<string, ResearchLabDailyComputeSpendPoint>()
   for (let index = 0; index < dayCount; index += 1) {
@@ -90,6 +82,70 @@ export function buildResearchLabDailyComputeSpend({
   }
 }
 
+export function researchLabFinalizedRunIds({
+  events,
+  receiptRunIds = new Map(),
+  days = 30,
+  now = new Date(),
+}: {
+  events: ResearchLabTerminalReceiptEvent[]
+  receiptRunIds?: ReadonlyMap<string, string>
+  days?: number
+  now?: Date
+}): string[] {
+  const dayCount = Math.max(1, Math.floor(days))
+  const endDayMs = utcDayStart(now.getTime())
+  const startDayMs = endDayMs - (dayCount - 1) * DAY_MS
+  return Array.from(
+    latestTerminalRunsByRun({ events, receiptRunIds, startDayMs, endDayMs }).keys(),
+  )
+}
+
+export function buildResearchLabFinalizedRunReconciliation({
+  events,
+  receiptRunIds = new Map(),
+  candidateRunIds,
+  scoringRunIds,
+  days = 30,
+  now = new Date(),
+}: {
+  events: ResearchLabTerminalReceiptEvent[]
+  receiptRunIds?: ReadonlyMap<string, string>
+  candidateRunIds: ReadonlySet<string>
+  scoringRunIds: ReadonlySet<string>
+  days?: number
+  now?: Date
+}): ResearchLabFinalizedRunReconciliation {
+  const dayCount = Math.max(1, Math.floor(days))
+  const endDayMs = utcDayStart(now.getTime())
+  const startDayMs = endDayMs - (dayCount - 1) * DAY_MS
+  const latestByRun = latestTerminalRunsByRun({ events, receiptRunIds, startDayMs, endDayMs })
+  const result: ResearchLabFinalizedRunReconciliation = {
+    reachedScoringCount: 0,
+    candidateNotScoredCount: 0,
+    noCandidateCount: 0,
+    noCandidateFailedCount: 0,
+    noCandidateCompletedCount: 0,
+  }
+
+  for (const [runId, terminalRun] of latestByRun) {
+    if (scoringRunIds.has(runId)) {
+      result.reachedScoringCount += 1
+      continue
+    }
+    if (candidateRunIds.has(runId)) {
+      result.candidateNotScoredCount += 1
+      continue
+    }
+
+    result.noCandidateCount += 1
+    if (terminalRun.eventType === 'failed') result.noCandidateFailedCount += 1
+    if (terminalRun.eventType === 'completed') result.noCandidateCompletedCount += 1
+  }
+
+  return result
+}
+
 export function receiptEventCostMicrousd(eventDoc: Record<string, unknown>): number {
   const ledger = objectRecord(eventDoc.final_cost_ledger)
   if (!ledger) return 0
@@ -108,6 +164,41 @@ export function microusdToUsd(value: unknown): number {
 
 export function roundUsd(value: number): number {
   return Math.round(value * 1_000_000) / 1_000_000
+}
+
+function latestTerminalRunsByRun({
+  events,
+  receiptRunIds,
+  startDayMs,
+  endDayMs,
+}: {
+  events: ResearchLabTerminalReceiptEvent[]
+  receiptRunIds: ReadonlyMap<string, string>
+  startDayMs: number
+  endDayMs: number
+}): Map<string, LatestTerminalRun> {
+  const latestByRun = new Map<string, LatestTerminalRun>()
+
+  for (const row of events) {
+    const doc = objectRecord(row.event_doc) ?? {}
+    const receiptId = stringOr(row.receipt_id)
+    const runId = stringOr(doc.run_id) ?? (receiptId ? receiptRunIds.get(receiptId) : undefined)
+    if (!runId) continue
+
+    const createdAtMs = timestampOrZero(row.created_at)
+    if (createdAtMs < startDayMs || createdAtMs >= endDayMs + DAY_MS) continue
+
+    const current = latestByRun.get(runId)
+    if (!current || createdAtMs > current.createdAtMs) {
+      latestByRun.set(runId, {
+        createdAtMs,
+        costMicrousd: receiptEventCostMicrousd(doc),
+        eventType: stringOr(row.event_type),
+      })
+    }
+  }
+
+  return latestByRun
 }
 
 function nullableCostNumber(value: unknown): number | null {

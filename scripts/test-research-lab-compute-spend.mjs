@@ -29,6 +29,8 @@ try {
   const require = createRequire(import.meta.url)
   const {
     buildResearchLabDailyComputeSpend,
+    buildResearchLabFinalizedRunReconciliation,
+    researchLabFinalizedRunIds,
     receiptEventCostMicrousd,
   } = require(join(outDir, 'research-lab-compute-spend.js'))
 
@@ -105,17 +107,80 @@ try {
   assert.equal(spend.latestDayUsd, 1.75)
   assert.equal(spend.runCount, 3)
 
+  const reconciliationEvents = [
+    {
+      receipt_id: 'receipt-scored',
+      event_type: 'completed',
+      created_at: '2026-07-09T10:00:00Z',
+      event_doc: { run_id: 'run-scored' },
+    },
+    {
+      receipt_id: 'receipt-candidate',
+      event_type: 'completed',
+      created_at: '2026-07-09T11:00:00Z',
+      event_doc: { run_id: 'run-candidate' },
+    },
+    {
+      receipt_id: 'receipt-failed',
+      event_type: 'failed',
+      created_at: '2026-07-09T12:00:00Z',
+      event_doc: { run_id: 'run-failed' },
+    },
+    {
+      receipt_id: 'receipt-no-candidate',
+      event_type: 'completed',
+      created_at: '2026-07-09T13:00:00Z',
+      event_doc: { run_id: 'run-no-candidate' },
+    },
+    {
+      receipt_id: 'receipt-failed',
+      event_type: 'completed',
+      created_at: '2026-07-09T09:00:00Z',
+      event_doc: { run_id: 'run-failed' },
+    },
+  ]
+  assert.deepEqual(
+    researchLabFinalizedRunIds({
+      events: reconciliationEvents,
+      days: 3,
+      now: new Date('2026-07-09T19:30:00Z'),
+    }).sort(),
+    ['run-candidate', 'run-failed', 'run-no-candidate', 'run-scored'],
+  )
+  assert.deepEqual(
+    buildResearchLabFinalizedRunReconciliation({
+      events: reconciliationEvents,
+      candidateRunIds: new Set(['run-scored', 'run-candidate']),
+      scoringRunIds: new Set(['run-scored']),
+      days: 3,
+      now: new Date('2026-07-09T19:30:00Z'),
+    }),
+    {
+      reachedScoringCount: 1,
+      candidateNotScoredCount: 1,
+      noCandidateCount: 2,
+      noCandidateFailedCount: 1,
+      noCandidateCompletedCount: 1,
+    },
+  )
+
   const adminRouteSource = await readFile(resolve('src/app/api/admin/research-lab/route.ts'), 'utf8')
   assert.match(adminRouteSource, /\.filter\(\(loop\) => isActiveResearchLabLoopStatus\(loop\.statusKey\)\)/)
   assert.match(adminRouteSource, /id: 'awaiting_funding'/)
   assert.match(adminRouteSource, /id: 'waiting_credits'/)
   assert.match(adminRouteSource, /fetchComputeSpendSummary/)
+  assert.match(adminRouteSource, /fetchFinalizedRunEvidence/)
+  assert.match(adminRouteSource, /buildResearchLabFinalizedRunReconciliation/)
 
   const componentSource = await readFile(resolve('src/app/admin/_components/AdminResearchLab.tsx'), 'utf8')
   assert.match(componentSource, /Daily compute spend/)
   assert.match(componentSource, /Finalized OpenRouter cost/)
+  assert.match(componentSource, /Finalized run outcomes/)
+  assert.match(componentSource, /Reached scoring/)
+  assert.match(componentSource, /Candidate, not scored/)
+  assert.match(componentSource, /No-candidate split/)
 
-  console.log('research-lab-compute-spend: daily ledger aggregation and admin wiring passed')
+  console.log('research-lab-compute-spend: daily ledger aggregation, run reconciliation, and admin wiring passed')
 } finally {
   await rm(outDir, { recursive: true, force: true })
 }

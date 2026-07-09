@@ -19,9 +19,13 @@ import {
 } from '@/lib/research-lab-status'
 import {
   buildResearchLabDailyComputeSpend,
+  buildResearchLabFinalizedRunReconciliation,
+  researchLabFinalizedRunIds,
   type ResearchLabDailyComputeSpendPoint,
+  type ResearchLabFinalizedRunReconciliation,
   type ResearchLabTerminalReceiptEvent,
 } from '@/lib/research-lab-compute-spend'
+import { fetchGatewayPcr0Acceptance } from '@/lib/research-lab-pcr0-readiness'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -31,6 +35,10 @@ const ACTIVE_RUN_LIMIT = 40
 const COMPUTE_SPEND_DAYS = 30
 const COMPUTE_SPEND_BATCH_SIZE = 1_000
 const LEADPOET_NETUID = 71
+const LEADPOET_GATEWAY_URL =
+  process.env.LEADPOET_GATEWAY_URL?.trim() ||
+  process.env.FULFILLMENT_GATEWAY_URL?.trim() ||
+  'http://52.91.135.79:8000'
 const PUBLIC_LOG_WINDOW_MS = 24 * 60 * 60 * 1000
 const PUBLIC_LOG_LIMIT = 1_000
 const FRESH_PUBLISHED_ATTESTATION_MS = 3 * 60 * 60 * 1000
@@ -251,7 +259,7 @@ export type AdminLabAlert = {
 export type AdminLabAttestationSummary = {
   state: AdminHealthState
   source: 'ops_attestation_current' | 'published_weight_bundles' | 'none'
-  verificationMode: 'expected_match' | 'observation_only'
+  verificationMode: 'expected_match' | 'gateway_acceptance' | 'observation_only'
   sourceAvailable: boolean
   unavailableReason: string | null
   totalNodes: number
@@ -261,6 +269,8 @@ export type AdminLabAttestationSummary = {
   expectedPcr0: string | null
   latestAttestedAt: string | null
   latestEpoch: number | null
+  acceptanceCheckedAt: string | null
+  acceptanceDetail: string | null
   nodes: AdminLabAttestationNode[]
 }
 
@@ -277,6 +287,8 @@ export type AdminLabAttestationNode = {
   attestedAt: string | null
   epoch: number | null
   transparencyEventHash: string | null
+  acceptanceCheckedAt: string | null
+  acceptanceDetail: string | null
 }
 
 export type AdminLabDataFreshness = {
@@ -295,6 +307,12 @@ export type AdminLabComputeSpendSummary = {
   averageDailyUsd: number
   latestDayUsd: number
   runCount: number
+  reconciliation: AdminLabFinalizedRunReconciliation
+}
+
+export type AdminLabFinalizedRunReconciliation = ResearchLabFinalizedRunReconciliation & {
+  sourceAvailable: boolean
+  unavailableReason: string | null
 }
 
 export type AdminLabOpsSummary = {
@@ -692,7 +710,7 @@ async function fetchComputeSpendSummary(
   for (let offset = 0; ; offset += COMPUTE_SPEND_BATCH_SIZE) {
     const { data, error } = await supabase
       .from('research_loop_receipt_events')
-      .select('receipt_id, event_doc, created_at')
+      .select('receipt_id, event_type, event_doc, created_at')
       .in('event_type', ['completed', 'failed'])
       .gte('created_at', new Date(sinceMs).toISOString())
       .order('created_at', { ascending: false, nullsFirst: false })
@@ -733,9 +751,32 @@ async function fetchComputeSpendSummary(
     }
   }
 
+  const finalizedRunIds = researchLabFinalizedRunIds({
+    events,
+    receiptRunIds,
+    days: COMPUTE_SPEND_DAYS,
+    now,
+  })
+  const runEvidence = await fetchFinalizedRunEvidence(supabase, finalizedRunIds)
+  const reconciliation: AdminLabFinalizedRunReconciliation = runEvidence.sourceAvailable
+    ? {
+        sourceAvailable: true,
+        unavailableReason: null,
+        ...buildResearchLabFinalizedRunReconciliation({
+          events,
+          receiptRunIds,
+          candidateRunIds: runEvidence.candidateRunIds,
+          scoringRunIds: runEvidence.scoringRunIds,
+          days: COMPUTE_SPEND_DAYS,
+          now,
+        }),
+      }
+    : emptyFinalizedRunReconciliation(false, runEvidence.unavailableReason)
+
   return {
     sourceAvailable: true,
     unavailableReason: null,
+    reconciliation,
     ...buildResearchLabDailyComputeSpend({
       events,
       receiptRunIds,
@@ -753,11 +794,109 @@ function emptyComputeSpendSummary(
   return {
     sourceAvailable,
     unavailableReason,
+    reconciliation: emptyFinalizedRunReconciliation(false, unavailableReason),
     ...buildResearchLabDailyComputeSpend({
       events: [],
       days: COMPUTE_SPEND_DAYS,
       now,
     }),
+  }
+}
+
+type FinalizedRunEvidence = {
+  sourceAvailable: boolean
+  unavailableReason: string | null
+  candidateRunIds: Set<string>
+  scoringRunIds: Set<string>
+}
+
+async function fetchFinalizedRunEvidence(
+  supabase: ReturnType<typeof getAdminSupabase>,
+  runIds: string[],
+): Promise<FinalizedRunEvidence> {
+  const [candidateEvidence, scoreBundleEvidence] = await Promise.all([
+    fetchCandidateRunEvidence(supabase, runIds),
+    fetchScoreBundleRunEvidence(supabase, runIds),
+  ])
+  const unavailableReason = candidateEvidence.error ?? scoreBundleEvidence.error
+  if (unavailableReason) {
+    console.warn('[admin:research-lab] finalized run reconciliation unavailable', unavailableReason)
+    return {
+      sourceAvailable: false,
+      unavailableReason,
+      candidateRunIds: new Set(),
+      scoringRunIds: new Set(),
+    }
+  }
+
+  return {
+    sourceAvailable: true,
+    unavailableReason: null,
+    candidateRunIds: candidateEvidence.candidateRunIds,
+    scoringRunIds: new Set([
+      ...candidateEvidence.scoringRunIds,
+      ...scoreBundleEvidence.scoringRunIds,
+    ]),
+  }
+}
+
+async function fetchCandidateRunEvidence(
+  supabase: ReturnType<typeof getAdminSupabase>,
+  runIds: string[],
+): Promise<{ candidateRunIds: Set<string>; scoringRunIds: Set<string>; error: string | null }> {
+  const candidateRunIds = new Set<string>()
+  const scoringRunIds = new Set<string>()
+  for (const batch of chunked(runIds, SUPABASE_IN_FILTER_BATCH_SIZE)) {
+    const { data, error } = await supabase
+      .from('research_lab_candidate_evaluation_current')
+      .select('run_id, current_candidate_status')
+      .in('run_id', batch)
+
+    if (error) {
+      return { candidateRunIds, scoringRunIds, error: error.message }
+    }
+    for (const row of (data ?? []) as Array<Record<string, unknown>>) {
+      const runId = stringOr(row.run_id)
+      if (!runId) continue
+      candidateRunIds.add(runId)
+      if (stringOr(row.current_candidate_status) === 'scored') scoringRunIds.add(runId)
+    }
+  }
+  return { candidateRunIds, scoringRunIds, error: null }
+}
+
+async function fetchScoreBundleRunEvidence(
+  supabase: ReturnType<typeof getAdminSupabase>,
+  runIds: string[],
+): Promise<{ scoringRunIds: Set<string>; error: string | null }> {
+  const scoringRunIds = new Set<string>()
+  for (const batch of chunked(runIds, SUPABASE_IN_FILTER_BATCH_SIZE)) {
+    const { data, error } = await supabase
+      .from('research_evaluation_score_bundle_current')
+      .select('run_id')
+      .in('run_id', batch)
+
+    if (error) return { scoringRunIds, error: error.message }
+    for (const row of (data ?? []) as Array<Record<string, unknown>>) {
+      const runId = stringOr(row.run_id)
+      if (runId) scoringRunIds.add(runId)
+    }
+  }
+  return { scoringRunIds, error: null }
+}
+
+function emptyFinalizedRunReconciliation(
+  sourceAvailable: boolean,
+  unavailableReason: string | null,
+): AdminLabFinalizedRunReconciliation {
+  return {
+    sourceAvailable,
+    unavailableReason,
+    reachedScoringCount: 0,
+    candidateNotScoredCount: 0,
+    noCandidateCount: 0,
+    noCandidateFailedCount: 0,
+    noCandidateCompletedCount: 0,
   }
 }
 
@@ -1417,6 +1556,8 @@ function summarizeOpsAttestations(rows: Array<Record<string, unknown>>): AdminLa
     expectedPcr0,
     latestAttestedAt,
     latestEpoch: null,
+    acceptanceCheckedAt: null,
+    acceptanceDetail: null,
     nodes: nodes
       .sort((a, b) => {
         const aBad = a.matched === false ? 0 : a.matched === null ? 1 : 2
@@ -1453,7 +1594,7 @@ async function fetchPublishedWeightAttestationSummary(
     if (!latestByValidator.has(key)) latestByValidator.set(key, row)
   }
 
-  const nodes: AdminLabAttestationNode[] = Array.from(latestByValidator.values()).map((row) => {
+  const observedNodes: AdminLabAttestationNode[] = Array.from(latestByValidator.values()).map((row) => {
     const hotkey = stringOr(row.validator_hotkey) ?? null
     const enclavePubkey = stringOr(row.validator_enclave_pubkey) ?? null
     const epoch = finiteNumberOrNull(row.epoch_id)
@@ -1472,9 +1613,30 @@ async function fetchPublishedWeightAttestationSummary(
       attestedAt: isoStringOr(row.created_at) ?? null,
       epoch,
       transparencyEventHash: stringOr(row.weight_submission_event_hash) ?? null,
+      acceptanceCheckedAt: null,
+      acceptanceDetail: null,
     }
   })
-  const missingNodes = nodes.filter((node) => !node.observedPcr0).length
+  const acceptanceResults = await Promise.all(observedNodes.map((node) =>
+    fetchGatewayPcr0Acceptance({
+      gatewayUrl: LEADPOET_GATEWAY_URL,
+      pcr0: node.observedPcr0,
+      commit: node.gitSha,
+    }),
+  ))
+  const nodes = observedNodes.map((node, index) => ({
+    ...node,
+    matched: acceptanceResults[index].accepted,
+    acceptanceCheckedAt: acceptanceResults[index].checkedAt,
+    acceptanceDetail: acceptanceResults[index].detail,
+  }))
+  const gatewayAcceptanceAvailable = acceptanceResults.some((result) => result.checked)
+  const rawMissingNodes = nodes.filter((node) => !node.observedPcr0).length
+  const matchedNodes = nodes.filter((node) => node.matched === true).length
+  const mismatchedNodes = nodes.filter((node) => node.matched === false).length
+  const missingNodes = gatewayAcceptanceAvailable
+    ? nodes.filter((node) => node.matched === null).length
+    : rawMissingNodes
   const latestAttestedAt = latestIso(...nodes.map((node) => node.attestedAt)) ?? null
   const latestEpoch = nodes.reduce<number | null>((latest, node) => {
     if (node.epoch === null) return latest
@@ -1485,25 +1647,37 @@ async function fetchPublishedWeightAttestationSummary(
     : null
   const state: AdminHealthState = nodes.length === 0
     ? 'unknown'
-    : missingNodes === nodes.length || attestationAgeMs === null || attestationAgeMs > DEGRADED_PUBLISHED_ATTESTATION_MS
+    : mismatchedNodes > 0
       ? 'critical'
-      : missingNodes > 0 || attestationAgeMs > FRESH_PUBLISHED_ATTESTATION_MS
-        ? 'degraded'
-        : 'healthy'
+      : rawMissingNodes === nodes.length || attestationAgeMs === null || attestationAgeMs > DEGRADED_PUBLISHED_ATTESTATION_MS
+        ? 'critical'
+        : !gatewayAcceptanceAvailable || missingNodes > 0 || attestationAgeMs > FRESH_PUBLISHED_ATTESTATION_MS
+          ? 'degraded'
+          : 'healthy'
+
+  const mismatchResult = acceptanceResults.find((result) => result.accepted === false)
+  const acceptedResult = acceptanceResults.find((result) => result.accepted === true)
+  const unavailableResult = acceptanceResults.find((result) => !result.checked)
+  const acceptanceDetail = (mismatchResult ?? acceptedResult ?? unavailableResult)?.detail ?? null
+  const acceptanceCheckedAt = latestIso(
+    ...acceptanceResults.map((result) => result.checkedAt),
+  ) ?? null
 
   return {
     state,
     source: 'published_weight_bundles',
-    verificationMode: 'observation_only',
+    verificationMode: gatewayAcceptanceAvailable ? 'gateway_acceptance' : 'observation_only',
     sourceAvailable: true,
     unavailableReason: null,
     totalNodes: nodes.length,
-    matchedNodes: 0,
-    mismatchedNodes: 0,
+    matchedNodes,
+    mismatchedNodes,
     missingNodes,
     expectedPcr0: null,
     latestAttestedAt,
     latestEpoch,
+    acceptanceCheckedAt,
+    acceptanceDetail,
     nodes: nodes
       .sort((a, b) => timestampOrZero(b.attestedAt) - timestampOrZero(a.attestedAt))
       .slice(0, 12),
@@ -1524,6 +1698,8 @@ function emptyAttestationSummary(unavailableReason: string | null): AdminLabAtte
     expectedPcr0: null,
     latestAttestedAt: null,
     latestEpoch: null,
+    acceptanceCheckedAt: null,
+    acceptanceDetail: null,
     nodes: [],
   }
 }
@@ -1568,6 +1744,8 @@ function normalizeAttestationRow(row: Record<string, unknown>): AdminLabAttestat
       stringOr(row.transparency_event_hash) ??
       stringOr(row.weight_submission_event_hash) ??
       null,
+    acceptanceCheckedAt: null,
+    acceptanceDetail: null,
   }
 }
 
@@ -1610,23 +1788,29 @@ function buildHealthSignals(input: {
       id: 'pcr0',
       label: 'PCR0',
       value: input.attestation.sourceAvailable
-        ? input.attestation.verificationMode === 'observation_only'
-          ? `${input.attestation.totalNodes - input.attestation.missingNodes}/${input.attestation.totalNodes} observed`
-          : `${input.attestation.matchedNodes}/${input.attestation.totalNodes} matched`
+        ? input.attestation.verificationMode === 'gateway_acceptance'
+          ? input.attestation.mismatchedNodes > 0
+            ? 'Mismatch'
+            : `${input.attestation.matchedNodes}/${input.attestation.totalNodes} accepted`
+          : input.attestation.verificationMode === 'observation_only'
+            ? 'Unverified'
+            : `${input.attestation.matchedNodes}/${input.attestation.totalNodes} matched`
         : 'Not wired',
       state: input.attestation.state,
       detail: input.attestation.sourceAvailable
-        ? input.attestation.verificationMode === 'observation_only'
-          ? input.attestation.missingNodes > 0
-            ? `${input.attestation.missingNodes} validator${input.attestation.missingNodes === 1 ? '' : 's'} are missing a published PCR0.`
-            : 'Latest published validator PCR0 is available; no expected-PCR0 allowlist is configured for comparison.'
-          : input.attestation.mismatchedNodes > 0
-            ? `${input.attestation.mismatchedNodes} node${input.attestation.mismatchedNodes === 1 ? '' : 's'} report PCR0 mismatch.`
-            : input.attestation.missingNodes > 0
-              ? `${input.attestation.missingNodes} node${input.attestation.missingNodes === 1 ? '' : 's'} are missing PCR0 data.`
-              : 'All reporting nodes match expected PCR0.'
+        ? input.attestation.verificationMode === 'gateway_acceptance'
+          ? input.attestation.mismatchedNodes > 0
+            ? `${input.attestation.mismatchedNodes} validator PCR0${input.attestation.mismatchedNodes === 1 ? ' is' : 's are'} rejected by the production gateway; audited weight publication is blocked.`
+            : input.attestation.acceptanceDetail ?? 'All reporting validator PCR0s are accepted by the production gateway.'
+          : input.attestation.verificationMode === 'observation_only'
+            ? input.attestation.acceptanceDetail ?? 'A validator PCR0 is published, but the production gateway acceptance check is unavailable.'
+            : input.attestation.mismatchedNodes > 0
+              ? `${input.attestation.mismatchedNodes} node${input.attestation.mismatchedNodes === 1 ? '' : 's'} report PCR0 mismatch.`
+              : input.attestation.missingNodes > 0
+                ? `${input.attestation.missingNodes} node${input.attestation.missingNodes === 1 ? '' : 's'} are missing PCR0 data.`
+                : 'All reporting nodes match expected PCR0.'
         : 'No PCR0 source is readable from ops_attestation_current or published_weight_bundles.',
-      updatedAt: input.attestation.latestAttestedAt,
+      updatedAt: input.attestation.acceptanceCheckedAt ?? input.attestation.latestAttestedAt,
     },
     {
       id: 'alerts',
