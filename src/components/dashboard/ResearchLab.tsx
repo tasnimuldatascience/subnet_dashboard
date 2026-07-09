@@ -2248,49 +2248,83 @@ const ICP_MOVEMENT_COLOR: Record<LoopIcpDeltaRow['movement'], string> = {
 function CandidateIcpDeltaStrip({ breakdown }: { breakdown: LoopIcpDeltaBreakdown }) {
   const { publicIcps, sealed } = breakdown
   const maxAbs = Math.max(1, ...publicIcps.map((r) => Math.abs(r.delta)))
+  const moved = publicIcps.filter((r) => r.movement === 'helped' || r.movement === 'hurt')
+  const flat = publicIcps.filter((r) => r.movement === 'flat')
+  const infra = publicIcps.filter((r) => r.movement === 'infra')
   const sealedTotal = sealed.helped + sealed.hurt + sealed.flat + sealed.infraExcluded
+  const count = (movement: LoopIcpDeltaRow['movement']) =>
+    publicIcps.filter((r) => r.movement === movement).length
+
+  const bar = (row: LoopIcpDeltaRow) => {
+    const color = ICP_MOVEMENT_COLOR[row.movement]
+    const width = Math.min(100, (Math.abs(row.delta) / maxAbs) * 100)
+    return (
+      <div key={row.icp} className="grid grid-cols-[96px_minmax(0,1fr)_128px] items-center gap-2">
+        <span className="truncate font-mono text-[9.5px] text-[var(--muted-2)]">{row.icp}</span>
+        <span className="relative h-[5px] overflow-hidden rounded-full bg-[rgba(236,234,230,0.06)]">
+          <span className="absolute inset-y-0 left-1/2 w-px bg-[rgba(236,234,230,0.14)]" />
+          <span
+            className="absolute inset-y-0 block rounded-full"
+            style={{
+              backgroundColor: color,
+              width: `${width / 2}%`,
+              left: row.delta >= 0 ? '50%' : undefined,
+              right: row.delta < 0 ? '50%' : undefined,
+            }}
+          />
+        </span>
+        <span className="text-right font-mono text-[10px] tabular-nums text-[var(--muted-2)]">
+          {row.baseScore.toFixed(0)} → {row.candidateScore.toFixed(0)}{' '}
+          <span style={{ color }}>
+            ({row.delta >= 0 ? '+' : ''}
+            {row.delta.toFixed(1)})
+          </span>
+        </span>
+      </div>
+    )
+  }
+
   return (
     <div className="mt-3">
-      <div className="mb-1.5 font-mono text-[9px] uppercase tracking-[0.12em] text-[var(--muted-2)]">
+      <div className="mb-1 font-mono text-[9px] uppercase tracking-[0.12em] text-[var(--muted-2)]">
         Per-ICP delta · which ICPs moved
       </div>
-      {publicIcps.length > 0 ? (
-        <div className="space-y-1">
-          {publicIcps.map((row) => {
-            const color = ICP_MOVEMENT_COLOR[row.movement]
-            const width = Math.min(100, (Math.abs(row.delta) / maxAbs) * 100)
-            return (
-              <div
-                key={row.icp}
-                className="grid grid-cols-[108px_minmax(0,1fr)_88px] items-center gap-2"
-                title={`base ${row.baseScore.toFixed(1)} → candidate ${row.candidateScore.toFixed(1)}`}
-              >
-                <span className="truncate font-mono text-[9.5px] text-[var(--muted-2)]">{row.icp}</span>
-                <span className="relative h-[5px] overflow-hidden rounded-full bg-[rgba(236,234,230,0.06)]">
-                  <span className="absolute inset-y-0 left-1/2 w-px bg-[rgba(236,234,230,0.14)]" />
-                  <span
-                    className="absolute inset-y-0 block rounded-full"
-                    style={{
-                      backgroundColor: color,
-                      width: `${width / 2}%`,
-                      left: row.delta >= 0 ? '50%' : undefined,
-                      right: row.delta < 0 ? '50%' : undefined,
-                    }}
-                  />
-                </span>
-                <span className="text-right font-mono text-[10px] tabular-nums" style={{ color }}>
-                  {row.movement === 'infra' ? 'infra · ' : ''}
-                  {row.delta >= 0 ? '+' : ''}
-                  {row.delta.toFixed(1)}
-                </span>
-              </div>
-            )
-          })}
+      <div className="mb-2 font-mono text-[10px] text-[var(--muted-2)]">
+        Candidate score vs the daily baseline, per benchmark ICP.{' '}
+        <span className="tabular-nums" style={{ color: 'var(--platinum)' }}>{count('helped') + sealed.helped} helped</span>
+        {' · '}
+        <span className="tabular-nums" style={{ color: '#b3574f' }}>{count('hurt') + sealed.hurt} hurt</span>
+        {' · '}
+        <span className="tabular-nums">{count('flat') + sealed.flat} flat</span>
+        {' · '}
+        <span className="tabular-nums text-[var(--faint)]">{count('infra') + sealed.infraExcluded} excluded — sourcing failed (infra, not model skill)</span>
+      </div>
+      {moved.length > 0 ? <div className="space-y-1">{moved.map(bar)}</div> : null}
+      {flat.length > 0 ? (
+        <div className="mt-1.5 space-y-1">
+          <div className="font-mono text-[9px] uppercase tracking-[0.12em] text-[var(--faint)]">
+            Flat (|Δ| ≤ {breakdown.flatBand.toFixed(0)})
+          </div>
+          {flat.map(bar)}
+        </div>
+      ) : null}
+      {infra.length > 0 ? (
+        <div className="mt-1.5 space-y-1">
+          <div className="font-mono text-[9px] uppercase tracking-[0.12em] text-[var(--faint)]">
+            Excluded — sourcing failed (infra, not model skill)
+          </div>
+          {infra.map((row) => (
+            <div key={row.icp} className="grid grid-cols-[96px_minmax(0,1fr)] items-center gap-2">
+              <span className="truncate font-mono text-[9.5px] text-[var(--faint)]">{row.icp}</span>
+              <span className="font-mono text-[9.5px] text-[var(--faint)]">not scored against this candidate</span>
+            </div>
+          ))}
         </div>
       ) : null}
       {sealedTotal > 0 ? (
-        <div className="mt-1.5 font-mono text-[10px] text-[var(--muted-2)]">
-          sealed pool · <span className="tabular-nums text-[var(--platinum)]">{sealed.helped} helped</span>
+        <div className="mt-2 border-t border-[var(--line-2)] pt-1.5 font-mono text-[10px] text-[var(--muted-2)]">
+          sealed pool ({sealedTotal} ICPs, never itemized) ·{' '}
+          <span className="tabular-nums" style={{ color: 'var(--platinum)' }}>{sealed.helped} helped</span>
           {' · '}
           <span className="tabular-nums" style={{ color: '#b3574f' }}>{sealed.hurt} hurt</span>
           {' · '}
@@ -2298,7 +2332,7 @@ function CandidateIcpDeltaStrip({ breakdown }: { breakdown: LoopIcpDeltaBreakdow
           {sealed.infraExcluded > 0 ? (
             <>
               {' · '}
-              <span className="tabular-nums text-[var(--faint)]">{sealed.infraExcluded} infra-excluded (not the patch)</span>
+              <span className="tabular-nums text-[var(--faint)]">{sealed.infraExcluded} infra-excluded</span>
             </>
           ) : null}
         </div>
