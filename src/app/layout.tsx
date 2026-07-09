@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter, Space_Grotesk, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -27,6 +27,13 @@ const ibmPlexMono = IBM_Plex_Mono({
 // Use NEXT_PUBLIC_SITE_URL when set so OG images resolve to absolute URLs
 // in production. Falls back to a sensible default in local dev.
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://dashboard.leadpoet.com'
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#0a0908",
+}
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),

@@ -1346,18 +1346,18 @@ function IntentTypeChart({ rows }: { rows: IntentTypeRollup[] }) {
           return (
             <div
               key={row.evidence_type}
-              className="grid grid-cols-[150px_minmax(0,1fr)_172px] items-center gap-3"
+              className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 sm:grid-cols-[150px_minmax(0,1fr)_172px]"
             >
               <span
-                className="truncate font-mono text-[10.5px] uppercase tracking-[0.06em] text-[var(--muted)]"
+                className="min-w-0 truncate font-mono text-[10.5px] uppercase tracking-[0.06em] text-[var(--muted)]"
                 title={readableTag(row.evidence_type)}
               >
                 {readableTag(row.evidence_type)}
               </span>
-              <span className="h-[7px] w-full overflow-hidden rounded-full bg-[rgba(236,234,230,0.06)]">
+              <span className="order-3 col-span-2 h-[7px] w-full overflow-hidden rounded-full bg-[rgba(236,234,230,0.06)] sm:order-none sm:col-span-1">
                 <span className="block h-full rounded-full" style={{ width: `${pct}%`, background: tone }} />
               </span>
-              <span className="text-right font-mono text-[10.5px] tabular-nums text-[var(--muted-2)]">
+              <span className="whitespace-nowrap text-right font-mono text-[10.5px] tabular-nums text-[var(--muted-2)]">
                 <span style={{ color: tone }}>{row.pass_pct}%</span>
                 <span className="ml-1.5 text-[var(--faint)]">{row.fulfilled}/{row.expected}</span>
                 <span className="ml-1.5 text-[var(--faint)]">· {row.icp_count} ICP{row.icp_count === 1 ? '' : 's'}</span>
