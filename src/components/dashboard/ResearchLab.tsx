@@ -2259,7 +2259,7 @@ function CandidateIcpDeltaStrip({ breakdown }: { breakdown: LoopIcpDeltaBreakdow
     const color = ICP_MOVEMENT_COLOR[row.movement]
     const width = Math.min(100, (Math.abs(row.delta) / maxAbs) * 100)
     return (
-      <div key={row.icp} className="grid grid-cols-[96px_minmax(0,1fr)_128px] items-center gap-2">
+      <div key={row.icp} className="grid grid-cols-[190px_minmax(0,1fr)_118px] items-center gap-2">
         <span className="truncate font-mono text-[9.5px] text-[var(--muted-2)]">{row.icp}</span>
         <span className="relative h-[5px] overflow-hidden rounded-full bg-[rgba(236,234,230,0.06)]">
           <span className="absolute inset-y-0 left-1/2 w-px bg-[rgba(236,234,230,0.14)]" />
@@ -2314,7 +2314,7 @@ function CandidateIcpDeltaStrip({ breakdown }: { breakdown: LoopIcpDeltaBreakdow
             Excluded — sourcing failed (infra, not model skill)
           </div>
           {infra.map((row) => (
-            <div key={row.icp} className="grid grid-cols-[96px_minmax(0,1fr)] items-center gap-2">
+            <div key={row.icp} className="grid grid-cols-[190px_minmax(0,1fr)] items-center gap-2">
               <span className="truncate font-mono text-[9.5px] text-[var(--faint)]">{row.icp}</span>
               <span className="font-mono text-[9.5px] text-[var(--faint)]">not scored against this candidate</span>
             </div>

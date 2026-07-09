@@ -750,30 +750,71 @@ const ICP_DELTA_FLAT_BAND = 1.0
 async function fetchBenchmarkVisibilityMap(
   supabase: ReturnType<typeof getSupabase>,
 ): Promise<Map<string, string>> {
+  // Merge the splits of recent benchmarks: windows rotate daily, so an older
+  // loop's refs may no longer appear in the newest split. A ref that ANY
+  // published benchmark marked public is already public information; a ref
+  // marked sealed everywhere (or never seen) stays sealed.
   const map = new Map<string, string>()
   const res = await supabase
     .from('research_lab_private_model_benchmark_bundles')
     .select('score_summary_doc')
     .order('created_at', { ascending: false })
-    .limit(1)
+    .limit(15)
   if (res.error) return map
-  const doc = (res.data?.[0]?.score_summary_doc ?? {}) as Record<string, unknown>
-  const split = doc.visibility_split as Record<string, unknown> | undefined
-  const items = Array.isArray(split?.items) ? (split!.items as Array<Record<string, unknown>>) : []
-  for (const item of items) {
-    const ref = String(item.icp_ref ?? '').trim()
-    if (ref) map.set(ref, String(item.visibility ?? '').trim().toLowerCase())
+  for (const row of (res.data ?? []) as Array<Record<string, unknown>>) {
+    const doc = (row.score_summary_doc ?? {}) as Record<string, unknown>
+    const split = doc.visibility_split as Record<string, unknown> | undefined
+    const items = Array.isArray(split?.items) ? (split!.items as Array<Record<string, unknown>>) : []
+    for (const item of items) {
+      const ref = String(item.icp_ref ?? '').trim()
+      if (!ref) continue
+      const visibility = String(item.visibility ?? '').trim().toLowerCase()
+      if (visibility === 'public' || !map.has(ref)) map.set(ref, visibility)
+    }
   }
   return map
 }
 
-// "qualification_private_icp_sets:20260708:icp_20260708_014" -> "20260708 / 014"
-function shortIcpLabel(ref: string): string {
+// "qualification_private_icp_sets:20260708:icp_20260708_014" -> { setId, icpId }
+function parseIcpRef(ref: string): { setId: string; icpId: string } {
   const parts = String(ref).split(':')
-  const setId = parts.length >= 2 ? parts[1] : ''
-  const icpId = parts.length >= 3 ? parts[2] : parts[parts.length - 1] ?? ''
-  const tail = icpId.split('_').pop() ?? icpId
-  return setId ? `${setId} / ${tail}` : icpId
+  return {
+    setId: parts.length >= 2 ? parts[1] : '',
+    icpId: parts.length >= 3 ? parts[2] : parts[parts.length - 1] ?? '',
+  }
+}
+
+// Human label for a PUBLIC-visibility ICP: what kind of buyer it asks for and
+// which intent it requires — e.g. "Management consulting · leadership change
+// (Jul 1)". Falls back to the set/id pair when the set row isn't loadable.
+async function fetchPublicIcpLabels(
+  supabase: ReturnType<typeof getSupabase>,
+  refs: string[],
+): Promise<Map<string, string>> {
+  const labels = new Map<string, string>()
+  const setIds = [...new Set(refs.map((ref) => parseIcpRef(ref).setId).filter(Boolean))]
+  if (setIds.length === 0) return labels
+  const res = await supabase
+    .from('qualification_private_icp_sets')
+    .select('set_id, icps')
+    .in('set_id', setIds)
+  if (res.error) return labels
+  const byId = new Map<string, Record<string, unknown>>()
+  for (const row of (res.data ?? []) as Array<Record<string, unknown>>) {
+    const icps = Array.isArray(row.icps) ? (row.icps as Array<Record<string, unknown>>) : []
+    for (const icp of icps) byId.set(`${row.set_id}:${icp.icp_id}`, icp)
+  }
+  for (const ref of refs) {
+    const { setId, icpId } = parseIcpRef(ref)
+    const icp = byId.get(`${setId}:${icpId}`)
+    if (!icp) continue
+    const industry = String(icp.sub_industry || icp.industry || '').trim()
+    const intent = String(icp.intent_category || '').trim().toLowerCase().replace(/_/g, ' ')
+    const day = setId.length === 8 ? `${setId.slice(4, 6)}-${setId.slice(6, 8)}` : setId
+    const parts = [industry, intent].filter(Boolean).join(' · ')
+    if (parts) labels.set(ref, `${parts} (${day})`)
+  }
+  return labels
 }
 
 // Per-ICP delta breakdown for one candidate's per_icp_results rows. Public
@@ -781,6 +822,7 @@ function shortIcpLabel(ref: string): string {
 function buildIcpDeltaBreakdown(
   perIcp: Array<Record<string, unknown>>,
   visibility: Map<string, string>,
+  labels: Map<string, string>,
 ): ResearchLabIcpDeltaBreakdown | undefined {
   if (perIcp.length === 0) return undefined
   const publicIcps: ResearchLabIcpDeltaRow[] = []
@@ -805,8 +847,9 @@ function buildIcpDeltaBreakdown(
           ? 'hurt'
           : 'flat'
     if (visibility.get(ref) === 'public') {
+      const fallback = `${parseIcpRef(ref).setId} / ${parseIcpRef(ref).icpId.split('_').pop() ?? ''}`
       publicIcps.push({
-        icp: shortIcpLabel(ref),
+        icp: labels.get(ref) ?? fallback,
         candidateScore: Math.round(candidateScore * 10) / 10,
         baseScore: Math.round(baseScore * 10) / 10,
         delta: Math.round(delta * 10) / 10,
@@ -842,6 +885,8 @@ async function fetchCandidateDiagnostics(
   ])
   if (candRes.error || bundleRes.error) return []
   const visibilityMap = await fetchBenchmarkVisibilityMap(supabase)
+  const publicRefs = [...visibilityMap.entries()].filter(([, v]) => v === 'public').map(([ref]) => ref)
+  const icpLabels = await fetchPublicIcpLabels(supabase, publicRefs)
 
   const byBundleId = new Map<string, ScoreBundleDoc>()
   const byArtifact = new Map<string, ScoreBundleDoc>()
@@ -891,7 +936,7 @@ async function fetchCandidateDiagnostics(
       icpCount: perIcp.length,
       externalFailures,
       funnel: hasFunnel ? funnelTotals : undefined,
-      icpDeltas: buildIcpDeltaBreakdown(perIcp, visibilityMap),
+      icpDeltas: buildIcpDeltaBreakdown(perIcp, visibilityMap, icpLabels),
     })
   }
   return out
