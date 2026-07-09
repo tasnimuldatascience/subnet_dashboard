@@ -354,6 +354,9 @@ type LoopCandidateDiagnostic = {
   gate: 'passed' | 'rejected' | ''
   candidateScore: number
   delta: number
+  deltaLcb: number
+  meanThreshold: number
+  lcbThreshold: number
   icpCount: number
   externalFailures: number
   funnel?: LoopCandidateFunnel
@@ -1226,7 +1229,7 @@ function DiscoveryHealth({ discovery }: { discovery: DiscoverySummary }) {
       </div>
       <p className="mb-4 text-[11.5px] leading-relaxed text-[var(--muted-2)]">
         How many of the {totalIcps} benchmark ICPs the model could source companies for.
-        &ldquo;No companies&rdquo; is an infrastructure/sourcing failure, not model skill.
+        &ldquo;No companies&rdquo; means sourcing returned nothing — a scrape failed or a company URL didn&apos;t resolve.
       </p>
       <div className="flex h-2 w-full gap-[2px] overflow-hidden rounded-[3px]">
         {segments.map((s) =>
@@ -1268,7 +1271,7 @@ function AggregateFunnel({ funnel, sourcingFailedCount }: { funnel: LeadFunnel; 
         <p className="font-mono text-[11px] text-[var(--muted-2)]">
           No companies were sourced in this run
           {sourcingFailedCount > 0
-            ? ` — ${sourcingFailedCount} ICP${sourcingFailedCount === 1 ? '' : 's'} failed sourcing (infra, not model skill).`
+            ? ` — ${sourcingFailedCount} ICP${sourcingFailedCount === 1 ? '' : 's'} returned no companies (scrape failed or URL didn't resolve).`
             : '.'}
         </p>
       </div>
@@ -1311,7 +1314,7 @@ function AggregateFunnel({ funnel, sourcingFailedCount }: { funnel: LeadFunnel; 
       </div>
       {sourcingFailedCount > 0 ? (
         <div className="mt-3 font-mono text-[10px] text-[var(--muted-2)]">
-          {sourcingFailedCount} ICP{sourcingFailedCount === 1 ? '' : 's'} excluded — sourcing failed (infra, not model skill)
+          {sourcingFailedCount} ICP{sourcingFailedCount === 1 ? '' : 's'} excluded — no companies sourced (scrape failed or URL didn't resolve)
         </div>
       ) : null}
     </div>
@@ -1381,7 +1384,7 @@ function IcpFunnelStrip({
   if (sourcingFailed) {
     return (
       <div className="mt-3 font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--muted-2)]">
-        Sourcing failed — infra, not model skill
+        Sourcing failed — no companies returned
       </div>
     )
   }
@@ -2180,11 +2183,28 @@ function LoopCandidateDiagnostics({ items }: { items: LoopCandidateDiagnostic[] 
                 <span>
                   score <span className="tabular-nums text-[var(--platinum)]">{c.candidateScore.toFixed(1)}</span>
                 </span>
-                <span>
-                  Δ vs base{' '}
-                  <span className="tabular-nums" style={{ color: c.delta >= 0 ? 'var(--platinum)' : 'var(--faint)' }}>
-                    {c.delta >= 0 ? '+' : ''}
-                    {c.delta.toFixed(1)}
+                <span title={`Promotion needs mean Δ ≥ ${c.meanThreshold.toFixed(1)} AND lcb ≥ ${c.lcbThreshold.toFixed(1)}`}>
+                  mean Δ{' '}
+                  <span
+                    className="tabular-nums"
+                    style={{ color: c.delta >= c.meanThreshold ? 'var(--platinum)' : '#b3574f' }}
+                  >
+                    {c.delta >= 0 ? '+' : ''}{c.delta.toFixed(1)}
+                  </span>
+                  <span className="ml-1 text-[9px] text-[var(--faint)]">
+                    {c.delta >= c.meanThreshold ? '✓' : '✗'} ≥{c.meanThreshold.toFixed(1)}
+                  </span>
+                </span>
+                <span title="Lower confidence bound — a loop can have a strong mean but fail here when gains are concentrated in a few ICPs">
+                  lcb{' '}
+                  <span
+                    className="tabular-nums"
+                    style={{ color: c.deltaLcb >= c.lcbThreshold ? 'var(--platinum)' : '#b3574f' }}
+                  >
+                    {c.deltaLcb >= 0 ? '+' : ''}{c.deltaLcb.toFixed(1)}
+                  </span>
+                  <span className="ml-1 text-[9px] text-[var(--faint)]">
+                    {c.deltaLcb >= c.lcbThreshold ? '✓' : '✗'} ≥{c.lcbThreshold.toFixed(1)}
                   </span>
                 </span>
                 <span>
@@ -2262,34 +2282,39 @@ function CandidateIcpDeltaStrip({ breakdown }: { breakdown: LoopIcpDeltaBreakdow
   const flat = publicIcps.filter((r) => r.movement === 'flat')
   const infra = publicIcps.filter((r) => r.movement === 'infra')
   const sealedTotal = sealed.helped + sealed.hurt + sealed.flat + sealed.infraExcluded
+  const infraTotal = infra.length + sealed.infraExcluded
   const count = (movement: LoopIcpDeltaRow['movement']) =>
     publicIcps.filter((r) => r.movement === movement).length
 
+  // One scored ICP: full label on its own line (never truncated), then the
+  // base -> candidate bar and signed delta beneath it.
   const bar = (row: LoopIcpDeltaRow) => {
     const color = ICP_MOVEMENT_COLOR[row.movement]
     const width = Math.min(100, (Math.abs(row.delta) / maxAbs) * 100)
     return (
-      <div key={row.icp} className="grid grid-cols-[190px_minmax(0,1fr)_118px] items-center gap-2">
-        <span className="truncate font-mono text-[9.5px] text-[var(--muted-2)]">{row.icp}</span>
-        <span className="relative h-[5px] overflow-hidden rounded-full bg-[rgba(236,234,230,0.06)]">
-          <span className="absolute inset-y-0 left-1/2 w-px bg-[rgba(236,234,230,0.14)]" />
-          <span
-            className="absolute inset-y-0 block rounded-full"
-            style={{
-              backgroundColor: color,
-              width: `${width / 2}%`,
-              left: row.delta >= 0 ? '50%' : undefined,
-              right: row.delta < 0 ? '50%' : undefined,
-            }}
-          />
-        </span>
-        <span className="text-right font-mono text-[10px] tabular-nums text-[var(--muted-2)]">
-          {row.baseScore.toFixed(0)} → {row.candidateScore.toFixed(0)}{' '}
-          <span style={{ color }}>
-            ({row.delta >= 0 ? '+' : ''}
-            {row.delta.toFixed(1)})
+      <div key={row.icp} className="space-y-0.5">
+        <div className="font-mono text-[9.5px] leading-snug text-[var(--muted-2)]">{row.icp}</div>
+        <div className="grid grid-cols-[minmax(0,1fr)_132px] items-center gap-2">
+          <span className="relative h-[5px] overflow-hidden rounded-full bg-[rgba(236,234,230,0.06)]">
+            <span className="absolute inset-y-0 left-1/2 w-px bg-[rgba(236,234,230,0.14)]" />
+            <span
+              className="absolute inset-y-0 block rounded-full"
+              style={{
+                backgroundColor: color,
+                width: `${width / 2}%`,
+                left: row.delta >= 0 ? '50%' : undefined,
+                right: row.delta < 0 ? '50%' : undefined,
+              }}
+            />
           </span>
-        </span>
+          <span className="text-right font-mono text-[10px] tabular-nums text-[var(--muted-2)]">
+            {row.baseScore.toFixed(0)} → {row.candidateScore.toFixed(0)}{' '}
+            <span style={{ color }}>
+              ({row.delta >= 0 ? '+' : ''}
+              {row.delta.toFixed(1)})
+            </span>
+          </span>
+        </div>
       </div>
     )
   }
@@ -2299,51 +2324,61 @@ function CandidateIcpDeltaStrip({ breakdown }: { breakdown: LoopIcpDeltaBreakdow
       <div className="mb-1 font-mono text-[9px] uppercase tracking-[0.12em] text-[var(--muted-2)]">
         Per-ICP delta · which ICPs moved
       </div>
-      <div className="mb-2 font-mono text-[10px] text-[var(--muted-2)]">
-        Candidate score vs the daily baseline, per benchmark ICP.{' '}
-        <span className="tabular-nums" style={{ color: 'var(--platinum)' }}>{count('helped') + sealed.helped} helped</span>
+      <div className="mb-2 font-mono text-[10px] leading-relaxed text-[var(--muted-2)]">
+        How this candidate scored on each benchmark ICP versus the daily baseline.{' '}
+        <span className="tabular-nums" style={{ color: 'var(--platinum)' }}>{count('helped') + sealed.helped} improved</span>
         {' · '}
-        <span className="tabular-nums" style={{ color: '#b3574f' }}>{count('hurt') + sealed.hurt} hurt</span>
+        <span className="tabular-nums" style={{ color: '#b3574f' }}>{count('hurt') + sealed.hurt} regressed</span>
         {' · '}
-        <span className="tabular-nums">{count('flat') + sealed.flat} flat</span>
-        {' · '}
-        <span className="tabular-nums text-[var(--faint)]">{count('infra') + sealed.infraExcluded} excluded — sourcing failed (infra, not model skill)</span>
+        <span className="tabular-nums">{count('flat') + sealed.flat} unchanged</span>
+        {infraTotal > 0 ? (
+          <>
+            {' · '}
+            <span className="tabular-nums text-[var(--faint)]">{infraTotal} not scorable</span>
+          </>
+        ) : null}
       </div>
-      {moved.length > 0 ? <div className="space-y-1">{moved.map(bar)}</div> : null}
+      {moved.length > 0 ? <div className="space-y-2">{moved.map(bar)}</div> : null}
       {flat.length > 0 ? (
-        <div className="mt-1.5 space-y-1">
+        <div className="mt-2 space-y-2">
           <div className="font-mono text-[9px] uppercase tracking-[0.12em] text-[var(--faint)]">
-            Flat (|Δ| ≤ {breakdown.flatBand.toFixed(0)})
+            Unchanged (within ±{breakdown.flatBand.toFixed(0)} of baseline)
           </div>
           {flat.map(bar)}
         </div>
       ) : null}
       {infra.length > 0 ? (
-        <div className="mt-1.5 space-y-1">
+        <div className="mt-2">
           <div className="font-mono text-[9px] uppercase tracking-[0.12em] text-[var(--faint)]">
-            Excluded — sourcing failed (infra, not model skill)
+            Not scored — sourcing failed
           </div>
-          {infra.map((row) => (
-            <div key={row.icp} className="grid grid-cols-[190px_minmax(0,1fr)] items-center gap-2">
-              <span className="truncate font-mono text-[9.5px] text-[var(--faint)]">{row.icp}</span>
-              <span className="font-mono text-[9.5px] text-[var(--faint)]">not scored against this candidate</span>
-            </div>
-          ))}
+          <div className="mb-1.5 mt-0.5 font-mono text-[9.5px] leading-relaxed text-[var(--faint)]">
+            No companies were returned for these ICPs — a scrape failed or a company
+            URL didn&apos;t resolve — so no leads reached scoring. These ICPs are
+            excluded from this candidate&apos;s score.
+          </div>
+          <div className="space-y-0.5">
+            {infra.map((row) => (
+              <div key={row.icp} className="font-mono text-[9.5px] leading-snug text-[var(--faint)]">
+                {row.icp}
+              </div>
+            ))}
+          </div>
         </div>
       ) : null}
       {sealedTotal > 0 ? (
-        <div className="mt-2 space-y-1 border-t border-[var(--line-2)] pt-1.5 font-mono text-[10px] text-[var(--muted-2)]">
+        <div className="mt-2 space-y-1 border-t border-[var(--line-2)] pt-1.5 font-mono text-[10px] leading-relaxed text-[var(--muted-2)]">
           <div>
             sealed pool ({sealedTotal} ICPs, never itemized) ·{' '}
-            <span className="tabular-nums" style={{ color: 'var(--platinum)' }}>{sealed.helped} helped</span>
+            <span className="tabular-nums" style={{ color: 'var(--platinum)' }}>{sealed.helped} improved</span>
             {' · '}
-            <span className="tabular-nums" style={{ color: '#b3574f' }}>{sealed.hurt} hurt</span>
+            <span className="tabular-nums" style={{ color: '#b3574f' }}>{sealed.hurt} regressed</span>
             {' · '}
-            <span className="tabular-nums">{sealed.flat} flat</span>
+            <span className="tabular-nums">{sealed.flat} unchanged</span>
             {sealed.infraExcluded > 0 ? (
               <>
                 {' · '}
-                <span className="tabular-nums text-[var(--faint)]">{sealed.infraExcluded} infra-excluded</span>
+                <span className="tabular-nums text-[var(--faint)]">{sealed.infraExcluded} not scorable</span>
               </>
             ) : null}
           </div>

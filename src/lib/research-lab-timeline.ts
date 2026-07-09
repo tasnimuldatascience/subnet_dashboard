@@ -84,6 +84,9 @@ export type ResearchLabCandidateDiagnostic = {
   gate: 'passed' | 'rejected' | ''
   candidateScore: number
   delta: number
+  deltaLcb: number
+  meanThreshold: number
+  lcbThreshold: number
   icpCount: number
   externalFailures: number
   funnel?: ResearchLabCandidateFunnel

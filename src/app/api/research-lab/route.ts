@@ -1043,6 +1043,9 @@ async function fetchCandidateDiagnostics(
       gate,
       candidateScore: numberOr(agg?.candidate_score, 0),
       delta: numberOr(gateDoc?.candidate_delta_vs_daily_baseline ?? agg?.mean_delta, 0),
+      deltaLcb: numberOr(agg?.delta_lcb, 0),
+      meanThreshold: 1.0,   // promotion needs mean_delta >= 1.0 ...
+      lcbThreshold: 0.0,    // ... AND delta_lcb >= 0
       icpCount: perIcp.length,
       externalFailures,
       funnel: hasFunnel ? funnelTotals : undefined,
