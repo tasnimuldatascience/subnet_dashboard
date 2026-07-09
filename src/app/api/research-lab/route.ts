@@ -14,6 +14,7 @@ import {
   type ResearchLabCandidateDiagnostic,
   type ResearchLabIcpDeltaBreakdown,
   type ResearchLabIcpDeltaRow,
+  type ResearchLabIntentTypeRollup,
   type ResearchLabLoopTimeline,
   type ResearchLabTimelineEvent,
   type ResearchLabTimelinePhase,
@@ -817,6 +818,79 @@ async function fetchPublicIcpLabels(
   return labels
 }
 
+// ref -> required evidence_type (intent_category), PUBLIC refs only.
+async function fetchPublicIcpIntentTypes(
+  supabase: ReturnType<typeof getSupabase>,
+  refs: string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>()
+  const setIds = [...new Set(refs.map((ref) => parseIcpRef(ref).setId).filter(Boolean))]
+  if (setIds.length === 0) return out
+  const res = await supabase.from('qualification_private_icp_sets').select('set_id, icps').in('set_id', setIds)
+  if (res.error) return out
+  const byId = new Map<string, string>()
+  for (const row of (res.data ?? []) as Array<Record<string, unknown>>) {
+    const icps = Array.isArray(row.icps) ? (row.icps as Array<Record<string, unknown>>) : []
+    for (const icp of icps) byId.set(`${row.set_id}:${icp.icp_id}`, String(icp.intent_category || '').trim().toUpperCase())
+  }
+  for (const ref of refs) {
+    const { setId, icpId } = parseIcpRef(ref)
+    const t = byId.get(`${setId}:${icpId}`)
+    if (t) out.set(ref, t)
+  }
+  return out
+}
+
+// Intent pass rate by type across a candidate's PUBLIC ICPs. numerator =
+// companies whose evidence of that type passed (from row.evidence_types);
+// denominator = 5 x (number of public ICPs requiring that type). Sealed ICPs
+// are never counted, so no sealed category composition leaks.
+const INTENT_EXPECTATION_PER_ICP = 5
+function buildIntentTypeRollup(
+  perIcp: Array<Record<string, unknown>>,
+  visibility: Map<string, string>,
+  requiredType: Map<string, string>,
+): ResearchLabIntentTypeRollup[] {
+  const required = new Map<string, number>()   // type -> # public ICPs requiring it
+  const fulfilled = new Map<string, number>()  // type -> companies passed
+  const scoreSum = new Map<string, number>()
+  let anyCoverage = false
+  for (const r of perIcp) {
+    const ref = String(r.icp_ref ?? '').trim()
+    if (visibility.get(ref) !== 'public') continue
+    const rt = requiredType.get(ref)
+    if (rt) required.set(rt, (required.get(rt) ?? 0) + 1)
+    const et = r.evidence_types
+    if (et && typeof et === 'object') {
+      anyCoverage = true
+      for (const [type, statRaw] of Object.entries(et as Record<string, unknown>)) {
+        const stat = (statRaw ?? {}) as Record<string, unknown>
+        const key = type.toUpperCase()
+        fulfilled.set(key, (fulfilled.get(key) ?? 0) + numberOr(stat.companies_passed, 0))
+        scoreSum.set(key, (scoreSum.get(key) ?? 0) + numberOr(stat.avg_after_decay, 0) * numberOr(stat.companies_passed, 0))
+      }
+    }
+  }
+  if (!anyCoverage) return []
+  const allTypes = new Set<string>([...required.keys(), ...fulfilled.keys()])
+  return [...allTypes]
+    .map((evidence_type) => {
+      const icp_count = required.get(evidence_type) ?? 0
+      const expected = INTENT_EXPECTATION_PER_ICP * icp_count
+      const ful = fulfilled.get(evidence_type) ?? 0
+      return {
+        evidence_type,
+        fulfilled: ful,
+        icp_count,
+        expected,
+        pass_pct: expected > 0 ? Math.round((ful / expected) * 100) : 0,
+        avg_score: ful > 0 ? Math.round(((scoreSum.get(evidence_type) ?? 0) / ful) * 10) / 10 : 0,
+      }
+    })
+    .filter((r) => r.icp_count > 0)
+    .sort((a, b) => b.pass_pct - a.pass_pct || b.icp_count - a.icp_count)
+}
+
 // Per-ICP delta breakdown for one candidate's per_icp_results rows. Public
 // ICPs get itemized rows; sealed ICPs collapse to movement counts.
 function buildIcpDeltaBreakdown(
@@ -922,6 +996,7 @@ async function fetchCandidateDiagnostics(
   const visibilityMap = await fetchBenchmarkVisibilityMap(supabase)
   const publicRefs = [...visibilityMap.entries()].filter(([, v]) => v === 'public').map(([ref]) => ref)
   const icpLabels = await fetchPublicIcpLabels(supabase, publicRefs)
+  const icpRequiredTypes = await fetchPublicIcpIntentTypes(supabase, publicRefs)
 
   const byBundleId = new Map<string, ScoreBundleDoc>()
   const byArtifact = new Map<string, ScoreBundleDoc>()
@@ -972,6 +1047,7 @@ async function fetchCandidateDiagnostics(
       externalFailures,
       funnel: hasFunnel ? funnelTotals : undefined,
       icpDeltas: buildIcpDeltaBreakdown(perIcp, visibilityMap, icpLabels),
+      intentTypes: buildIntentTypeRollup(perIcp, visibilityMap, icpRequiredTypes),
     })
   }
   return out

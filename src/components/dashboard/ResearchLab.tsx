@@ -358,6 +358,7 @@ type LoopCandidateDiagnostic = {
   externalFailures: number
   funnel?: LoopCandidateFunnel
   icpDeltas?: LoopIcpDeltaBreakdown
+  intentTypes?: IntentTypeRollup[]
 }
 
 type LoopTimeline = {
@@ -2196,6 +2197,9 @@ function LoopCandidateDiagnostics({ items }: { items: LoopCandidateDiagnostic[] 
                 ) : null}
               </div>
               {c.funnel ? <CandidateFunnelStrip funnel={c.funnel} /> : null}
+              {c.intentTypes && c.intentTypes.length > 0 ? (
+                <div className="mt-3"><IntentTypeChart rows={c.intentTypes} /></div>
+              ) : null}
               {c.icpDeltas ? <CandidateIcpDeltaStrip breakdown={c.icpDeltas} /> : null}
             </div>
           )

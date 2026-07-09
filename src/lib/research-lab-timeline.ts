@@ -88,6 +88,18 @@ export type ResearchLabCandidateDiagnostic = {
   externalFailures: number
   funnel?: ResearchLabCandidateFunnel
   icpDeltas?: ResearchLabIcpDeltaBreakdown
+  // Intent pass rate by type, aggregated over PUBLIC-visibility ICPs only
+  // (per-type rates reveal category composition, so sealed ICPs are excluded).
+  intentTypes?: ResearchLabIntentTypeRollup[]
+}
+
+export type ResearchLabIntentTypeRollup = {
+  evidence_type: string
+  fulfilled: number
+  icp_count: number
+  expected: number
+  pass_pct: number
+  avg_score: number
 }
 
 export type ResearchLabLoopTimeline = {
