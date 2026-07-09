@@ -1314,7 +1314,7 @@ function AggregateFunnel({ funnel, sourcingFailedCount }: { funnel: LeadFunnel; 
       </div>
       {sourcingFailedCount > 0 ? (
         <div className="mt-3 font-mono text-[10px] text-[var(--muted-2)]">
-          {sourcingFailedCount} ICP{sourcingFailedCount === 1 ? '' : 's'} excluded — no companies sourced (scrape failed or URL didn't resolve)
+          {sourcingFailedCount} ICP{sourcingFailedCount === 1 ? '' : 's'} excluded — no companies sourced (scrape failed or URL didn&apos;t resolve)
         </div>
       ) : null}
     </div>
