@@ -340,6 +340,12 @@ type LoopIcpDeltaBreakdown = {
   flatBand: number
   publicIcps: LoopIcpDeltaRow[]
   sealed: { helped: number; hurt: number; flat: number; infraExcluded: number }
+  sealedStats?: {
+    deltaTotal: number
+    deltaAvg: number
+    bands: { bigDrop: number; drop: number; flat: number; gain: number; bigGain: number }
+  }
+  generalization?: { publicAvg: number; sealedAvg: number }
 }
 
 type LoopCandidateDiagnostic = {
@@ -2322,18 +2328,51 @@ function CandidateIcpDeltaStrip({ breakdown }: { breakdown: LoopIcpDeltaBreakdow
         </div>
       ) : null}
       {sealedTotal > 0 ? (
-        <div className="mt-2 border-t border-[var(--line-2)] pt-1.5 font-mono text-[10px] text-[var(--muted-2)]">
-          sealed pool ({sealedTotal} ICPs, never itemized) ·{' '}
-          <span className="tabular-nums" style={{ color: 'var(--platinum)' }}>{sealed.helped} helped</span>
-          {' · '}
-          <span className="tabular-nums" style={{ color: '#b3574f' }}>{sealed.hurt} hurt</span>
-          {' · '}
-          <span className="tabular-nums">{sealed.flat} flat</span>
-          {sealed.infraExcluded > 0 ? (
-            <>
-              {' · '}
-              <span className="tabular-nums text-[var(--faint)]">{sealed.infraExcluded} infra-excluded</span>
-            </>
+        <div className="mt-2 space-y-1 border-t border-[var(--line-2)] pt-1.5 font-mono text-[10px] text-[var(--muted-2)]">
+          <div>
+            sealed pool ({sealedTotal} ICPs, never itemized) ·{' '}
+            <span className="tabular-nums" style={{ color: 'var(--platinum)' }}>{sealed.helped} helped</span>
+            {' · '}
+            <span className="tabular-nums" style={{ color: '#b3574f' }}>{sealed.hurt} hurt</span>
+            {' · '}
+            <span className="tabular-nums">{sealed.flat} flat</span>
+            {sealed.infraExcluded > 0 ? (
+              <>
+                {' · '}
+                <span className="tabular-nums text-[var(--faint)]">{sealed.infraExcluded} infra-excluded</span>
+              </>
+            ) : null}
+          </div>
+          {breakdown.sealedStats ? (
+            <div>
+              sealed Δ{' '}
+              <span className="tabular-nums" style={{ color: breakdown.sealedStats.deltaTotal >= 0 ? 'var(--platinum)' : '#b3574f' }}>
+                {breakdown.sealedStats.deltaTotal >= 0 ? '+' : ''}
+                {breakdown.sealedStats.deltaTotal.toFixed(1)} total
+              </span>{' '}
+              (<span className="tabular-nums">{breakdown.sealedStats.deltaAvg >= 0 ? '+' : ''}{breakdown.sealedStats.deltaAvg.toFixed(1)}</span> avg/ICP)
+              {' · spread '}
+              <span className="tabular-nums text-[var(--faint)]">
+                &lt;−10: {breakdown.sealedStats.bands.bigDrop} · −10…−1: {breakdown.sealedStats.bands.drop} · flat: {breakdown.sealedStats.bands.flat} · +1…+10: {breakdown.sealedStats.bands.gain} · &gt;+10: {breakdown.sealedStats.bands.bigGain}
+              </span>
+            </div>
+          ) : null}
+          {breakdown.generalization ? (
+            <div>
+              generalization · public{' '}
+              <span className="tabular-nums" style={{ color: breakdown.generalization.publicAvg >= 0 ? 'var(--platinum)' : '#b3574f' }}>
+                {breakdown.generalization.publicAvg >= 0 ? '+' : ''}{breakdown.generalization.publicAvg.toFixed(1)} avg
+              </span>
+              {' → sealed '}
+              <span className="tabular-nums" style={{ color: breakdown.generalization.sealedAvg >= 0 ? 'var(--platinum)' : '#b3574f' }}>
+                {breakdown.generalization.sealedAvg >= 0 ? '+' : ''}{breakdown.generalization.sealedAvg.toFixed(1)} avg
+              </span>{' '}
+              {breakdown.generalization.publicAvg > breakdown.flatBand && breakdown.generalization.sealedAvg <= 0 ? (
+                <span style={{ color: '#b3574f' }}>⚠ did not transfer — gains only on visible ICPs</span>
+              ) : breakdown.generalization.sealedAvg > breakdown.flatBand ? (
+                <span style={{ color: 'var(--platinum)' }}>✓ gains transferred to unseen ICPs</span>
+              ) : null}
+            </div>
           ) : null}
         </div>
       ) : null}

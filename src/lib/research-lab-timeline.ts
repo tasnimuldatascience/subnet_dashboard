@@ -65,6 +65,17 @@ export type ResearchLabIcpDeltaBreakdown = {
   flatBand: number
   publicIcps: ResearchLabIcpDeltaRow[]
   sealed: { helped: number; hurt: number; flat: number; infraExcluded: number }
+  // Pool-level statistics over the sealed ICPs (never itemized): total/avg
+  // delta and a coarse quantized spread. Infra-excluded rows are left out of
+  // every statistic so provider weather never reads as patch quality.
+  sealedStats?: {
+    deltaTotal: number
+    deltaAvg: number
+    bands: { bigDrop: number; drop: number; flat: number; gain: number; bigGain: number }
+  }
+  // Public-pool vs sealed-pool average delta: did the gains transfer to ICPs
+  // the miner never saw? Both averages exclude infra-excluded rows.
+  generalization?: { publicAvg: number; sealedAvg: number }
 }
 
 export type ResearchLabCandidateDiagnostic = {

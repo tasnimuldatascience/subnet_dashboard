@@ -863,7 +863,42 @@ function buildIcpDeltaBreakdown(
   }
   if (!sawDelta && publicIcps.every((row) => row.delta === 0)) return undefined
   publicIcps.sort((a, b) => b.delta - a.delta)
-  return { flatBand: ICP_DELTA_FLAT_BAND, publicIcps, sealed }
+
+  // Pool-level sealed statistics + generalization, all excluding infra rows.
+  const sealedDeltas: number[] = []
+  const publicDeltas: number[] = []
+  for (const r of perIcp) {
+    const ref = String(r.icp_ref ?? '').trim()
+    const blob = `${r.status ?? ''} ${r.failure_reason ?? ''}`.toLowerCase()
+    const infra = r.provider_excluded === true || blob.includes('provider') || blob.includes('infra_excluded')
+    if (infra) continue
+    const rawDelta = r.delta_vs_base
+    const delta = rawDelta === null || rawDelta === undefined
+      ? numberOr(r.candidate_per_icp_score, 0) - numberOr(r.base_per_icp_score, 0)
+      : numberOr(rawDelta, 0)
+    if (visibility.get(ref) === 'public') publicDeltas.push(delta)
+    else sealedDeltas.push(delta)
+  }
+  const round1 = (value: number) => Math.round(value * 10) / 10
+  const avg = (values: number[]) => (values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0)
+  const sealedStats = sealedDeltas.length
+    ? {
+        deltaTotal: round1(sealedDeltas.reduce((a, b) => a + b, 0)),
+        deltaAvg: round1(avg(sealedDeltas)),
+        bands: {
+          bigDrop: sealedDeltas.filter((d) => d < -10).length,
+          drop: sealedDeltas.filter((d) => d >= -10 && d < -ICP_DELTA_FLAT_BAND).length,
+          flat: sealedDeltas.filter((d) => Math.abs(d) <= ICP_DELTA_FLAT_BAND).length,
+          gain: sealedDeltas.filter((d) => d > ICP_DELTA_FLAT_BAND && d <= 10).length,
+          bigGain: sealedDeltas.filter((d) => d > 10).length,
+        },
+      }
+    : undefined
+  const generalization =
+    publicDeltas.length && sealedDeltas.length
+      ? { publicAvg: round1(avg(publicDeltas)), sealedAvg: round1(avg(sealedDeltas)) }
+      : undefined
+  return { flatBand: ICP_DELTA_FLAT_BAND, publicIcps, sealed, sealedStats, generalization }
 }
 
 async function fetchCandidateDiagnostics(
