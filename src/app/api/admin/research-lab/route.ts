@@ -311,6 +311,14 @@ export type AdminLabSourcingModelSummary = {
   sourceAvailable: boolean
   unavailableReason: string | null
   status: string | null
+  commitFreshness: 'latest' | 'behind' | 'unknown'
+  commitComparisonAvailable: boolean
+  commitComparisonReason: string | null
+  latestKnownCommitSha: string | null
+  latestKnownCommitAt: string | null
+  latestKnownCommitSource: string | null
+  comparisonBranch: string | null
+  comparisonCheckedAt: string | null
   versionId: string | null
   gitCommitSha: string | null
   imageRefHash: string | null
@@ -2603,41 +2611,118 @@ function normalizeAttestationRow(row: Record<string, unknown>): AdminLabAttestat
 async function fetchSourcingModelSummary(
   supabase: ReturnType<typeof getAdminSupabase>,
 ): Promise<AdminLabSourcingModelSummary> {
-  const { data, error } = await supabase
-    .from('research_lab_private_model_version_current')
-    .select(
-      'private_model_version_id,current_version_status,current_status_at,git_commit_sha,build_id,model_artifact_hash,private_model_manifest_hash,component_registry_version,scoring_adapter_version,redacted_version_doc',
-    )
-    .eq('current_version_status', 'active')
-    .order('current_status_at', { ascending: false, nullsFirst: false })
-    .limit(1)
+  const [activeResult, latestVersionsResult, repoCommitsResult] = await Promise.all([
+    supabase
+      .from('research_lab_private_model_version_current')
+      .select(
+        'private_model_version_id,current_version_status,current_status_at,created_at,git_commit_sha,build_id,model_artifact_hash,private_model_manifest_hash,component_registry_version,scoring_adapter_version,redacted_version_doc',
+      )
+      .eq('current_version_status', 'active')
+      .order('current_status_at', { ascending: false, nullsFirst: false })
+      .limit(1),
+    supabase
+      .from('research_lab_private_model_version_current')
+      .select('git_commit_sha,current_status_at,created_at,redacted_version_doc')
+      .not('git_commit_sha', 'is', null)
+      .order('created_at', { ascending: false, nullsFirst: false })
+      .limit(20),
+    supabase
+      .from('research_lab_private_repo_commit_events')
+      .select('git_commit_sha,commit_status,branch_name,created_at')
+      .eq('commit_status', 'pushed')
+      .not('git_commit_sha', 'is', null)
+      .order('created_at', { ascending: false, nullsFirst: false })
+      .limit(20),
+  ])
 
-  if (error) {
-    console.warn('[admin:research-lab] active sourcing model unavailable', error.message)
-    return emptySourcingModelSummary(false, error.message)
+  if (activeResult.error) {
+    console.warn('[admin:research-lab] active sourcing model unavailable', activeResult.error.message)
+    return emptySourcingModelSummary(false, activeResult.error.message)
   }
 
-  const row = ((data ?? []) as Array<Record<string, unknown>>)[0]
+  const row = ((activeResult.data ?? []) as Array<Record<string, unknown>>)[0]
   if (!row) return emptySourcingModelSummary(true, null)
 
   const versionDoc = objectRecord(row.redacted_version_doc)
   const manifestWaitStatus = objectRecord(versionDoc?.manifest_wait_status)
+  const gitCommitSha =
+    stringOr(row.git_commit_sha) ??
+    stringOr(versionDoc?.git_commit_sha) ??
+    stringOr(versionDoc?.repo_main_sha) ??
+    null
+  const branch = stringOr(versionDoc?.repo_branch) ?? 'main'
+  const activatedAt = isoStringOr(row.current_status_at) ?? isoStringOr(row.created_at) ?? null
+  const comparisonErrors = [
+    latestVersionsResult.error ? `model versions: ${latestVersionsResult.error.message}` : null,
+    repoCommitsResult.error ? `repo commits: ${repoCommitsResult.error.message}` : null,
+  ].filter((value): value is string => Boolean(value))
+  if (comparisonErrors.length > 0) {
+    console.warn('[admin:research-lab] sourcing model commit comparison incomplete', comparisonErrors.join('; '))
+  }
+
+  const observations: Array<{ sha: string; at: string | null; source: string }> = []
+  const repoHeadAtActivation = stringOr(versionDoc?.repo_main_sha)
+  if (repoHeadAtActivation) {
+    observations.push({ sha: repoHeadAtActivation, at: activatedAt, source: 'repo_head_sync' })
+  }
+
+  for (const versionRow of (latestVersionsResult.data ?? []) as Array<Record<string, unknown>>) {
+    const doc = objectRecord(versionRow.redacted_version_doc)
+    const rowBranch = stringOr(doc?.repo_branch)
+    if (rowBranch && rowBranch !== branch) continue
+    const sha = stringOr(versionRow.git_commit_sha) ?? stringOr(doc?.repo_main_sha)
+    if (!sha) continue
+    observations.push({
+      sha,
+      at: isoStringOr(versionRow.created_at) ?? isoStringOr(versionRow.current_status_at) ?? null,
+      source: 'model_version',
+    })
+  }
+
+  for (const commitRow of (repoCommitsResult.data ?? []) as Array<Record<string, unknown>>) {
+    const rowBranch = stringOr(commitRow.branch_name)
+    if (rowBranch && rowBranch !== branch) continue
+    const sha = stringOr(commitRow.git_commit_sha)
+    if (!sha) continue
+    observations.push({
+      sha,
+      at: isoStringOr(commitRow.created_at) ?? null,
+      source: 'private_repo_push',
+    })
+  }
+
+  observations.sort((a, b) => timestampOrZero(b.at) - timestampOrZero(a.at))
+  const latestKnown = observations[0] ?? null
+  const commitComparisonAvailable = !latestVersionsResult.error && !repoCommitsResult.error
+  const commitFreshness: AdminLabSourcingModelSummary['commitFreshness'] =
+    !gitCommitSha || !latestKnown
+      ? 'unknown'
+      : gitCommitSha.toLowerCase() !== latestKnown.sha.toLowerCase()
+        ? 'behind'
+        : commitComparisonAvailable
+          ? 'latest'
+          : 'unknown'
+
   return {
     sourceAvailable: true,
     unavailableReason: null,
     status: stringOr(row.current_version_status) ?? null,
+    commitFreshness,
+    commitComparisonAvailable,
+    commitComparisonReason: comparisonErrors.length > 0 ? comparisonErrors.join('; ') : null,
+    latestKnownCommitSha: latestKnown?.sha ?? null,
+    latestKnownCommitAt: latestKnown?.at ?? null,
+    latestKnownCommitSource: latestKnown?.source ?? null,
+    comparisonBranch: branch,
+    comparisonCheckedAt: new Date().toISOString(),
     versionId: stringOr(row.private_model_version_id) ?? null,
-    gitCommitSha:
-      stringOr(row.git_commit_sha) ??
-      stringOr(versionDoc?.git_commit_sha) ??
-      stringOr(versionDoc?.repo_main_sha) ??
-      null,
+    gitCommitSha,
     imageRefHash:
       stringOr(versionDoc?.image_ref_hash) ??
       stringOr(manifestWaitStatus?.current_json_image_ref_hash) ??
       null,
     buildId: stringOr(row.build_id) ?? null,
-    branch: stringOr(versionDoc?.repo_branch) ?? null,
+    branch,
     source: stringOr(versionDoc?.source) ?? null,
     actorRef: stringOr(versionDoc?.actor_ref) ?? null,
     componentRegistryVersion:
@@ -2660,7 +2745,7 @@ async function fetchSourcingModelSummary(
       stringOr(versionDoc?.current_json_pointer_uri) ??
       stringOr(manifestWaitStatus?.manifest_uri) ??
       null,
-    activatedAt: isoStringOr(row.current_status_at) ?? null,
+    activatedAt,
   }
 }
 
@@ -2672,6 +2757,14 @@ function emptySourcingModelSummary(
     sourceAvailable,
     unavailableReason,
     status: null,
+    commitFreshness: 'unknown',
+    commitComparisonAvailable: false,
+    commitComparisonReason: unavailableReason,
+    latestKnownCommitSha: null,
+    latestKnownCommitAt: null,
+    latestKnownCommitSource: null,
+    comparisonBranch: null,
+    comparisonCheckedAt: null,
     versionId: null,
     gitCommitSha: null,
     imageRefHash: null,

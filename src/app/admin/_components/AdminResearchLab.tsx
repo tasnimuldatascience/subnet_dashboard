@@ -247,6 +247,14 @@ type AdminLabSourcingModelSummary = {
   sourceAvailable: boolean
   unavailableReason: string | null
   status: string | null
+  commitFreshness: 'latest' | 'behind' | 'unknown'
+  commitComparisonAvailable: boolean
+  commitComparisonReason: string | null
+  latestKnownCommitSha: string | null
+  latestKnownCommitAt: string | null
+  latestKnownCommitSource: string | null
+  comparisonBranch: string | null
+  comparisonCheckedAt: string | null
   versionId: string | null
   gitCommitSha: string | null
   imageRefHash: string | null
@@ -754,8 +762,24 @@ function OpsHealthStrip({ ops }: { ops: AdminLabOpsSummary }) {
 
 function SourcingModelPopover({ model }: { model: AdminLabSourcingModelSummary }) {
   const active = model.status?.toLowerCase() === 'active'
+  const freshnessState: AdminHealthState = model.commitFreshness === 'latest'
+    ? 'healthy'
+    : model.commitFreshness === 'behind'
+      ? 'critical'
+      : 'unknown'
+  const freshnessLabel = model.commitFreshness === 'latest'
+    ? 'Latest'
+    : model.commitFreshness === 'behind'
+      ? 'Behind'
+      : 'Unknown'
+  const comparisonBranch = model.comparisonBranch ?? model.branch ?? 'repository'
+  const comparisonCopy = model.commitFreshness === 'latest'
+    ? `Matches the latest known ${comparisonBranch} commit`
+    : model.commitFreshness === 'behind'
+      ? `Behind latest known ${comparisonBranch} commit${model.latestKnownCommitSha ? ` ${compactHash(model.latestKnownCommitSha)}` : ''}`
+      : 'Latest-commit comparison is unavailable'
   const triggerLabel = model.gitCommitSha
-    ? `Active sourcing model commit ${model.gitCommitSha}`
+    ? `Active sourcing model commit ${model.gitCommitSha} · ${freshnessLabel}`
     : 'View active sourcing model image details'
 
   return (
@@ -797,10 +821,13 @@ function SourcingModelPopover({ model }: { model: AdminLabSourcingModelSummary }
               </div>
             </div>
           </div>
-          <StatePill
-            state={!model.sourceAvailable ? 'unknown' : active ? 'healthy' : 'degraded'}
-            label={!model.sourceAvailable ? 'Unavailable' : model.status ?? 'Not reported'}
-          />
+          <div className="flex shrink-0 items-center gap-1.5">
+            <StatePill
+              state={!model.sourceAvailable ? 'unknown' : active ? 'healthy' : 'degraded'}
+              label={!model.sourceAvailable ? 'Unavailable' : model.status ?? 'Not reported'}
+            />
+            <StatePill state={freshnessState} label={freshnessLabel} />
+          </div>
         </div>
 
         <div className="space-y-3 p-4">
@@ -811,6 +838,13 @@ function SourcingModelPopover({ model }: { model: AdminLabSourcingModelSummary }
             <code className="mt-1.5 block break-all text-xs leading-relaxed text-gold">
               {model.gitCommitSha ?? 'Not reported'}
             </code>
+            <div className="mt-2 flex items-center gap-2 text-[10px]" style={{ color: model.commitFreshness === 'behind' ? 'var(--accent-negative)' : 'var(--text-secondary)' }}>
+              <span
+                className={cn('h-1.5 w-1.5 shrink-0 rounded-full', stateDotClass(freshnessState))}
+                aria-hidden
+              />
+              <span>{comparisonCopy}</span>
+            </div>
           </div>
 
           {!model.sourceAvailable ? (
@@ -819,7 +853,26 @@ function SourcingModelPopover({ model }: { model: AdminLabSourcingModelSummary }
             </div>
           ) : null}
 
+          {model.sourceAvailable && !model.commitComparisonAvailable ? (
+            <div className="rounded-lg border border-gold-soft bg-gold-soft px-3 py-2 text-[11px] leading-relaxed text-gold">
+              Latest-commit comparison is incomplete{model.commitComparisonReason ? `: ${model.commitComparisonReason}` : '.'}
+            </div>
+          ) : null}
+
           <div className="grid grid-cols-2 gap-2">
+            <SourcingModelDetail label="Latest known commit" value={model.latestKnownCommitSha} compact />
+            <SourcingModelDetail
+              label="Latest observed"
+              value={model.latestKnownCommitAt ? formatDateTime(model.latestKnownCommitAt) : null}
+            />
+            <SourcingModelDetail
+              label="Comparison source"
+              value={model.latestKnownCommitSource ? readableTag(model.latestKnownCommitSource) : null}
+            />
+            <SourcingModelDetail
+              label="Checked"
+              value={model.comparisonCheckedAt ? formatDateTime(model.comparisonCheckedAt) : null}
+            />
             <SourcingModelDetail label="Image ref" value={model.imageRefHash} compact />
             <SourcingModelDetail label="Build" value={model.buildId} />
             <SourcingModelDetail label="Branch" value={model.branch} />
@@ -836,6 +889,9 @@ function SourcingModelPopover({ model }: { model: AdminLabSourcingModelSummary }
             <SourcingModelDetail label="Provenance" value={model.source ? readableTag(model.source) : null} />
             <SourcingModelDetail label="Current pointer" value={model.currentPointerUri} compact />
           </div>
+          <p className="text-[10px] leading-relaxed" style={{ color: 'var(--text-tertiary)' }}>
+            Freshness compares the active image SHA with the newest {comparisonBranch} commit reported by model-version sync and successful private-repo push telemetry.
+          </p>
         </div>
       </PopoverContent>
     </Popover>
