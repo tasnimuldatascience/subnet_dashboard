@@ -979,14 +979,16 @@ function SourcingModelDetail({
 
 function HealthSignalCard({ signal }: { signal: AdminLabHealthSignal }) {
   const Icon = signalIcon(signal.id, signal.state)
-  const emphasizedMismatch = signal.id === 'pcr0' && signal.value === 'Mismatch'
+  const emphasizedMismatch = signal.id === 'pcr0' && signal.state === 'critical'
   return (
     <div
       className="rounded-lg border p-3"
       style={{
-        borderColor: emphasizedMismatch ? 'rgba(232, 240, 255, 0.34)' : 'var(--surface-border)',
-        background: emphasizedMismatch ? 'rgba(232, 240, 255, 0.075)' : 'var(--surface-base)',
-        boxShadow: emphasizedMismatch ? 'inset 2px 0 0 rgba(232, 240, 255, 0.9)' : undefined,
+        borderColor: emphasizedMismatch ? 'rgba(240, 109, 120, 0.48)' : 'var(--surface-border)',
+        background: emphasizedMismatch ? 'rgba(240, 109, 120, 0.10)' : 'var(--surface-base)',
+        boxShadow: emphasizedMismatch
+          ? 'inset 2px 0 0 #f06d78, 0 0 24px rgba(240, 109, 120, 0.055)'
+          : undefined,
       }}
     >
       <div className="flex items-start justify-between gap-3">
@@ -994,22 +996,25 @@ function HealthSignalCard({ signal }: { signal: AdminLabHealthSignal }) {
           <div className="flex items-center gap-2">
             <Icon
               className={cn('h-3.5 w-3.5 shrink-0', stateTextClass(signal.state))}
-              style={emphasizedMismatch ? { color: 'var(--white)' } : undefined}
+              style={emphasizedMismatch ? { color: '#f06d78' } : undefined}
             />
-            <div className="truncate text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-tertiary)' }}>
+            <div
+              className="truncate text-[10px] uppercase tracking-[0.14em]"
+              style={{ color: emphasizedMismatch ? 'rgba(240, 109, 120, 0.78)' : 'var(--text-tertiary)' }}
+            >
               {signal.label}
             </div>
           </div>
-          <div className="mt-2 truncate text-lg font-medium tabular-nums" style={{ color: emphasizedMismatch ? 'var(--white)' : 'var(--text-primary)' }}>
+          <div className="mt-2 truncate text-lg font-medium tabular-nums" style={{ color: emphasizedMismatch ? '#f58a93' : 'var(--text-primary)' }}>
             {signal.value}
           </div>
         </div>
         <span
           className={cn('mt-1 h-2 w-2 shrink-0 rounded-full', stateDotClass(signal.state))}
-          style={emphasizedMismatch ? { background: 'var(--white)' } : undefined}
+          style={emphasizedMismatch ? { background: '#f06d78', boxShadow: '0 0 0 3px rgba(240, 109, 120, 0.12)' } : undefined}
         />
       </div>
-      <div className="mt-2 line-clamp-2 text-[11px] leading-relaxed" style={{ color: emphasizedMismatch ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+      <div className="mt-2 line-clamp-2 text-[11px] leading-relaxed" style={{ color: emphasizedMismatch ? '#d9a4a8' : 'var(--text-secondary)' }}>
         {signal.detail}
       </div>
       {signal.updatedAt ? (

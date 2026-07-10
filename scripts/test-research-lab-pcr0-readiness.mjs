@@ -100,6 +100,9 @@ try {
   assert.match(componentSource, /label=\{gatewayAcceptance \? 'Rejected'/)
   assert.match(componentSource, /role="alert"/)
   assert.match(componentSource, /emphasizedMismatch/)
+  assert.match(componentSource, /signal\.id === 'pcr0' && signal\.state === 'critical'/)
+  assert.match(componentSource, /rgba\(240, 109, 120, 0\.48\)/)
+  assert.match(componentSource, /#f06d78/)
   assert.match(routeSource, /\? 'Unverified'/)
 
   console.log('research-lab-pcr0-readiness: gateway acceptance and mismatch UI wiring passed')
