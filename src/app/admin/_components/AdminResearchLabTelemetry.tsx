@@ -395,6 +395,8 @@ function CompanyList({ icp }: { icp: AdminLabIcpDetail }) {
 }
 
 function ErrorStream({ errors, title }: { errors: AdminLabErrorDetail[]; title: string }) {
+  const groups = groupErrorsByType(errors)
+  const eventCount = errors.reduce((sum, item) => sum + item.count, 0)
   return (
     <div className="overflow-hidden rounded-lg border" style={{ borderColor: 'var(--surface-border)' }}>
       <div className="flex items-center justify-between gap-3 border-b px-3 py-2" style={{ borderColor: 'var(--surface-border)' }}>
@@ -402,30 +404,124 @@ function ErrorStream({ errors, title }: { errors: AdminLabErrorDetail[]; title: 
           <AlertTriangle className={cn('h-3.5 w-3.5', errors.length > 0 ? 'text-burgundy' : 'text-gold')} />
           {title}
         </div>
-        <span className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>{errors.reduce((sum, item) => sum + item.count, 0)} events</span>
+        <span className="font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+          {groups.length} type{groups.length === 1 ? '' : 's'} · {eventCount.toLocaleString()} events
+        </span>
       </div>
       {errors.length === 0 ? (
         <div className="p-4 text-xs" style={{ color: 'var(--text-secondary)' }}>No errors recorded for this scope.</div>
       ) : (
         <div className="max-h-[620px] divide-y overflow-auto" style={{ borderColor: 'var(--surface-border)' }}>
-          {errors.map((error) => (
-            <div key={error.id} className="p-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="text-xs font-medium leading-snug text-burgundy">{error.title}</div>
-                <span className="shrink-0 rounded-full border border-burgundy-soft bg-burgundy-soft px-1.5 py-0.5 font-mono text-[9px] text-burgundy">×{error.count}</span>
+          {groups.map((group) => (
+            <details key={group.key} className="group/error">
+              <summary className="cursor-pointer list-none px-3 py-3 marker:hidden hover-bg-warm">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="text-xs font-medium text-burgundy">{group.label}</span>
+                      <span className="truncate font-mono text-[10px]" title={group.endpoint} style={{ color: 'var(--text-primary)' }}>
+                        {group.endpoint}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-[9px]" style={{ color: 'var(--text-tertiary)' }}>
+                      {group.icpCount} affected ICP{group.icpCount === 1 ? '' : 's'} · latest {group.latestAt ? formatRelative(group.latestAt) : 'unknown'}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span className="rounded-full border border-burgundy-soft bg-burgundy-soft px-2 py-0.5 font-mono text-[9px] text-burgundy">
+                      ×{group.eventCount.toLocaleString()}
+                    </span>
+                    <ChevronDown className="h-3.5 w-3.5 transition-transform group-open/error:rotate-180" style={{ color: 'var(--text-tertiary)' }} />
+                  </div>
+                </div>
+              </summary>
+              <div className="border-t" style={{ borderColor: 'var(--surface-border)', background: 'rgba(255,255,255,0.015)' }}>
+                <div className="grid grid-cols-[minmax(110px,1.4fr)_80px_minmax(118px,1fr)_44px] gap-2 border-b px-3 py-1.5 text-[8px] uppercase tracking-[0.1em]" style={{ borderColor: 'var(--surface-border)', color: 'var(--text-tertiary)' }}>
+                  <span>ICP / scope</span>
+                  <span>Provider</span>
+                  <span>Latest event</span>
+                  <span className="text-right">Hits</span>
+                </div>
+                <div className="max-h-[300px] overflow-auto">
+                  {group.occurrences.map((error) => (
+                    <div
+                      key={error.id}
+                      className="grid grid-cols-[minmax(110px,1.4fr)_80px_minmax(118px,1fr)_44px] items-center gap-2 border-b px-3 py-2 last:border-b-0"
+                      style={{ borderColor: 'var(--surface-border)' }}
+                    >
+                      <div className="min-w-0">
+                        <div className="truncate font-mono text-[9px]" title={error.icpRef ?? error.candidateId ?? error.runId ?? error.title} style={{ color: 'var(--text-secondary)' }}>
+                          {error.icpRef
+                            ? compactId(error.icpRef)
+                            : error.candidateId
+                              ? `Candidate ${compactId(error.candidateId)}`
+                              : error.runId
+                                ? `Run ${compactId(error.runId)}`
+                                : 'Global'}
+                        </div>
+                      </div>
+                      <div className="truncate text-[9px]" title={error.provider ?? error.source} style={{ color: 'var(--text-tertiary)' }}>
+                        {error.provider ?? readable(error.source)}
+                      </div>
+                      <time suppressHydrationWarning className="font-mono text-[9px]" dateTime={error.occurredAt ?? undefined} style={{ color: 'var(--text-tertiary)' }}>
+                        {formatDateTime(error.occurredAt)}
+                      </time>
+                      <div className="text-right font-mono text-[9px] text-burgundy">×{error.count}</div>
+                    </div>
+                  ))}
+                </div>
               </div>
-              {error.detail ? <div className="mt-1 break-all font-mono text-[10px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{error.detail}</div> : null}
-              <div className="mt-2 space-y-1 font-mono text-[9px]" style={{ color: 'var(--text-tertiary)' }}>
-                {error.icpRef ? <div className="truncate" title={error.icpRef}>ICP {compactId(error.icpRef)}</div> : null}
-                {error.candidateId ? <div className="truncate" title={error.candidateId}>Candidate {compactId(error.candidateId)}</div> : null}
-                <div suppressHydrationWarning>{formatDateTime(error.occurredAt)}</div>
-              </div>
-            </div>
+            </details>
           ))}
         </div>
       )}
     </div>
   )
+}
+
+type ErrorTypeGroup = {
+  key: string
+  label: string
+  endpoint: string
+  eventCount: number
+  icpCount: number
+  latestAt: string | null
+  occurrences: AdminLabErrorDetail[]
+}
+
+function groupErrorsByType(errors: AdminLabErrorDetail[]): ErrorTypeGroup[] {
+  const grouped = new Map<string, AdminLabErrorDetail[]>()
+  for (const error of errors) {
+    const endpoint = error.endpoint ?? error.detail ?? 'No endpoint'
+    const key = error.statusCode !== null
+      ? `${error.statusCode}\u0000${endpoint}`
+      : `${error.source}\u0000${error.title}\u0000${endpoint}`
+    const current = grouped.get(key) ?? []
+    current.push(error)
+    grouped.set(key, current)
+  }
+
+  return Array.from(grouped.entries())
+    .map(([key, occurrences]) => {
+      const first = occurrences[0]
+      const latestAt = occurrences.reduce<string | null>((latest, error) => {
+        if (!error.occurredAt) return latest
+        if (!latest || new Date(error.occurredAt).getTime() > new Date(latest).getTime()) return error.occurredAt
+        return latest
+      }, null)
+      return {
+        key,
+        label: first.statusCode !== null ? `HTTP ${first.statusCode}` : first.title,
+        endpoint: first.endpoint ?? first.detail ?? 'No endpoint',
+        eventCount: occurrences.reduce((sum, error) => sum + error.count, 0),
+        icpCount: new Set(occurrences.map((error) => error.icpRef).filter(Boolean)).size,
+        latestAt,
+        occurrences: [...occurrences].sort(
+          (a, b) => new Date(b.occurredAt ?? 0).getTime() - new Date(a.occurredAt ?? 0).getTime(),
+        ),
+      }
+    })
+    .sort((a, b) => b.eventCount - a.eventCount || new Date(b.latestAt ?? 0).getTime() - new Date(a.latestAt ?? 0).getTime())
 }
 
 function TelemetryHeader({

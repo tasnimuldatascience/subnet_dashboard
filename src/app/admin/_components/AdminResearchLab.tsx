@@ -9,8 +9,10 @@ import {
   Clock3,
   CircleDollarSign,
   ChevronRight,
+  Container,
   Database,
   Gauge,
+  GitCommitHorizontal,
   Loader2,
   PauseCircle,
   PlayCircle,
@@ -28,6 +30,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import { formatDateTime, formatRelative, shortHotkey } from '@/lib/admin-format'
 import {
@@ -240,6 +243,25 @@ type AdminLabAttestationNode = {
   acceptanceDetail: string | null
 }
 
+type AdminLabSourcingModelSummary = {
+  sourceAvailable: boolean
+  unavailableReason: string | null
+  status: string | null
+  versionId: string | null
+  gitCommitSha: string | null
+  imageRefHash: string | null
+  buildId: string | null
+  branch: string | null
+  source: string | null
+  actorRef: string | null
+  componentRegistryVersion: string | null
+  scoringAdapterVersion: string | null
+  modelArtifactHash: string | null
+  manifestHash: string | null
+  currentPointerUri: string | null
+  activatedAt: string | null
+}
+
 type AdminLabDataFreshness = {
   state: AdminHealthState
   latestActivityAt: string | null
@@ -283,6 +305,7 @@ type AdminLabOpsSummary = {
   benchmark: AdminLabBenchmarkSummary
   alerts: AdminLabAlertSummary
   attestation: AdminLabAttestationSummary
+  sourcingModel: AdminLabSourcingModelSummary
   computeSpend: AdminLabComputeSpendSummary
   dailyBenchmark: AdminLabDailyBenchmark
   champions: AdminLabChampionSummary[]
@@ -716,6 +739,7 @@ function OpsHealthStrip({ ops }: { ops: AdminLabOpsSummary }) {
                 : 'No Lab activity returned'}
             </div>
           </div>
+          <SourcingModelPopover model={ops.sourcingModel} />
         </div>
         <StatePill state={ops.state} label={stateLabel(ops.state)} />
       </div>
@@ -725,6 +749,118 @@ function OpsHealthStrip({ ops }: { ops: AdminLabOpsSummary }) {
         ))}
       </div>
     </section>
+  )
+}
+
+function SourcingModelPopover({ model }: { model: AdminLabSourcingModelSummary }) {
+  const active = model.status?.toLowerCase() === 'active'
+  const triggerLabel = model.gitCommitSha
+    ? `Active sourcing model commit ${model.gitCommitSha}`
+    : 'View active sourcing model image details'
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={triggerLabel}
+          title={triggerLabel}
+          className="premium-focus inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition-colors hover-bg-warm"
+          style={{
+            borderColor: active ? 'rgba(201, 169, 110, 0.34)' : 'var(--surface-border)',
+            background: active ? 'rgba(201, 169, 110, 0.08)' : 'var(--surface-base)',
+            color: active ? 'var(--gold)' : 'var(--text-tertiary)',
+          }}
+        >
+          <Container className="h-3.5 w-3.5" aria-hidden />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        sideOffset={8}
+        className="w-[min(calc(100vw-2rem),30rem)] rounded-xl p-0 shadow-2xl shadow-black/50"
+        style={{
+          borderColor: 'var(--surface-border)',
+          background: 'var(--surface-base)',
+          color: 'var(--text-primary)',
+        }}
+      >
+        <div className="flex items-start justify-between gap-4 border-b px-4 py-3" style={{ borderColor: 'var(--surface-border)' }}>
+          <div className="flex min-w-0 items-start gap-2.5">
+            <div className="mt-0.5 rounded-md border p-1.5" style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)' }}>
+              <GitCommitHorizontal className="h-3.5 w-3.5 text-gold" aria-hidden />
+            </div>
+            <div className="min-w-0">
+              <div className="text-sm font-medium">Sourcing model image</div>
+              <div className="mt-0.5 text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+                Commit mapped to the currently active ECR image
+              </div>
+            </div>
+          </div>
+          <StatePill
+            state={!model.sourceAvailable ? 'unknown' : active ? 'healthy' : 'degraded'}
+            label={!model.sourceAvailable ? 'Unavailable' : model.status ?? 'Not reported'}
+          />
+        </div>
+
+        <div className="space-y-3 p-4">
+          <div className="rounded-lg border px-3 py-2.5" style={{ borderColor: 'rgba(201, 169, 110, 0.28)', background: 'rgba(201, 169, 110, 0.06)' }}>
+            <div className="text-[10px] uppercase tracking-[0.12em]" style={{ color: 'var(--text-tertiary)' }}>
+              Active commit
+            </div>
+            <code className="mt-1.5 block break-all text-xs leading-relaxed text-gold">
+              {model.gitCommitSha ?? 'Not reported'}
+            </code>
+          </div>
+
+          {!model.sourceAvailable ? (
+            <div className="rounded-lg border border-burgundy-soft bg-burgundy-soft px-3 py-2 text-[11px] leading-relaxed text-burgundy">
+              Sourcing-model telemetry is unavailable{model.unavailableReason ? `: ${model.unavailableReason}` : '.'}
+            </div>
+          ) : null}
+
+          <div className="grid grid-cols-2 gap-2">
+            <SourcingModelDetail label="Image ref" value={model.imageRefHash} compact />
+            <SourcingModelDetail label="Build" value={model.buildId} />
+            <SourcingModelDetail label="Branch" value={model.branch} />
+            <SourcingModelDetail
+              label="Activated"
+              value={model.activatedAt ? formatDateTime(model.activatedAt) : null}
+            />
+            <SourcingModelDetail label="Version" value={model.versionId} compact />
+            <SourcingModelDetail label="Model artifact" value={model.modelArtifactHash} compact />
+            <SourcingModelDetail label="Manifest" value={model.manifestHash} compact />
+            <SourcingModelDetail label="Component registry" value={model.componentRegistryVersion} />
+            <SourcingModelDetail label="Scoring adapter" value={model.scoringAdapterVersion} />
+            <SourcingModelDetail label="Reported by" value={model.actorRef} />
+            <SourcingModelDetail label="Provenance" value={model.source ? readableTag(model.source) : null} />
+            <SourcingModelDetail label="Current pointer" value={model.currentPointerUri} compact />
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+function SourcingModelDetail({
+  label,
+  value,
+  compact = false,
+}: {
+  label: string
+  value: string | null
+  compact?: boolean
+}) {
+  const displayValue = value ? (compact ? compactHash(value) : value) : '—'
+  return (
+    <div className="min-w-0 rounded-lg border px-2.5 py-2" style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)' }}>
+      <div className="text-[9px] uppercase tracking-[0.12em]" style={{ color: 'var(--text-tertiary)' }}>
+        {label}
+      </div>
+      <div className="mt-1 truncate font-mono text-[10px]" title={value ?? undefined} style={{ color: 'var(--text-secondary)' }}>
+        {displayValue}
+      </div>
+    </div>
   )
 }
 

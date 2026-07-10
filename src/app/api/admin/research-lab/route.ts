@@ -307,6 +307,25 @@ export type AdminLabAttestationNode = {
   acceptanceDetail: string | null
 }
 
+export type AdminLabSourcingModelSummary = {
+  sourceAvailable: boolean
+  unavailableReason: string | null
+  status: string | null
+  versionId: string | null
+  gitCommitSha: string | null
+  imageRefHash: string | null
+  buildId: string | null
+  branch: string | null
+  source: string | null
+  actorRef: string | null
+  componentRegistryVersion: string | null
+  scoringAdapterVersion: string | null
+  modelArtifactHash: string | null
+  manifestHash: string | null
+  currentPointerUri: string | null
+  activatedAt: string | null
+}
+
 export type AdminLabDataFreshness = {
   state: AdminHealthState
   latestActivityAt: string | null
@@ -341,6 +360,7 @@ export type AdminLabOpsSummary = {
   benchmark: AdminLabBenchmarkSummary
   alerts: AdminLabAlertSummary
   attestation: AdminLabAttestationSummary
+  sourcingModel: AdminLabSourcingModelSummary
   computeSpend: AdminLabComputeSpendSummary
   dailyBenchmark: AdminLabDailyBenchmark
   champions: AdminLabChampionSummary[]
@@ -596,6 +616,7 @@ async function fetchAdminLabOps(
     benchmark,
     alerts,
     attestation,
+    sourcingModel,
     computeSpend,
     dailyBenchmark,
     champions,
@@ -605,6 +626,7 @@ async function fetchAdminLabOps(
     fetchBenchmarkSummary(supabase),
     fetchAlertSummary(supabase),
     fetchAttestationSummary(supabase),
+    fetchSourcingModelSummary(supabase),
     fetchComputeSpendSummary(supabase),
     fetchDailyBenchmarkTelemetry(supabase, icpMetadata),
     fetchChampionTelemetry(supabase, icpMetadata),
@@ -637,6 +659,7 @@ async function fetchAdminLabOps(
     benchmark,
     alerts,
     attestation,
+    sourcingModel,
     computeSpend,
     dailyBenchmark,
     champions,
@@ -2574,6 +2597,94 @@ function normalizeAttestationRow(row: Record<string, unknown>): AdminLabAttestat
       null,
     acceptanceCheckedAt: null,
     acceptanceDetail: null,
+  }
+}
+
+async function fetchSourcingModelSummary(
+  supabase: ReturnType<typeof getAdminSupabase>,
+): Promise<AdminLabSourcingModelSummary> {
+  const { data, error } = await supabase
+    .from('research_lab_private_model_version_current')
+    .select(
+      'private_model_version_id,current_version_status,current_status_at,git_commit_sha,build_id,model_artifact_hash,private_model_manifest_hash,component_registry_version,scoring_adapter_version,redacted_version_doc',
+    )
+    .eq('current_version_status', 'active')
+    .order('current_status_at', { ascending: false, nullsFirst: false })
+    .limit(1)
+
+  if (error) {
+    console.warn('[admin:research-lab] active sourcing model unavailable', error.message)
+    return emptySourcingModelSummary(false, error.message)
+  }
+
+  const row = ((data ?? []) as Array<Record<string, unknown>>)[0]
+  if (!row) return emptySourcingModelSummary(true, null)
+
+  const versionDoc = objectRecord(row.redacted_version_doc)
+  const manifestWaitStatus = objectRecord(versionDoc?.manifest_wait_status)
+  return {
+    sourceAvailable: true,
+    unavailableReason: null,
+    status: stringOr(row.current_version_status) ?? null,
+    versionId: stringOr(row.private_model_version_id) ?? null,
+    gitCommitSha:
+      stringOr(row.git_commit_sha) ??
+      stringOr(versionDoc?.git_commit_sha) ??
+      stringOr(versionDoc?.repo_main_sha) ??
+      null,
+    imageRefHash:
+      stringOr(versionDoc?.image_ref_hash) ??
+      stringOr(manifestWaitStatus?.current_json_image_ref_hash) ??
+      null,
+    buildId: stringOr(row.build_id) ?? null,
+    branch: stringOr(versionDoc?.repo_branch) ?? null,
+    source: stringOr(versionDoc?.source) ?? null,
+    actorRef: stringOr(versionDoc?.actor_ref) ?? null,
+    componentRegistryVersion:
+      stringOr(row.component_registry_version) ??
+      stringOr(versionDoc?.component_registry_version) ??
+      null,
+    scoringAdapterVersion:
+      stringOr(row.scoring_adapter_version) ??
+      stringOr(versionDoc?.scoring_adapter_version) ??
+      null,
+    modelArtifactHash:
+      stringOr(row.model_artifact_hash) ??
+      stringOr(versionDoc?.model_artifact_hash) ??
+      null,
+    manifestHash:
+      stringOr(row.private_model_manifest_hash) ??
+      stringOr(versionDoc?.private_model_manifest_hash) ??
+      null,
+    currentPointerUri:
+      stringOr(versionDoc?.current_json_pointer_uri) ??
+      stringOr(manifestWaitStatus?.manifest_uri) ??
+      null,
+    activatedAt: isoStringOr(row.current_status_at) ?? null,
+  }
+}
+
+function emptySourcingModelSummary(
+  sourceAvailable: boolean,
+  unavailableReason: string | null,
+): AdminLabSourcingModelSummary {
+  return {
+    sourceAvailable,
+    unavailableReason,
+    status: null,
+    versionId: null,
+    gitCommitSha: null,
+    imageRefHash: null,
+    buildId: null,
+    branch: null,
+    source: null,
+    actorRef: null,
+    componentRegistryVersion: null,
+    scoringAdapterVersion: null,
+    modelArtifactHash: null,
+    manifestHash: null,
+    currentPointerUri: null,
+    activatedAt: null,
   }
 }
 
