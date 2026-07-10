@@ -26,6 +26,17 @@ import {
   type ResearchLabTerminalReceiptEvent,
 } from '@/lib/research-lab-compute-spend'
 import { fetchGatewayPcr0Acceptance } from '@/lib/research-lab-pcr0-readiness'
+import type {
+  AdminLabCandidateRunDetail,
+  AdminLabChampionSummary,
+  AdminLabCompanyDetail,
+  AdminLabDailyBenchmark,
+  AdminLabErrorDetail,
+  AdminLabFunnelDetail,
+  AdminLabIcpDetail,
+  AdminLabRunDetail,
+  AdminLabTelemetryState,
+} from '@/lib/admin-research-lab-telemetry'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -52,6 +63,10 @@ const STALE_SCORING_MS = 15 * 60 * 1000
 const FRESH_DATA_MS = 15 * 60 * 1000
 const DEGRADED_DATA_MS = 60 * 60 * 1000
 const SUPABASE_IN_FILTER_BATCH_SIZE = 100
+const LIVE_TELEMETRY_LIMIT = 10_000
+const CHAMPION_LIMIT = 10
+const LIVE_BENCHMARK_STALE_MS = 15 * 60 * 1000
+const LEADS_PER_ICP_NORMALIZER = 5
 
 type AdminHealthState = 'healthy' | 'degraded' | 'critical' | 'unknown'
 type AdminScoringState = 'active' | 'paused' | 'stalled' | 'blocked' | 'idle' | 'unknown'
@@ -326,6 +341,8 @@ export type AdminLabOpsSummary = {
   alerts: AdminLabAlertSummary
   attestation: AdminLabAttestationSummary
   computeSpend: AdminLabComputeSpendSummary
+  dailyBenchmark: AdminLabDailyBenchmark
+  champions: AdminLabChampionSummary[]
 }
 
 export type AdminResearchLabPayload = {
@@ -344,6 +361,7 @@ export type AdminResearchLabPayload = {
 export type AdminResearchLabTimelinePayload = {
   loop: AdminLabLoopSummary
   timeline: ResearchLabLoopTimeline
+  runDetail: AdminLabRunDetail
   fetchedAt: string
 }
 
@@ -476,8 +494,9 @@ async function fetchAdminLabTimeline(
     },
     sources,
   })
+  const runDetail = await fetchAdminLabRunDetail(supabase, loop)
 
-  return { loop, timeline, fetchedAt: new Date().toISOString() }
+  return { loop, timeline, runDetail, fetchedAt: new Date().toISOString() }
 }
 
 type TimelineSourceResult = ResearchLabTimelineSourceInput
@@ -569,6 +588,7 @@ async function fetchAdminLabOps(
   supabase: ReturnType<typeof getAdminSupabase>,
   loops: AdminLabLoopSummary[],
 ): Promise<AdminLabOpsSummary> {
+  const icpMetadata = fetchIcpMetadata(supabase)
   const [
     scoreMetrics,
     scoringControl,
@@ -576,6 +596,8 @@ async function fetchAdminLabOps(
     alerts,
     attestation,
     computeSpend,
+    dailyBenchmark,
+    champions,
   ] = await Promise.all([
     fetchScoreBundleMetrics(supabase, loops),
     fetchScoringControl(supabase),
@@ -583,6 +605,8 @@ async function fetchAdminLabOps(
     fetchAlertSummary(supabase),
     fetchAttestationSummary(supabase),
     fetchComputeSpendSummary(supabase),
+    fetchDailyBenchmarkTelemetry(supabase, icpMetadata),
+    fetchChampionTelemetry(supabase, icpMetadata),
   ])
 
   const dataFreshness = buildDataFreshness(loops)
@@ -613,7 +637,707 @@ async function fetchAdminLabOps(
     alerts,
     attestation,
     computeSpend,
+    dailyBenchmark,
+    champions,
   }
+}
+
+type IcpMetadata = {
+  icpRef: string
+  icpHash: string | null
+  industry: string | null
+  subIndustry: string | null
+}
+
+type IcpMetadataSnapshot = {
+  byRef: Map<string, IcpMetadata>
+  latestRefs: string[]
+  latestRollingWindowHash: string | null
+}
+
+type ProviderCostTelemetryRow = {
+  candidate_id?: string | null
+  benchmark_date?: string | null
+  run_scope?: string | null
+  run_type?: string | null
+  runner_role?: string | null
+  provider?: string | null
+  endpoint?: string | null
+  status_code?: number | null
+  cost_usd?: number | string | null
+  spent_after_usd?: number | string | null
+  cap_usd?: number | string | null
+  cap_state?: string | null
+  icp_ref?: string | null
+  icp_hash?: string | null
+  created_at?: string | null
+  event_doc?: Record<string, unknown> | null
+}
+
+type CompanyTelemetryRow = {
+  label_id?: string | null
+  candidate_id?: string | null
+  run_id?: string | null
+  score_bundle_id?: string | null
+  context_ref?: string | null
+  icp_ref?: string | null
+  model_side?: string | null
+  is_reference_model?: boolean | null
+  final_score?: number | string | null
+  company_name?: string | null
+  company_website?: string | null
+  company_linkedin?: string | null
+  fit_passed?: boolean | null
+  intent_passed?: boolean | null
+  failure_reason?: string | null
+  industry?: string | null
+  country?: string | null
+  captured_at?: string | null
+  created_at?: string | null
+}
+
+type IcpCostRollup = {
+  spendUsd: number
+  budgetUsd: number | null
+  eventCount: number
+  errorCount: number
+  lastActivityAt: string | null
+}
+
+async function fetchIcpMetadata(
+  supabase: ReturnType<typeof getAdminSupabase>,
+): Promise<IcpMetadataSnapshot> {
+  const { data, error } = await supabase
+    .from('research_lab_rolling_icp_windows')
+    .select('rolling_window_hash, created_at, window_doc')
+    .order('created_at', { ascending: false, nullsFirst: false })
+    .limit(30)
+
+  if (error) {
+    console.warn('[admin:research-lab] ICP metadata unavailable', error.message)
+    return { byRef: new Map(), latestRefs: [], latestRollingWindowHash: null }
+  }
+
+  const byRef = new Map<string, IcpMetadata>()
+  let latestRefs: string[] = []
+  let latestRollingWindowHash: string | null = null
+  for (const [rowIndex, row] of ((data ?? []) as Array<Record<string, unknown>>).entries()) {
+    const doc = objectRecord(row.window_doc) ?? {}
+    const refsForWindow: string[] = []
+    for (const set of arrayOfRecords(doc.sets) ?? []) {
+      for (const icp of arrayOfRecords(set.selected_icps) ?? []) {
+        const icpRef = stringOr(icp.icp_ref)
+        if (!icpRef) continue
+        refsForWindow.push(icpRef)
+        if (!byRef.has(icpRef)) {
+          byRef.set(icpRef, {
+            icpRef,
+            icpHash: stringOr(icp.icp_hash) ?? null,
+            industry: stringOr(icp.industry) ?? null,
+            subIndustry: stringOr(icp.sub_industry) ?? null,
+          })
+        }
+      }
+    }
+    if (rowIndex === 0) {
+      latestRefs = uniqueStrings(refsForWindow)
+      latestRollingWindowHash = stringOr(row.rolling_window_hash) ?? stringOr(doc.rolling_window_hash) ?? null
+    }
+  }
+  return { byRef, latestRefs, latestRollingWindowHash }
+}
+
+async function fetchDailyBenchmarkTelemetry(
+  supabase: ReturnType<typeof getAdminSupabase>,
+  metadataPromise: Promise<IcpMetadataSnapshot>,
+): Promise<AdminLabDailyBenchmark> {
+  const { data: dispatchData, error: dispatchError } = await supabase
+    .from('research_lab_scoring_dispatch_events')
+    .select('dispatch_event_id, dispatch_status, dispatch_type, event_doc, benchmark_bundle_id, rolling_window_hash, worker_ref, created_at')
+    .eq('dispatch_type', 'private_baseline_rebenchmark')
+    .order('created_at', { ascending: false, nullsFirst: false })
+    .limit(50)
+
+  if (dispatchError) {
+    console.warn('[admin:research-lab] daily benchmark dispatch unavailable', dispatchError.message)
+    return emptyDailyBenchmark('Daily benchmark dispatch telemetry is unavailable.')
+  }
+
+  const dispatches = (dispatchData ?? []) as Array<Record<string, unknown>>
+  const start = dispatches.find((row) => {
+    const doc = objectRecord(row.event_doc)
+    return (stringOr(row.dispatch_status) ?? '').toLowerCase() === 'assigned' && Boolean(stringOr(doc?.benchmark_date))
+  }) ?? dispatches.find((row) => Boolean(stringOr(objectRecord(row.event_doc)?.benchmark_date)))
+  if (!start) return emptyDailyBenchmark('No daily benchmark dispatch has been recorded yet.')
+
+  const startDoc = objectRecord(start.event_doc) ?? {}
+  const benchmarkDate = stringOr(startDoc.benchmark_date) ?? new Date().toISOString().slice(0, 10)
+  const attempt = Math.max(0, Math.round(numberOr(startDoc.benchmark_attempt, 0)))
+  const icpsTotal = Math.max(0, Math.round(numberOr(startDoc.selected_icp_count, 0)))
+  const startedAt = isoStringOr(start.created_at) ?? null
+  const contextPrefix = `daily-${benchmarkDate}-a${attempt}-%`
+
+  const [costResult, companyResult, bundleResult, metadata] = await Promise.all([
+    supabase
+      .from('research_lab_provider_cost_events')
+      .select('candidate_id, benchmark_date, run_scope, run_type, runner_role, provider, endpoint, status_code, cost_usd, spent_after_usd, cap_usd, cap_state, icp_ref, icp_hash, created_at, event_doc')
+      .eq('benchmark_date', benchmarkDate)
+      .eq('run_type', 'private_baseline_rebenchmark')
+      .gte('created_at', startedAt ?? '1970-01-01T00:00:00Z')
+      .order('created_at', { ascending: true, nullsFirst: false })
+      .limit(LIVE_TELEMETRY_LIMIT),
+    supabase
+      .from('research_lab_company_label_examples')
+      .select('label_id, candidate_id, run_id, score_bundle_id, context_ref, icp_ref, model_side, is_reference_model, final_score, company_name, company_website, company_linkedin, fit_passed, intent_passed, failure_reason, industry, country, captured_at, created_at')
+      .like('context_ref', contextPrefix)
+      .order('created_at', { ascending: true, nullsFirst: false })
+      .limit(LIVE_TELEMETRY_LIMIT),
+    supabase
+      .from('research_lab_private_model_benchmark_current')
+      .select('benchmark_bundle_id, benchmark_date, aggregate_score, benchmark_quality, current_benchmark_status, current_event_type, current_status_at, rolling_window_hash, score_summary_doc, created_at')
+      .eq('benchmark_date', benchmarkDate)
+      .order('current_status_at', { ascending: false, nullsFirst: false })
+      .limit(5),
+    metadataPromise,
+  ])
+
+  const costs = costResult.error ? [] : (costResult.data ?? []) as ProviderCostTelemetryRow[]
+  const companies = companyResult.error ? [] : (companyResult.data ?? []) as CompanyTelemetryRow[]
+  const completedBundle = bundleResult.error
+    ? undefined
+    : ((bundleResult.data ?? []) as Array<Record<string, unknown>>).find((row) =>
+        ['completed', 'published'].includes((stringOr(row.current_benchmark_status) ?? stringOr(row.current_event_type) ?? '').toLowerCase()),
+      )
+  if (costResult.error) console.warn('[admin:research-lab] daily provider cost telemetry unavailable', costResult.error.message)
+  if (companyResult.error) console.warn('[admin:research-lab] daily company telemetry unavailable', companyResult.error.message)
+  if (bundleResult.error) console.warn('[admin:research-lab] daily completed bundle lookup unavailable', bundleResult.error.message)
+
+  const costByIcp = rollupCostsByIcp(costs)
+  const companiesByIcp = groupCompaniesByIcp(companies)
+  const observedRefs = uniqueStrings([
+    ...metadata.latestRefs,
+    ...costs.map((row) => stringOr(row.icp_ref) ?? null),
+    ...companies.map((row) => stringOr(row.icp_ref) ?? null),
+  ])
+  const targetRefs = icpsTotal > 0 ? observedRefs.slice(0, Math.max(icpsTotal, observedRefs.length)) : observedRefs
+  const processedRefs = new Set(costs.map((row) => stringOr(row.icp_ref)).filter(Boolean) as string[])
+  const scoreByIcp = new Map<string, number>()
+  for (const [icpRef, rows] of companiesByIcp) {
+    scoreByIcp.set(icpRef, roundTelemetry(rows.reduce((sum, row) => sum + (row.finalScore ?? 0), 0) / LEADS_PER_ICP_NORMALIZER))
+  }
+
+  const icps: AdminLabIcpDetail[] = targetRefs.map((icpRef) => {
+    const meta = metadata.byRef.get(icpRef)
+    const cost = costByIcp.get(icpRef) ?? emptyCostRollup()
+    const companyRows = companiesByIcp.get(icpRef) ?? []
+    const processed = processedRefs.has(icpRef)
+    return {
+      icpRef,
+      icpHash: meta?.icpHash ?? costs.find((row) => row.icp_ref === icpRef)?.icp_hash ?? null,
+      label: icpLabel(meta, icpRef),
+      industry: meta?.industry ?? null,
+      subIndustry: meta?.subIndustry ?? null,
+      status: processed ? (cost.errorCount > 0 ? 'completed_with_errors' : 'completed') : 'pending',
+      score: processed ? scoreByIcp.get(icpRef) ?? 0 : null,
+      baseScore: null,
+      delta: null,
+      spendUsd: cost.spendUsd,
+      budgetUsd: cost.budgetUsd,
+      providerEventCount: cost.eventCount,
+      errorCount: cost.errorCount,
+      failureReason: processed && companyRows.length === 0 && cost.errorCount > 0 ? 'No surfaced companies; provider errors recorded.' : null,
+      hardFailure: processed && companyRows.length === 0 && cost.errorCount > 0,
+      funnel: null,
+      companyScoreCount: companyRows.length,
+      companies: companyRows,
+    }
+  })
+
+  const icpsProcessed = Math.min(icpsTotal || processedRefs.size, processedRefs.size)
+  const effectiveTotal = Math.max(icpsTotal, icps.length, icpsProcessed)
+  const scoreTotal = icps.reduce((sum, icp) => sum + (icp.score ?? 0), 0)
+  const lastActivityAt = latestIso(
+    ...costs.map((row) => isoStringOr(row.created_at)),
+    ...companies.map((row) => isoStringOr(row.created_at)),
+    isoStringOr(completedBundle?.current_status_at),
+  ) ?? startedAt
+  const latestRelatedDispatch = dispatches.find((row) => {
+    const doc = objectRecord(row.event_doc) ?? {}
+    return stringOr(doc.benchmark_date) === benchmarkDate && Math.round(numberOr(doc.benchmark_attempt, 0)) === attempt
+  }) ?? start
+  const dispatchStatus = (stringOr(latestRelatedDispatch.dispatch_status) ?? stringOr(start.dispatch_status) ?? 'assigned').toLowerCase()
+  const completionAt = isoStringOr(completedBundle?.current_status_at) ?? isoStringOr(completedBundle?.created_at) ?? null
+  const isCompleted = Boolean(completedBundle && timestampOrZero(completionAt) >= timestampOrZero(startedAt))
+  let state: AdminLabTelemetryState = 'active'
+  if (isCompleted) state = 'completed'
+  else if (dispatchStatus === 'failed') state = 'failed'
+  else if (lastActivityAt && Date.now() - timestampOrZero(lastActivityAt) > LIVE_BENCHMARK_STALE_MS) state = 'stalled'
+
+  const stateLabel = state === 'completed' ? 'Completed' : state === 'failed' ? 'Failed' : state === 'stalled' ? 'Stalled' : 'Running'
+  const errors = buildProviderErrors(costs)
+  const spendUsd = roundTelemetry(costs.reduce((sum, row) => sum + numberOr(row.cost_usd, 0), 0))
+  const observedCap = firstFiniteNumber(costs.map((row) => row.cap_usd))
+  const budgetUsd = observedCap === null || effectiveTotal <= 0 ? null : roundTelemetry(observedCap * effectiveTotal)
+  const bundleScore = finiteNumberOrNull(completedBundle?.aggregate_score)
+
+  return {
+    state,
+    stateLabel,
+    detail: isCompleted
+      ? 'The latest daily baseline bundle completed. Per-ICP cost and company telemetry remains available below.'
+      : `${icpsProcessed} of ${effectiveTotal || 'unknown'} ICPs have emitted provider telemetry. Score so far treats unfinished ICPs as zero; avg processed excludes them.`,
+    benchmarkDate,
+    attempt,
+    rollingWindowHash: stringOr(start.rolling_window_hash) ?? metadata.latestRollingWindowHash,
+    workerRef: stringOr(start.worker_ref) ?? null,
+    startedAt,
+    lastActivityAt,
+    completedAt: completionAt,
+    icpsTotal: effectiveTotal,
+    icpsProcessed,
+    icpsRemaining: Math.max(0, effectiveTotal - icpsProcessed),
+    progressPercent: effectiveTotal > 0 ? Math.min(100, Math.round((icpsProcessed / effectiveTotal) * 100)) : 0,
+    provisionalScore: bundleScore ?? (effectiveTotal > 0 ? roundTelemetry(scoreTotal / effectiveTotal) : null),
+    completedAverageScore: icpsProcessed > 0 ? roundTelemetry(scoreTotal / icpsProcessed) : null,
+    spendUsd,
+    budgetUsd,
+    providerEventCount: costs.length,
+    companyCount: companies.length,
+    errorCount: errors.reduce((sum, item) => sum + item.count, 0),
+    icps,
+    errors,
+  }
+}
+
+function emptyDailyBenchmark(detail: string): AdminLabDailyBenchmark {
+  return {
+    state: 'idle',
+    stateLabel: 'Idle',
+    detail,
+    benchmarkDate: null,
+    attempt: null,
+    rollingWindowHash: null,
+    workerRef: null,
+    startedAt: null,
+    lastActivityAt: null,
+    completedAt: null,
+    icpsTotal: 0,
+    icpsProcessed: 0,
+    icpsRemaining: 0,
+    progressPercent: 0,
+    provisionalScore: null,
+    completedAverageScore: null,
+    spendUsd: 0,
+    budgetUsd: null,
+    providerEventCount: 0,
+    companyCount: 0,
+    errorCount: 0,
+    icps: [],
+    errors: [],
+  }
+}
+
+async function fetchChampionTelemetry(
+  supabase: ReturnType<typeof getAdminSupabase>,
+  metadataPromise: Promise<IcpMetadataSnapshot>,
+): Promise<AdminLabChampionSummary[]> {
+  const { data, error } = await supabase
+    .from('research_lab_champion_reward_current')
+    .select('champion_reward_id, candidate_id, ticket_id, run_id, score_bundle_id, miner_hotkey, current_reward_status, current_reason, current_status_at, improvement_points, threshold_points, created_at')
+    .order('current_status_at', { ascending: false, nullsFirst: false })
+    .limit(CHAMPION_LIMIT)
+
+  if (error) {
+    console.warn('[admin:research-lab] champion rewards unavailable', error.message)
+    return []
+  }
+  const rewards = (data ?? []) as Array<Record<string, unknown>>
+  const bundleIds = uniqueStrings(rewards.map((row) => stringOr(row.score_bundle_id) ?? null))
+  const candidateIds = uniqueStrings(rewards.map((row) => stringOr(row.candidate_id) ?? null))
+  if (bundleIds.length === 0) return []
+
+  const [bundleResult, companyResult, costResult, metadata] = await Promise.all([
+    supabase
+      .from('research_evaluation_score_bundle_current')
+      .select('score_bundle_id, ticket_id, run_id, candidate_artifact_hash, score_bundle_doc, current_event_status, current_reason, current_status_at, created_at')
+      .in('score_bundle_id', bundleIds)
+      .limit(CHAMPION_LIMIT * 2),
+    candidateIds.length > 0
+      ? supabase
+          .from('research_lab_company_label_examples')
+          .select('label_id, candidate_id, run_id, score_bundle_id, context_ref, icp_ref, model_side, is_reference_model, final_score, company_name, company_website, company_linkedin, fit_passed, intent_passed, failure_reason, industry, country, captured_at, created_at')
+          .in('candidate_id', candidateIds)
+          .limit(LIVE_TELEMETRY_LIMIT)
+      : Promise.resolve({ data: [], error: null }),
+    candidateIds.length > 0
+      ? supabase
+          .from('research_lab_provider_cost_events')
+          .select('candidate_id, provider, endpoint, status_code, cost_usd, spent_after_usd, cap_usd, cap_state, icp_ref, icp_hash, created_at')
+          .in('candidate_id', candidateIds)
+          .limit(LIVE_TELEMETRY_LIMIT)
+      : Promise.resolve({ data: [], error: null }),
+    metadataPromise,
+  ])
+
+  const bundles = (bundleResult.data ?? []) as Array<Record<string, unknown>>
+  const companies = (companyResult.data ?? []) as CompanyTelemetryRow[]
+  const costs = (costResult.data ?? []) as ProviderCostTelemetryRow[]
+  const bundleById = new Map(bundles.map((row) => [stringOr(row.score_bundle_id) ?? '', row]))
+
+  return rewards.map((reward) => {
+    const candidateId = stringOr(reward.candidate_id) ?? ''
+    const scoreBundleId = stringOr(reward.score_bundle_id) ?? ''
+    const bundle = bundleById.get(scoreBundleId)
+    const candidateCompanies = companies.filter((row) => row.candidate_id === candidateId)
+    const candidateCosts = costs.filter((row) => row.candidate_id === candidateId)
+    const detail = buildScoreBundleIcpDetails(bundle, candidateCompanies, candidateCosts, metadata)
+    const aggregates = objectRecord(objectRecord(bundle?.score_bundle_doc)?.aggregates) ?? {}
+    const errors = buildProviderErrors(candidateCosts, candidateId)
+    const aggregateSpend = finiteNumberOrNull(aggregates.total_cost_usd) ?? 0
+    const telemetrySpend = roundTelemetry(candidateCosts.reduce((sum, row) => sum + numberOr(row.cost_usd, 0), 0))
+    const spendUsd = telemetrySpend > 0 ? telemetrySpend : aggregateSpend
+    const budgetUsd = totalBudget(detail.icps)
+    const scoreFailures = detail.icps.filter((icp) => Boolean(icp.failureReason)).length
+    return {
+      championRewardId: stringOr(reward.champion_reward_id) ?? candidateId,
+      candidateId,
+      ticketId: stringOr(reward.ticket_id) ?? null,
+      runId: stringOr(reward.run_id) ?? null,
+      scoreBundleId,
+      minerHotkey: stringOr(reward.miner_hotkey) ?? '',
+      status: stringOr(reward.current_reward_status) ?? 'unknown',
+      reason: stringOr(reward.current_reason) ?? null,
+      promotedAt: isoStringOr(reward.current_status_at) ?? isoStringOr(reward.created_at) ?? null,
+      improvementPoints: finiteNumberOrNull(reward.improvement_points),
+      thresholdPoints: finiteNumberOrNull(reward.threshold_points),
+      candidateScore: finiteNumberOrNull(aggregates.candidate_score),
+      baseScore: finiteNumberOrNull(aggregates.base_score),
+      meanDelta: finiteNumberOrNull(aggregates.mean_delta),
+      deltaLcb: finiteNumberOrNull(aggregates.delta_lcb),
+      spendUsd: roundTelemetry(spendUsd),
+      budgetUsd,
+      icpCount: Math.max(detail.icps.length, Math.round(numberOr(aggregates.icp_count, 0))),
+      successfulIcpCount: Math.round(numberOr(aggregates.successful_icp_count, 0)),
+      companyCount: candidateCompanies.length || detail.icps.reduce((sum, icp) => sum + icp.companyScoreCount, 0),
+      errorCount: errors.reduce((sum, item) => sum + item.count, 0) + scoreFailures,
+      icps: detail.icps,
+      errors,
+    }
+  })
+}
+
+function buildScoreBundleIcpDetails(
+  bundle: Record<string, unknown> | undefined,
+  companyRows: CompanyTelemetryRow[],
+  costRows: ProviderCostTelemetryRow[],
+  metadata: IcpMetadataSnapshot,
+): { icps: AdminLabIcpDetail[] } {
+  const doc = objectRecord(bundle?.score_bundle_doc) ?? {}
+  const aggregates = objectRecord(doc.aggregates) ?? {}
+  const perIcp = arrayOfRecords(aggregates.per_icp_results) ?? []
+  const costs = rollupCostsByIcp(costRows)
+  const companies = groupCompaniesByIcp(companyRows)
+  const refs = uniqueStrings([
+    ...perIcp.map((row) => stringOr(row.icp_ref) ?? null),
+    ...costRows.map((row) => stringOr(row.icp_ref) ?? null),
+    ...companyRows.map((row) => stringOr(row.icp_ref) ?? null),
+  ])
+  const byRef = new Map(perIcp.map((row) => [stringOr(row.icp_ref) ?? '', row]))
+  return {
+    icps: refs.map((icpRef) => {
+      const row = byRef.get(icpRef) ?? {}
+      const meta = metadata.byRef.get(icpRef)
+      const cost = costs.get(icpRef) ?? emptyCostRollup()
+      const surfaced = companies.get(icpRef) ?? []
+      const failureReason = stringOr(row.failure_reason) ?? null
+      const candidateCompanyScores = Array.isArray(row.candidate_company_scores) ? row.candidate_company_scores : []
+      return {
+        icpRef,
+        icpHash: stringOr(row.icp_hash) ?? meta?.icpHash ?? null,
+        label: icpLabel(meta, icpRef),
+        industry: meta?.industry ?? null,
+        subIndustry: meta?.subIndustry ?? null,
+        status: stringOr(row.status) ?? (failureReason ? 'failed' : 'observed'),
+        score: finiteNumberOrNull(row.candidate_per_icp_score),
+        baseScore: finiteNumberOrNull(row.base_per_icp_score),
+        delta: finiteNumberOrNull(row.delta_vs_base),
+        spendUsd: cost.spendUsd,
+        budgetUsd: cost.budgetUsd,
+        providerEventCount: cost.eventCount,
+        errorCount: cost.errorCount + (failureReason ? 1 : 0),
+        failureReason,
+        hardFailure: booleanOr(row.hard_failure) ?? false,
+        funnel: normalizeFunnel(row.funnel),
+        companyScoreCount: Math.max(candidateCompanyScores.length, surfaced.length),
+        companies: surfaced,
+      }
+    }),
+  }
+}
+
+async function fetchAdminLabRunDetail(
+  supabase: ReturnType<typeof getAdminSupabase>,
+  loop: AdminLabLoopSummary,
+): Promise<AdminLabRunDetail> {
+  const [candidateResult, bundleResult, companyResult, dispatchResult, metadata] = await Promise.all([
+    supabase
+      .from('research_lab_candidate_evaluation_current')
+      .select('candidate_id, ticket_id, run_id, current_candidate_status, current_reason, current_score_bundle_id, current_status_at, redacted_public_summary, created_at')
+      .eq('ticket_id', loop.ticketId)
+      .order('created_at', { ascending: false, nullsFirst: false })
+      .limit(200),
+    supabase
+      .from('research_evaluation_score_bundle_current')
+      .select('score_bundle_id, ticket_id, run_id, score_bundle_doc, current_event_status, current_event_type, current_reason, current_status_at, created_at')
+      .eq('ticket_id', loop.ticketId)
+      .order('created_at', { ascending: false, nullsFirst: false })
+      .limit(200),
+    supabase
+      .from('research_lab_company_label_examples')
+      .select('label_id, candidate_id, run_id, score_bundle_id, context_ref, icp_ref, model_side, is_reference_model, final_score, company_name, company_website, company_linkedin, fit_passed, intent_passed, failure_reason, industry, country, captured_at, created_at')
+      .eq('ticket_id', loop.ticketId)
+      .order('created_at', { ascending: false, nullsFirst: false })
+      .limit(LIVE_TELEMETRY_LIMIT),
+    supabase
+      .from('research_lab_scoring_dispatch_events')
+      .select('dispatch_event_id, dispatch_status, dispatch_type, candidate_id, run_id, score_bundle_id, worker_ref, event_doc, created_at')
+      .eq('ticket_id', loop.ticketId)
+      .order('created_at', { ascending: false, nullsFirst: false })
+      .limit(500),
+    fetchIcpMetadata(supabase),
+  ])
+
+  const candidateRows = (candidateResult.data ?? []) as Array<Record<string, unknown>>
+  const bundleRows = (bundleResult.data ?? []) as Array<Record<string, unknown>>
+  const companyRows = (companyResult.data ?? []) as CompanyTelemetryRow[]
+  const dispatchRows = (dispatchResult.data ?? []) as Array<Record<string, unknown>>
+  const candidateIds = uniqueStrings(candidateRows.map((row) => stringOr(row.candidate_id) ?? null))
+  const costRows: ProviderCostTelemetryRow[] = []
+  for (const batch of chunked(candidateIds, SUPABASE_IN_FILTER_BATCH_SIZE)) {
+    const { data, error } = await supabase
+      .from('research_lab_provider_cost_events')
+      .select('candidate_id, provider, endpoint, status_code, cost_usd, spent_after_usd, cap_usd, cap_state, icp_ref, icp_hash, created_at')
+      .in('candidate_id', batch)
+      .limit(LIVE_TELEMETRY_LIMIT)
+    if (error) {
+      console.warn('[admin:research-lab] run provider telemetry unavailable', error.message)
+      break
+    }
+    costRows.push(...((data ?? []) as ProviderCostTelemetryRow[]))
+  }
+
+  const bundleById = new Map(bundleRows.map((row) => [stringOr(row.score_bundle_id) ?? '', row]))
+  const candidates: AdminLabCandidateRunDetail[] = candidateRows.map((candidate) => {
+    const candidateId = stringOr(candidate.candidate_id) ?? ''
+    const scoreBundleId = stringOr(candidate.current_score_bundle_id) ?? null
+    const bundle = scoreBundleId
+      ? bundleById.get(scoreBundleId)
+      : bundleRows.find((row) => stringOr(row.run_id) === stringOr(candidate.run_id))
+    const companies = companyRows.filter((row) => row.candidate_id === candidateId)
+    const costs = costRows.filter((row) => row.candidate_id === candidateId)
+    const score = buildScoreBundleIcpDetails(bundle, companies, costs, metadata)
+    const aggregates = objectRecord(objectRecord(bundle?.score_bundle_doc)?.aggregates) ?? {}
+    const errors = [
+      ...buildProviderErrors(costs, candidateId),
+      ...buildDispatchErrors(dispatchRows.filter((row) => stringOr(row.candidate_id) === candidateId)),
+    ]
+    return {
+      candidateId,
+      status: stringOr(candidate.current_candidate_status) ?? 'unknown',
+      reason: stringOr(candidate.current_reason) ?? stringOr(bundle?.current_reason) ?? null,
+      summary: stringOr(candidate.redacted_public_summary) ?? null,
+      scoreBundleId: scoreBundleId ?? stringOr(bundle?.score_bundle_id) ?? null,
+      createdAt: isoStringOr(candidate.created_at) ?? null,
+      statusAt: isoStringOr(candidate.current_status_at) ?? isoStringOr(bundle?.current_status_at) ?? null,
+      candidateScore: finiteNumberOrNull(aggregates.candidate_score),
+      baseScore: finiteNumberOrNull(aggregates.base_score),
+      meanDelta: finiteNumberOrNull(aggregates.mean_delta),
+      deltaLcb: finiteNumberOrNull(aggregates.delta_lcb),
+      spendUsd: roundTelemetry(costs.reduce((sum, row) => sum + numberOr(row.cost_usd, 0), 0)),
+      budgetUsd: totalBudget(score.icps),
+      providerEventCount: costs.length,
+      companyCount: companies.length || score.icps.reduce((sum, icp) => sum + icp.companyScoreCount, 0),
+      errorCount: errors.reduce((sum, item) => sum + item.count, 0),
+      icps: score.icps,
+      errors,
+    }
+  })
+
+  const runErrors = [...buildProviderErrors(costRows), ...buildDispatchErrors(dispatchRows)]
+  const totalBudgetUsd = candidates.some((candidate) => candidate.budgetUsd !== null)
+    ? roundTelemetry(candidates.reduce((sum, candidate) => sum + (candidate.budgetUsd ?? 0), 0))
+    : null
+  return {
+    ticketId: loop.ticketId,
+    runId: loop.runId,
+    state: telemetryStateForLoop(loop),
+    phase: phaseForLoop(loop),
+    totalSpendUsd: roundTelemetry(costRows.reduce((sum, row) => sum + numberOr(row.cost_usd, 0), 0)),
+    totalBudgetUsd,
+    providerEventCount: costRows.length,
+    companyCount: companyRows.length,
+    errorCount: runErrors.reduce((sum, item) => sum + item.count, 0),
+    candidates,
+    errors: runErrors,
+    fetchedAt: new Date().toISOString(),
+  }
+}
+
+function rollupCostsByIcp(rows: ProviderCostTelemetryRow[]): Map<string, IcpCostRollup> {
+  const byIcp = new Map<string, IcpCostRollup>()
+  for (const row of rows) {
+    const icpRef = stringOr(row.icp_ref)
+    if (!icpRef) continue
+    const current = byIcp.get(icpRef) ?? emptyCostRollup()
+    current.spendUsd += numberOr(row.cost_usd, 0)
+    current.eventCount += 1
+    if (numberOr(row.status_code, 0) >= 400) current.errorCount += 1
+    const cap = finiteNumberOrNull(row.cap_usd)
+    if (cap !== null) current.budgetUsd = Math.max(current.budgetUsd ?? 0, cap)
+    current.lastActivityAt = latestIso(current.lastActivityAt, isoStringOr(row.created_at)) ?? current.lastActivityAt
+    byIcp.set(icpRef, current)
+  }
+  for (const value of byIcp.values()) value.spendUsd = roundTelemetry(value.spendUsd)
+  return byIcp
+}
+
+function emptyCostRollup(): IcpCostRollup {
+  return { spendUsd: 0, budgetUsd: null, eventCount: 0, errorCount: 0, lastActivityAt: null }
+}
+
+function groupCompaniesByIcp(rows: CompanyTelemetryRow[]): Map<string, AdminLabCompanyDetail[]> {
+  const byIcp = new Map<string, AdminLabCompanyDetail[]>()
+  for (const row of rows) {
+    const icpRef = stringOr(row.icp_ref)
+    if (!icpRef) continue
+    const list = byIcp.get(icpRef) ?? []
+    list.push(normalizeCompany(row, list.length))
+    byIcp.set(icpRef, list)
+  }
+  return byIcp
+}
+
+function normalizeCompany(row: CompanyTelemetryRow, index: number): AdminLabCompanyDetail {
+  return {
+    id: stringOr(row.label_id) ?? `${stringOr(row.icp_ref) ?? 'company'}:${index}`,
+    name: stringOr(row.company_name) ?? stringOr(row.company_website) ?? `Surfaced company ${index + 1}`,
+    website: stringOr(row.company_website) ?? null,
+    linkedin: stringOr(row.company_linkedin) ?? null,
+    finalScore: finiteNumberOrNull(row.final_score),
+    modelSide: stringOr(row.model_side) ?? null,
+    fitPassed: booleanOr(row.fit_passed) ?? null,
+    intentPassed: booleanOr(row.intent_passed) ?? null,
+    failureReason: stringOr(row.failure_reason) ?? null,
+    industry: stringOr(row.industry) ?? null,
+    country: stringOr(row.country) ?? null,
+    capturedAt: isoStringOr(row.captured_at) ?? isoStringOr(row.created_at) ?? null,
+  }
+}
+
+function buildProviderErrors(rows: ProviderCostTelemetryRow[], candidateId?: string): AdminLabErrorDetail[] {
+  const grouped = new Map<string, AdminLabErrorDetail>()
+  for (const row of rows) {
+    const statusCode = Math.round(numberOr(row.status_code, 0))
+    if (statusCode < 400) continue
+    const provider = stringOr(row.provider) ?? 'provider'
+    const endpoint = stringOr(row.endpoint) ?? null
+    const icpRef = stringOr(row.icp_ref) ?? null
+    const key = `${provider}\u0000${endpoint ?? ''}\u0000${statusCode}\u0000${icpRef ?? ''}`
+    const current = grouped.get(key)
+    if (current) {
+      current.count += 1
+      if (timestampOrZero(row.created_at) > timestampOrZero(current.occurredAt)) current.occurredAt = isoStringOr(row.created_at) ?? current.occurredAt
+      continue
+    }
+    grouped.set(key, {
+      id: `provider:${key}`,
+      source: 'provider',
+      title: `${provider} returned HTTP ${statusCode}`,
+      detail: endpoint,
+      statusCode,
+      provider,
+      endpoint,
+      icpRef,
+      candidateId: candidateId ?? stringOr(row.candidate_id) ?? null,
+      runId: null,
+      count: 1,
+      occurredAt: isoStringOr(row.created_at) ?? null,
+    })
+  }
+  return Array.from(grouped.values()).sort((a, b) => timestampOrZero(b.occurredAt) - timestampOrZero(a.occurredAt))
+}
+
+function buildDispatchErrors(rows: Array<Record<string, unknown>>): AdminLabErrorDetail[] {
+  return rows
+    .filter((row) => (stringOr(row.dispatch_status) ?? '').toLowerCase() === 'failed')
+    .map((row, index) => {
+      const doc = objectRecord(row.event_doc) ?? {}
+      const diagnostics = doc.error_diagnostics
+      return {
+        id: stringOr(row.dispatch_event_id) ?? `dispatch:${index}`,
+        source: 'dispatch' as const,
+        title: `${stringOr(row.dispatch_type) ?? 'Scoring dispatch'} failed`,
+        detail: summarizeUnknown(diagnostics) ?? stringOr(doc.error) ?? stringOr(doc.message) ?? null,
+        statusCode: null,
+        provider: null,
+        endpoint: null,
+        icpRef: stringOr(doc.icp_ref) ?? null,
+        candidateId: stringOr(row.candidate_id) ?? null,
+        runId: stringOr(row.run_id) ?? null,
+        count: 1,
+        occurredAt: isoStringOr(row.created_at) ?? null,
+      }
+    })
+}
+
+function normalizeFunnel(value: unknown): AdminLabFunnelDetail | null {
+  const row = objectRecord(value)
+  if (!row) return null
+  return {
+    sourced: Math.round(numberOr(row.sourced, 0)),
+    fitPass: Math.round(numberOr(row.fit_pass ?? row.fitPass, 0)),
+    verified: Math.round(numberOr(row.verified, 0)),
+    intentValid: Math.round(numberOr(row.intent_valid ?? row.intentValid, 0)),
+    scored: Math.round(numberOr(row.scored, 0)),
+  }
+}
+
+function icpLabel(meta: IcpMetadata | undefined, icpRef: string): string {
+  if (meta?.subIndustry) return meta.industry ? `${meta.industry} · ${meta.subIndustry}` : meta.subIndustry
+  if (meta?.industry) return meta.industry
+  return icpRef.split(':').at(-1) ?? icpRef
+}
+
+function totalBudget(icps: AdminLabIcpDetail[]): number | null {
+  const known = icps.filter((icp) => icp.budgetUsd !== null)
+  return known.length > 0 ? roundTelemetry(known.reduce((sum, icp) => sum + (icp.budgetUsd ?? 0), 0)) : null
+}
+
+function telemetryStateForLoop(loop: AdminLabLoopSummary): AdminLabTelemetryState {
+  if (isActiveResearchLabLoopStatus(loop.statusKey)) return 'active'
+  if (isCompletedResearchLabLoopStatus(loop.statusKey)) {
+    const value = `${loop.statusKey} ${loop.outcomeLabel} ${loop.outcomeBand}`.toLowerCase()
+    return value.includes('fail') || value.includes('cancel') ? 'failed' : 'completed'
+  }
+  if (isFailedOutcome(loop.outcomeLabel, loop.outcomeBand)) return 'failed'
+  return 'unknown'
+}
+
+function summarizeUnknown(value: unknown): string | null {
+  if (typeof value === 'string') return value
+  const record = objectRecord(value)
+  if (!record) return null
+  const message = stringOr(record.message) ?? stringOr(record.error) ?? stringOr(record.detail) ?? stringOr(record.reason)
+  if (message) return message
+  try {
+    return JSON.stringify(record).slice(0, 800)
+  } catch {
+    return null
+  }
+}
+
+function roundTelemetry(value: number): number {
+  return Math.round((Number.isFinite(value) ? value : 0) * 1_000_000) / 1_000_000
 }
 
 async function fetchScoreBundleMetrics(

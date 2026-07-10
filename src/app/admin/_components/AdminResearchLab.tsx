@@ -29,6 +29,16 @@ import {
 } from 'recharts'
 import { cn } from '@/lib/utils'
 import { formatDateTime, formatRelative, shortHotkey } from '@/lib/admin-format'
+import {
+  ChampionTelemetry,
+  DailyBenchmarkTelemetry,
+  RunTelemetry,
+} from './AdminResearchLabTelemetry'
+import type {
+  AdminLabChampionSummary,
+  AdminLabDailyBenchmark,
+  AdminLabRunDetail,
+} from '@/lib/admin-research-lab-telemetry'
 
 type LabTimelinePhase =
   | 'ticket'
@@ -273,6 +283,8 @@ type AdminLabOpsSummary = {
   alerts: AdminLabAlertSummary
   attestation: AdminLabAttestationSummary
   computeSpend: AdminLabComputeSpendSummary
+  dailyBenchmark: AdminLabDailyBenchmark
+  champions: AdminLabChampionSummary[]
 }
 
 export type AdminResearchLabPayload = {
@@ -322,6 +334,7 @@ type LabTimeline = {
 type LabTimelinePayload = {
   loop: AdminLabLoopSummary
   timeline: LabTimeline
+  runDetail: AdminLabRunDetail
   fetchedAt: string
 }
 
@@ -332,13 +345,43 @@ export function AdminResearchLab({
   payload: AdminResearchLabPayload | null
   error: string | null
 }) {
-  const loops = useMemo(() => payload?.loops ?? [], [payload?.loops])
-  const ops = payload?.ops ?? null
+  const [livePayload, setLivePayload] = useState(payload)
+  const [liveRefreshError, setLiveRefreshError] = useState<string | null>(null)
+  const [liveRefreshing, setLiveRefreshing] = useState(false)
+  const loops = useMemo(() => livePayload?.loops ?? [], [livePayload?.loops])
+  const ops = livePayload?.ops ?? null
   const [query, setQuery] = useState('')
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(loops[0]?.ticketId ?? null)
   const [timelineByTicket, setTimelineByTicket] = useState<Record<string, LabTimelinePayload | null>>({})
   const [loadingTicketId, setLoadingTicketId] = useState<string | null>(null)
   const [detailError, setDetailError] = useState<string | null>(null)
+
+  useEffect(() => setLivePayload(payload), [payload])
+
+  useEffect(() => {
+    let cancelled = false
+    const refresh = async () => {
+      setLiveRefreshing(true)
+      try {
+        const res = await fetch('/api/admin/research-lab', { cache: 'no-store' })
+        const body = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(body.error || `Live refresh failed with ${res.status}`)
+        if (!cancelled) {
+          setLivePayload(body as AdminResearchLabPayload)
+          setLiveRefreshError(null)
+        }
+      } catch (e) {
+        if (!cancelled) setLiveRefreshError(e instanceof Error ? e.message : 'Live refresh failed')
+      } finally {
+        if (!cancelled) setLiveRefreshing(false)
+      }
+    }
+    const interval = window.setInterval(refresh, 15_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [])
 
   useEffect(() => {
     if (selectedTicketId || loops.length === 0) return
@@ -377,41 +420,41 @@ export function AdminResearchLab({
 
   useEffect(() => {
     if (!selectedLoop) return
-    if (Object.prototype.hasOwnProperty.call(timelineByTicket, selectedLoop.ticketId)) return
-
+    const ticketId = selectedLoop.ticketId
     const controller = new AbortController()
     let cancelled = false
-    setLoadingTicketId(selectedLoop.ticketId)
-    setDetailError(null)
-
-    fetch(`/api/admin/research-lab?ticketId=${encodeURIComponent(selectedLoop.ticketId)}`, {
-      cache: 'no-store',
-      signal: controller.signal,
-    })
-      .then(async (res) => {
+    const load = async (silent: boolean) => {
+      if (!silent) setLoadingTicketId(ticketId)
+      setDetailError(null)
+      try {
+        const res = await fetch(`/api/admin/research-lab?ticketId=${encodeURIComponent(ticketId)}`, {
+          cache: 'no-store',
+          signal: controller.signal,
+        })
         const body = await res.json().catch(() => ({}))
         if (!res.ok) throw new Error(body.error || `Timeline request failed with ${res.status}`)
-        return body as LabTimelinePayload
-      })
-      .then((body) => {
         if (!cancelled) {
-          setTimelineByTicket((prev) => ({ ...prev, [selectedLoop.ticketId]: body }))
+          setTimelineByTicket((prev) => ({ ...prev, [ticketId]: body as LabTimelinePayload }))
         }
-      })
-      .catch((e) => {
+      } catch (e) {
         if (cancelled || controller.signal.aborted) return
         setDetailError(e instanceof Error ? e.message : 'Could not load Lab timeline')
-        setTimelineByTicket((prev) => ({ ...prev, [selectedLoop.ticketId]: null }))
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setLoadingTicketId(null)
-      })
+      }
+    }
+    void load(Object.prototype.hasOwnProperty.call(timelineByTicket, ticketId))
+    const interval = window.setInterval(() => void load(true), 15_000)
 
     return () => {
       cancelled = true
       controller.abort()
+      window.clearInterval(interval)
     }
-  }, [selectedLoop, timelineByTicket])
+    // The selected ticket is the polling scope. Cached payload state is
+    // intentionally excluded so a successful refresh does not restart polling.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedLoop?.ticketId])
 
   return (
     <div className="space-y-6">
@@ -431,7 +474,7 @@ export function AdminResearchLab({
               Internal Research Lab execution stream with every ticket, queue, auto-research, candidate, scoring, promotion, and public projection event.
             </p>
           </div>
-          {payload?.fetchedAt && (
+          {livePayload?.fetchedAt && (
             <div
               className="rounded-lg border px-3 py-2 text-[11px]"
               style={{
@@ -440,7 +483,10 @@ export function AdminResearchLab({
                 color: 'var(--text-tertiary)',
               }}
             >
-              Fetched {formatDateTime(payload.fetchedAt)}
+              <span className="inline-flex items-center gap-2">
+                <span className={cn('h-1.5 w-1.5 rounded-full', liveRefreshError ? 'bg-[var(--accent-negative)]' : 'bg-[var(--accent-positive)]', liveRefreshing ? 'live-pulse' : '')} />
+                {liveRefreshError ? 'Live refresh degraded' : 'Live · 15s'} · {formatDateTime(livePayload.fetchedAt)}
+              </span>
             </div>
           )}
         </div>
@@ -451,18 +497,27 @@ export function AdminResearchLab({
           {error}
         </div>
       ) : null}
+      {liveRefreshError && livePayload ? (
+        <div className="rounded-xl border border-burgundy-soft bg-burgundy-soft px-4 py-3 text-xs text-burgundy">
+          Live refresh error: {liveRefreshError}. Showing the most recent successful snapshot.
+        </div>
+      ) : null}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-        <Stat label="Loops" value={payload?.stats.totalLoops ?? 0} />
-        <Stat label="Running" value={payload?.stats.runningLoops ?? 0} />
-        <Stat label="Scored" value={payload?.stats.scoredLoops ?? 0} accent="gold" />
-        <Stat label="Failed" value={payload?.stats.failedLoops ?? 0} />
-        <Stat label="Miners" value={payload?.stats.uniqueMiners ?? 0} />
+        <Stat label="Loops" value={livePayload?.stats.totalLoops ?? 0} />
+        <Stat label="Running" value={livePayload?.stats.runningLoops ?? 0} />
+        <Stat label="Scored" value={livePayload?.stats.scoredLoops ?? 0} accent="gold" />
+        <Stat label="Failed" value={livePayload?.stats.failedLoops ?? 0} />
+        <Stat label="Miners" value={livePayload?.stats.uniqueMiners ?? 0} />
       </div>
 
       {ops ? (
         <>
           <OpsHealthStrip ops={ops} />
+
+          <DailyBenchmarkTelemetry benchmark={ops.dailyBenchmark} />
+
+          <ChampionTelemetry champions={ops.champions} />
 
           <ComputeSpendPanel spend={ops.computeSpend} />
 
@@ -583,22 +638,36 @@ export function AdminResearchLab({
                 </div>
               </div>
 
-              <div className="max-h-[720px] overflow-auto p-5">
-                {loadingSelected ? (
+              <div className="max-h-[1000px] overflow-auto p-5">
+                {loadingSelected && !selectedTimeline ? (
                   <div className="flex min-h-[320px] flex-col items-center justify-center gap-3 text-sm" style={{ color: 'var(--text-secondary)' }}>
                     <Loader2 className="h-5 w-5 animate-spin text-gold" />
                     Loading detailed run activity...
                   </div>
-                ) : detailError ? (
+                ) : detailError && !selectedTimeline ? (
                   <div className="rounded-lg border border-burgundy-soft bg-burgundy-soft p-5 text-sm text-burgundy">
                     {detailError}
                   </div>
-                ) : !selectedTimeline || eventCount === 0 ? (
+                ) : !selectedTimeline ? (
                   <div className="rounded-lg border p-8 text-center text-sm" style={{ borderColor: 'var(--surface-border)', color: 'var(--text-secondary)' }}>
                     No detailed events are available for this loop.
                   </div>
                 ) : (
-                  <TimelineView timeline={selectedTimeline.timeline} />
+                  <>
+                    {detailError ? (
+                      <div className="mb-4 rounded-lg border border-burgundy-soft bg-burgundy-soft px-4 py-3 text-xs text-burgundy">
+                        Live run refresh error: {detailError}. Showing the most recent successful detail.
+                      </div>
+                    ) : null}
+                    <RunTelemetry detail={selectedTimeline.runDetail} />
+                    {eventCount > 0 ? (
+                      <TimelineView timeline={selectedTimeline.timeline} />
+                    ) : (
+                      <div className="rounded-lg border p-8 text-center text-sm" style={{ borderColor: 'var(--surface-border)', color: 'var(--text-secondary)' }}>
+                        No ticket or run events have been emitted yet.
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </div>
