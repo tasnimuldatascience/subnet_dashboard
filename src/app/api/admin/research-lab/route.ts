@@ -28,6 +28,7 @@ import {
 import { fetchGatewayPcr0Acceptance } from '@/lib/research-lab-pcr0-readiness'
 import {
   normalizeAdminLabCompanyIntent,
+  normalizeAdminLabGatewayControl,
   type AdminLabCandidateRunDetail,
   type AdminLabChampionSummary,
   type AdminLabCompanyDetail,
@@ -38,6 +39,7 @@ import {
   type AdminLabIntentSignalDetail,
   type AdminLabRunDetail,
   type AdminLabTelemetryState,
+  type AdminLabWorkflowControlSummary,
 } from '@/lib/admin-research-lab-telemetry'
 
 export const runtime = 'nodejs'
@@ -220,6 +222,11 @@ export type AdminLabScoringSummary = {
   oldestActiveRunAt: string | null
 }
 
+export type AdminLabWorkflowControls = {
+  scoring: AdminLabWorkflowControlSummary
+  loops: AdminLabWorkflowControlSummary
+}
+
 export type AdminLabActiveRun = {
   ticketId: string
   runId: string | null
@@ -390,6 +397,7 @@ export type AdminLabOpsSummary = {
   state: AdminHealthState
   healthSignals: AdminLabHealthSignal[]
   dataFreshness: AdminLabDataFreshness
+  controls: AdminLabWorkflowControls
   scoring: AdminLabScoringSummary
   activeRuns: AdminLabActiveRun[]
   pipeline: AdminLabPipelineStage[]
@@ -633,14 +641,6 @@ type RunScoreMetrics = {
   lastScoringAt: string | null
 }
 
-type ScoringControlSummary = {
-  source: 'explicit' | 'missing'
-  paused: boolean
-  state: string | null
-  pauseReason: string | null
-  updatedAt: string | null
-}
-
 async function fetchAdminLabOps(
   supabase: ReturnType<typeof getAdminSupabase>,
   loops: AdminLabLoopSummary[],
@@ -648,7 +648,7 @@ async function fetchAdminLabOps(
   const icpMetadata = fetchIcpMetadata(supabase)
   const [
     scoreMetrics,
-    scoringControl,
+    controls,
     benchmark,
     alerts,
     attestation,
@@ -658,7 +658,7 @@ async function fetchAdminLabOps(
     champions,
   ] = await Promise.all([
     fetchScoreBundleMetrics(supabase, loops),
-    fetchScoringControl(supabase),
+    fetchGatewayWorkflowControls(supabase),
     fetchBenchmarkSummary(supabase),
     fetchAlertSummary(supabase),
     fetchAttestationSummary(supabase),
@@ -675,7 +675,7 @@ async function fetchAdminLabOps(
     loops,
     activeRuns,
     metrics: scoreMetrics,
-    control: scoringControl,
+    control: controls.scoring,
   })
   const healthSignals = buildHealthSignals({
     dataFreshness,
@@ -689,6 +689,7 @@ async function fetchAdminLabOps(
     state: worstHealthState(healthSignals.map((signal) => signal.state)),
     healthSignals,
     dataFreshness,
+    controls,
     scoring,
     activeRuns,
     pipeline,
@@ -2011,48 +2012,30 @@ function scoreMetricsForBundleRow(row: Record<string, unknown>): RunScoreMetrics
   }
 }
 
-async function fetchScoringControl(
+async function fetchGatewayWorkflowControls(
   supabase: ReturnType<typeof getAdminSupabase>,
-): Promise<ScoringControlSummary> {
+): Promise<AdminLabWorkflowControls> {
   const { rows, sourceAvailable, unavailableReason } = await fetchOptionalRows(
     supabase,
-    'ops_scoring_control_current',
-    1,
+    'research_lab_gateway_control_current',
+    10,
   )
-  if (!sourceAvailable) {
-    return {
-      source: 'missing',
-      paused: false,
-      state: null,
-      pauseReason: unavailableReason,
-      updatedAt: null,
-    }
-  }
+  const rowFor = (controlKey: string) => rows.find(
+    (row) => stringOr(row.control_key)?.toLowerCase() === controlKey,
+  ) ?? null
+  const missingReason = sourceAvailable
+    ? 'No current gateway control row was returned.'
+    : unavailableReason
 
-  const row = rows[0] ?? {}
-  const state =
-    stringOr(row.state) ??
-    stringOr(row.status) ??
-    stringOr(row.scoring_state) ??
-    null
-  const paused =
-    booleanOr(row.paused) ??
-    booleanOr(row.is_paused) ??
-    (state ? ['paused', 'disabled', 'maintenance'].includes(state.toLowerCase()) : false)
   return {
-    source: 'explicit',
-    paused,
-    state,
-    pauseReason:
-      stringOr(row.pause_reason) ??
-      stringOr(row.reason) ??
-      stringOr(row.status_detail) ??
-      null,
-    updatedAt:
-      isoStringOr(row.updated_at) ??
-      isoStringOr(row.created_at) ??
-      isoStringOr(row.status_at) ??
-      null,
+    scoring: normalizeAdminLabGatewayControl(
+      rowFor('scoring_maintenance'),
+      missingReason,
+    ),
+    loops: normalizeAdminLabGatewayControl(
+      rowFor('autoresearch_maintenance'),
+      missingReason,
+    ),
   }
 }
 
@@ -2117,7 +2100,7 @@ function buildScoringSummary({
   loops: AdminLabLoopSummary[]
   activeRuns: AdminLabActiveRun[]
   metrics: ScoreBundleMetrics
-  control: ScoringControlSummary
+  control: AdminLabWorkflowControlSummary
 }): AdminLabScoringSummary {
   const scoringRuns = activeRuns.filter((run) => run.statusKey === 'scoring' || run.phase === 'scoring').length
   const queuedRuns = activeRuns.filter((run) => run.statusKey === 'queued' || run.phase === 'queue').length
@@ -2138,12 +2121,12 @@ function buildScoringSummary({
   let detail = blockedRuns > 0
     ? `No executable Lab runs are currently visible. ${blockedRuns} loop${blockedRuns === 1 ? ' is' : 's are'} waiting on funding, credits, baseline, or recovery and excluded from current-run health.`
     : 'No active scoring runs are currently visible.'
-  let source: AdminLabScoringSummary['source'] = control.source === 'explicit' ? 'explicit' : 'inferred'
+  let source: AdminLabScoringSummary['source'] = control.source === 'gateway_control' ? 'explicit' : 'inferred'
 
-  if (control.paused) {
+  if (control.state === 'paused') {
     state = 'paused'
     label = 'Paused'
-    detail = control.pauseReason || 'Scoring is explicitly paused by ops control.'
+    detail = control.reason || 'Scoring is explicitly paused by gateway control.'
   } else if (staleRuns > 0) {
     state = 'stalled'
     label = 'Stalled'
@@ -2152,7 +2135,7 @@ function buildScoringSummary({
     state = 'active'
     label = 'Active'
     detail = `${activeRuns.length} active run${activeRuns.length === 1 ? '' : 's'} and ${metrics.scoreBundlesLastHour} scoring event${metrics.scoreBundlesLastHour === 1 ? '' : 's'} in the last hour.`
-  } else if (control.source === 'missing' && metrics.lastScoringAt === null) {
+  } else if (control.state === 'unknown' && metrics.lastScoringAt === null) {
     source = 'missing'
     state = 'unknown'
     label = 'Unknown'
@@ -2164,8 +2147,8 @@ function buildScoringSummary({
     label,
     detail,
     source,
-    paused: control.paused,
-    pauseReason: control.pauseReason,
+    paused: control.state === 'paused',
+    pauseReason: control.reason,
     controlUpdatedAt: control.updatedAt,
     activeRuns: activeRuns.length,
     scoringRuns,

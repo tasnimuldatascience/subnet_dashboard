@@ -127,6 +127,19 @@ type AdminLabScoringSummary = {
   oldestActiveRunAt: string | null
 }
 
+type AdminLabWorkflowControlSummary = {
+  state: 'active' | 'paused' | 'unknown'
+  label: 'Active' | 'Paused' | 'Unknown'
+  source: 'gateway_control' | 'missing'
+  reason: string | null
+  updatedAt: string | null
+}
+
+type AdminLabWorkflowControls = {
+  scoring: AdminLabWorkflowControlSummary
+  loops: AdminLabWorkflowControlSummary
+}
+
 type AdminLabActiveRun = {
   ticketId: string
   runId: string | null
@@ -306,6 +319,7 @@ type AdminLabOpsSummary = {
   state: AdminHealthState
   healthSignals: AdminLabHealthSignal[]
   dataFreshness: AdminLabDataFreshness
+  controls: AdminLabWorkflowControls
   scoring: AdminLabScoringSummary
   activeRuns: AdminLabActiveRun[]
   pipeline: AdminLabPipelineStage[]
@@ -746,7 +760,11 @@ function OpsHealthStrip({ ops }: { ops: AdminLabOpsSummary }) {
           </div>
           <SourcingModelPopover model={ops.sourcingModel} />
         </div>
-        <StatePill state={ops.state} label={stateLabel(ops.state)} />
+        <div className="flex flex-wrap items-center gap-2">
+          <WorkflowControlPill label="Scoring" control={ops.controls.scoring} />
+          <WorkflowControlPill label="Loops" control={ops.controls.loops} />
+          <StatePill state={ops.state} label={stateLabel(ops.state)} />
+        </div>
       </div>
       <div className="grid gap-px p-1 sm:grid-cols-2 lg:grid-cols-5">
         {ops.healthSignals.map((signal) => (
@@ -754,6 +772,29 @@ function OpsHealthStrip({ ops }: { ops: AdminLabOpsSummary }) {
         ))}
       </div>
     </section>
+  )
+}
+
+function WorkflowControlPill({
+  label,
+  control,
+}: {
+  label: 'Scoring' | 'Loops'
+  control: AdminLabWorkflowControlSummary
+}) {
+  const detail = [
+    `${label} ${control.label.toLowerCase()}`,
+    control.reason ? readableTag(control.reason) : null,
+    control.updatedAt ? `Updated ${formatRelative(control.updatedAt)}` : null,
+  ].filter(Boolean).join(' · ')
+
+  return (
+    <span title={detail}>
+      <StatePill
+        state={control.state === 'active' ? 'healthy' : control.state === 'paused' ? 'degraded' : 'unknown'}
+        label={`${label} ${control.label}`}
+      />
+    </span>
   )
 }
 

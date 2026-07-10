@@ -6,6 +6,90 @@ export type AdminLabTelemetryState =
   | 'idle'
   | 'unknown'
 
+export type AdminLabWorkflowControlState = 'active' | 'paused' | 'unknown'
+
+export type AdminLabWorkflowControlSummary = {
+  state: AdminLabWorkflowControlState
+  label: 'Active' | 'Paused' | 'Unknown'
+  source: 'gateway_control' | 'missing'
+  reason: string | null
+  updatedAt: string | null
+}
+
+export type AdminLabGatewayControlInput = {
+  current_event_type?: unknown
+  event_type?: unknown
+  current_control_status?: unknown
+  control_status?: unknown
+  current_reason?: unknown
+  reason?: unknown
+  status_detail?: unknown
+  current_status_at?: unknown
+  status_at?: unknown
+  updated_at?: unknown
+  created_at?: unknown
+}
+
+/**
+ * Translate a gateway maintenance-control row into the workflow state an
+ * operator cares about. An active maintenance control pauses its workflow;
+ * an inactive maintenance control means that workflow is active.
+ */
+export function normalizeAdminLabGatewayControl(
+  row: AdminLabGatewayControlInput | null,
+  unavailableReason: string | null = null,
+): AdminLabWorkflowControlSummary {
+  if (!row) {
+    return {
+      state: 'unknown',
+      label: 'Unknown',
+      source: 'missing',
+      reason: unavailableReason,
+      updatedAt: null,
+    }
+  }
+
+  const eventType = (
+    stringOrNull(row.current_event_type) ??
+    stringOrNull(row.event_type) ??
+    ''
+  ).toLowerCase()
+  const controlStatus = (
+    stringOrNull(row.current_control_status) ??
+    stringOrNull(row.control_status) ??
+    ''
+  ).toLowerCase()
+  const paused = eventType.includes('resume') || eventType.includes('unpause')
+    ? false
+    : eventType.includes('pause')
+      ? true
+      : controlStatus === 'active'
+        ? true
+        : controlStatus === 'inactive'
+          ? false
+          : null
+  const state: AdminLabWorkflowControlState = paused === null
+    ? 'unknown'
+    : paused
+      ? 'paused'
+      : 'active'
+
+  return {
+    state,
+    label: state === 'paused' ? 'Paused' : state === 'active' ? 'Active' : 'Unknown',
+    source: 'gateway_control',
+    reason:
+      stringOrNull(row.current_reason) ??
+      stringOrNull(row.reason) ??
+      stringOrNull(row.status_detail),
+    updatedAt:
+      isoStringOrNull(row.current_status_at) ??
+      isoStringOrNull(row.status_at) ??
+      isoStringOrNull(row.updated_at) ??
+      isoStringOrNull(row.created_at),
+  }
+}
+
 export type AdminLabCompanyDetail = {
   id: string
   name: string
@@ -61,6 +145,12 @@ function finiteNumberOrNull(value: unknown): number | null {
 
 function stringOrNull(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function isoStringOrNull(value: unknown): string | null {
+  const text = stringOrNull(value)
+  if (!text) return null
+  return Number.isFinite(new Date(text).getTime()) ? text : null
 }
 
 export type AdminLabErrorDetail = {

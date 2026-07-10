@@ -26,7 +26,10 @@ try {
   assert.equal(tsc.status, 0, 'admin telemetry helper should compile')
 
   const require = createRequire(import.meta.url)
-  const { normalizeAdminLabCompanyIntent } = require(join(outDir, 'admin-research-lab-telemetry.js'))
+  const {
+    normalizeAdminLabCompanyIntent,
+    normalizeAdminLabGatewayControl,
+  } = require(join(outDir, 'admin-research-lab-telemetry.js'))
   assert.deepEqual(
     normalizeAdminLabCompanyIntent({
       intent_signal: '54',
@@ -53,6 +56,29 @@ try {
       intentEvidenceDate: null,
     },
   )
+  assert.deepEqual(
+    normalizeAdminLabGatewayControl({
+      current_event_type: 'pause_requested',
+      current_control_status: 'active',
+      current_reason: 'operator_requested',
+      current_status_at: '2026-07-10T15:47:43.575724+00:00',
+    }),
+    {
+      state: 'paused',
+      label: 'Paused',
+      source: 'gateway_control',
+      reason: 'operator_requested',
+      updatedAt: '2026-07-10T15:47:43.575724+00:00',
+    },
+  )
+  assert.equal(
+    normalizeAdminLabGatewayControl({
+      current_event_type: 'resume_requested',
+      current_control_status: 'inactive',
+    }).state,
+    'active',
+  )
+  assert.equal(normalizeAdminLabGatewayControl(null).state, 'unknown')
 
   const routeSource = await readFile(resolve('src/app/api/admin/research-lab/route.ts'), 'utf8')
   assert.match(routeSource, /'intent_claimed_signal'/)
@@ -65,6 +91,9 @@ try {
     'all three company telemetry queries should retain model intent fields',
   )
   assert.match(routeSource, /normalizeAdminLabCompanyIntent\(row\)/)
+  assert.match(routeSource, /research_lab_gateway_control_current/)
+  assert.match(routeSource, /rowFor\('scoring_maintenance'\)/)
+  assert.match(routeSource, /rowFor\('autoresearch_maintenance'\)/)
 
   const componentSource = await readFile(resolve('src/app/admin/_components/AdminResearchLabTelemetry.tsx'), 'utf8')
   assert.match(componentSource, /Model intent/)
@@ -78,8 +107,11 @@ try {
   assert.match(adminComponentSource, /rgba\(80, 176, 112, 0\.46\)/)
   assert.match(adminComponentSource, /rgba\(207, 157, 97, 0\.44\)/)
   assert.match(adminComponentSource, /SourcingModelAlignmentPill/)
+  assert.match(adminComponentSource, /function WorkflowControlPill/)
+  assert.match(adminComponentSource, /label="Scoring" control=\{ops\.controls\.scoring\}/)
+  assert.match(adminComponentSource, /label="Loops" control=\{ops\.controls\.loops\}/)
 
-  console.log('admin-research-lab-telemetry: model intent details, evidence links, and model alignment tones passed')
+  console.log('admin-research-lab-telemetry: model intent, workflow controls, evidence links, and model alignment tones passed')
 } finally {
   await rm(outDir, { recursive: true, force: true })
 }
