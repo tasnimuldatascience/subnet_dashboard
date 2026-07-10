@@ -34,6 +34,7 @@ import type {
   AdminLabErrorDetail,
   AdminLabFunnelDetail,
   AdminLabIcpDetail,
+  AdminLabIntentSignalDetail,
   AdminLabRunDetail,
   AdminLabTelemetryState,
 } from '@/lib/admin-research-lab-telemetry'
@@ -647,6 +648,7 @@ type IcpMetadata = {
   icpHash: string | null
   industry: string | null
   subIndustry: string | null
+  intentSignals: AdminLabIntentSignalDetail[]
 }
 
 type IcpMetadataSnapshot = {
@@ -735,6 +737,7 @@ async function fetchIcpMetadata(
             icpHash: stringOr(icp.icp_hash) ?? null,
             industry: stringOr(icp.industry) ?? null,
             subIndustry: stringOr(icp.sub_industry) ?? null,
+            intentSignals: intentSignalsFromSignature(icp.intent_signal_signature),
           })
         }
       }
@@ -744,7 +747,106 @@ async function fetchIcpMetadata(
       latestRollingWindowHash = stringOr(row.rolling_window_hash) ?? stringOr(doc.rolling_window_hash) ?? null
     }
   }
+
+  const setIds = uniqueStrings(
+    Array.from(byRef.keys()).map((ref) => parseTelemetryIcpRef(ref).setId),
+  )
+  for (const batch of chunked(setIds, SUPABASE_IN_FILTER_BATCH_SIZE)) {
+    const { data: setData, error: setError } = await supabase
+      .from('qualification_private_icp_sets')
+      .select('set_id, icps')
+      .in('set_id', batch)
+
+    if (setError) {
+      console.warn('[admin:research-lab] canonical ICP intent metadata unavailable', setError.message)
+      break
+    }
+
+    for (const setRow of (setData ?? []) as Array<Record<string, unknown>>) {
+      const setId = String(setRow.set_id ?? '')
+      for (const icp of arrayOfRecords(setRow.icps) ?? []) {
+        const icpId = stringOr(icp.icp_id)
+        if (!setId || !icpId) continue
+        const ref = `qualification_private_icp_sets:${setId}:${icpId}`
+        const current = byRef.get(ref)
+        if (!current) continue
+        byRef.set(ref, {
+          ...current,
+          industry: stringOr(icp.industry) ?? current.industry,
+          subIndustry: stringOr(icp.sub_industry) ?? current.subIndustry,
+          intentSignals: normalizeIcpIntentSignals(icp, current.intentSignals),
+        })
+      }
+    }
+  }
   return { byRef, latestRefs, latestRollingWindowHash }
+}
+
+function parseTelemetryIcpRef(ref: string): { setId: string; icpId: string } {
+  const parts = ref.split(':')
+  return {
+    setId: parts.length >= 2 ? parts[1] : '',
+    icpId: parts.length >= 3 ? parts[2] : parts.at(-1) ?? '',
+  }
+}
+
+function intentSignalsFromSignature(value: unknown): AdminLabIntentSignalDetail[] {
+  const signature = stringOr(value)
+  if (!signature) return []
+  return uniqueStrings(signature.split('|').map((item) => item.trim()))
+    .map((text, index) => ({
+      text: text.charAt(0).toUpperCase() + text.slice(1),
+      category: null,
+      maxAgeDays: null,
+      primary: index === 0,
+    }))
+}
+
+function normalizeIcpIntentSignals(
+  icp: Record<string, unknown>,
+  fallback: AdminLabIntentSignalDetail[],
+): AdminLabIntentSignalDetail[] {
+  const primaryText = stringOr(icp.intent_signal) ?? ''
+  const primaryCategory = stringOr(icp.intent_category) ?? null
+  const primaryMaxAgeDays = finiteNumberOrNull(icp.intent_max_age_days)
+  const bonusByText = new Map<string, Record<string, unknown>>()
+  for (const bonus of arrayOfRecords(icp.bonus_intents) ?? []) {
+    const text = stringOr(bonus.intent_signal) ?? stringOr(bonus.text)
+    if (text) bonusByText.set(text.toLowerCase(), bonus)
+  }
+
+  const rawSignals = Array.isArray(icp.intent_signals) ? icp.intent_signals : []
+  const normalized: AdminLabIntentSignalDetail[] = []
+  const seen = new Set<string>()
+  const addSignal = (value: unknown, index: number) => {
+    const record = objectRecord(value)
+    const text = typeof value === 'string'
+      ? stringOr(value)
+      : stringOr(record?.text) ?? stringOr(record?.intent_signal)
+    if (!text) return
+    const key = text.toLowerCase()
+    if (seen.has(key)) return
+    seen.add(key)
+    const bonus = bonusByText.get(key)
+    const primary = primaryText ? key === primaryText.toLowerCase() : index === 0
+    normalized.push({
+      text,
+      category:
+        stringOr(record?.intent_category) ??
+        stringOr(record?.evidence_type) ??
+        (primary ? primaryCategory : stringOr(bonus?.intent_category) ?? null),
+      maxAgeDays:
+        finiteNumberOrNull(record?.intent_max_age_days) ??
+        finiteNumberOrNull(record?.recency_cap_days) ??
+        (primary ? primaryMaxAgeDays : finiteNumberOrNull(bonus?.intent_max_age_days)),
+      primary,
+    })
+  }
+
+  rawSignals.forEach(addSignal)
+  if (primaryText) addSignal(primaryText, 0)
+  for (const bonus of bonusByText.values()) addSignal(bonus, normalized.length)
+  return normalized.length > 0 ? normalized : fallback
 }
 
 async function fetchDailyBenchmarkTelemetry(
@@ -848,6 +950,7 @@ async function fetchDailyBenchmarkTelemetry(
       failureReason: processed && companyRows.length === 0 && cost.errorCount > 0 ? 'No surfaced companies; provider errors recorded.' : null,
       hardFailure: processed && companyRows.length === 0 && cost.errorCount > 0,
       funnel: null,
+      intentSignals: meta?.intentSignals ?? [],
       companyScoreCount: companyRows.length,
       companies: companyRows,
     }
@@ -1068,6 +1171,7 @@ function buildScoreBundleIcpDetails(
         failureReason,
         hardFailure: booleanOr(row.hard_failure) ?? false,
         funnel: normalizeFunnel(row.funnel),
+        intentSignals: meta?.intentSignals ?? [],
         companyScoreCount: Math.max(candidateCompanyScores.length, surfaced.length),
         companies: surfaced,
       }

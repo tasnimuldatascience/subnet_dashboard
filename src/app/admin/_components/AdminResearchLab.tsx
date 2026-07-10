@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   Activity,
@@ -8,6 +8,7 @@ import {
   BarChart3,
   Clock3,
   CircleDollarSign,
+  ChevronRight,
   Database,
   Gauge,
   Loader2,
@@ -355,6 +356,14 @@ export function AdminResearchLab({
   const [timelineByTicket, setTimelineByTicket] = useState<Record<string, LabTimelinePayload | null>>({})
   const [loadingTicketId, setLoadingTicketId] = useState<string | null>(null)
   const [detailError, setDetailError] = useState<string | null>(null)
+  const runInspectorRef = useRef<HTMLElement | null>(null)
+
+  const selectRunForInspection = (ticketId: string) => {
+    setSelectedTicketId(ticketId)
+    window.requestAnimationFrame(() => {
+      runInspectorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+  }
 
   useEffect(() => setLivePayload(payload), [payload])
 
@@ -517,8 +526,6 @@ export function AdminResearchLab({
 
           <DailyBenchmarkTelemetry benchmark={ops.dailyBenchmark} />
 
-          <ChampionTelemetry champions={ops.champions} />
-
           <ComputeSpendPanel spend={ops.computeSpend} />
 
           <section className="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.7fr)]">
@@ -526,10 +533,12 @@ export function AdminResearchLab({
             <PipelinePanel stages={ops.pipeline} />
           </section>
 
+          <ChampionTelemetry champions={ops.champions} />
+
           <ActiveRunsPanel
             runs={ops.activeRuns}
             selectedTicketId={selectedLoop?.ticketId ?? null}
-            onSelect={(ticketId) => setSelectedTicketId(ticketId)}
+            onSelect={selectRunForInspection}
           />
 
           <section className="grid gap-4 xl:grid-cols-3">
@@ -540,7 +549,11 @@ export function AdminResearchLab({
         </>
       ) : null}
 
-      <section className="grid min-h-[640px] gap-4 xl:grid-cols-[420px_minmax(0,1fr)]">
+      <section
+        ref={runInspectorRef}
+        id="run-inspector"
+        className="grid min-h-[640px] scroll-mt-24 gap-4 xl:grid-cols-[420px_minmax(0,1fr)]"
+      >
         <div className="space-y-3">
           <div className="relative">
             <Search
@@ -579,7 +592,7 @@ export function AdminResearchLab({
                     key={loop.cardId}
                     loop={loop}
                     active={selectedLoop?.ticketId === loop.ticketId}
-                    onSelect={() => setSelectedTicketId(loop.ticketId)}
+                    onSelect={() => selectRunForInspection(loop.ticketId)}
                   />
                 ))}
               </div>
@@ -1014,7 +1027,7 @@ function ActiveRunsPanel({
       <PanelHeader
         icon={<Clock3 className="h-4 w-4 text-gold" />}
         title="Current Runs"
-        aside={<span className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>{runs.length} visible</span>}
+        aside={<span className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>{runs.length} visible · select to inspect</span>}
       />
       {runs.length === 0 ? (
         <div className="p-6 text-sm" style={{ color: 'var(--text-secondary)' }}>
@@ -1022,7 +1035,7 @@ function ActiveRunsPanel({
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[980px] text-left text-xs">
+          <table className="w-full min-w-[1080px] text-left text-xs">
             <thead
               className="border-b"
               style={{ borderColor: 'var(--surface-border)', color: 'var(--text-tertiary)' }}
@@ -1035,6 +1048,7 @@ function ActiveRunsPanel({
                 <th className="px-3 py-3 font-medium">Bundle</th>
                 <th className="px-3 py-3 font-medium">Idle</th>
                 <th className="px-4 py-3 font-medium">Blocker</th>
+                <th className="px-4 py-3 text-right font-medium">Details</th>
               </tr>
             </thead>
             <tbody>
@@ -1096,6 +1110,20 @@ function ActiveRunsPanel({
                       <div className="line-clamp-2 text-[11px] leading-relaxed" style={{ color: run.blocker ? 'var(--text-secondary)' : 'var(--text-tertiary)' }}>
                         {run.blocker || 'No blocker reported'}
                       </div>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onSelect(run.ticketId)
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[10px] font-medium uppercase tracking-[0.08em] transition-colors hover-bg-warm"
+                        style={{ borderColor: 'var(--surface-border-strong)', color: 'var(--text-primary)' }}
+                      >
+                        View details
+                        <ChevronRight className="h-3.5 w-3.5" />
+                      </button>
                     </td>
                   </tr>
                 )

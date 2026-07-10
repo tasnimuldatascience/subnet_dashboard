@@ -6,6 +6,7 @@ import {
   ChevronDown,
   CircleDollarSign,
   Gauge,
+  Target,
   Trophy,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -63,10 +64,32 @@ export function DailyBenchmarkTelemetry({ benchmark }: { benchmark: AdminLabDail
         </div>
 
         {benchmark.icps.length > 0 || benchmark.errors.length > 0 ? (
-          <div className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
-            <IcpTelemetryList icps={benchmark.icps} scoreLabel="Current score" />
-            <ErrorStream errors={benchmark.errors} title="Live errors" />
-          </div>
+          <details
+            className="group mt-4 overflow-hidden rounded-lg border"
+            style={{ borderColor: 'var(--surface-border)', background: 'var(--surface-base)' }}
+          >
+            <summary className="cursor-pointer list-none px-4 py-3 marker:hidden hover-bg-warm">
+              <div className="flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>
+                    ICP details and live errors
+                  </div>
+                  <div className="mt-1 text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+                    {benchmark.icps.length} ICPs · {benchmark.errorCount.toLocaleString()} error events · collapsed by default
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-2 text-[10px] font-medium uppercase tracking-[0.1em]" style={{ color: 'var(--text-secondary)' }}>
+                  <span className="group-open:hidden">Show details</span>
+                  <span className="hidden group-open:inline">Hide details</span>
+                  <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
+                </div>
+              </div>
+            </summary>
+            <div className="grid gap-4 border-t p-3 xl:grid-cols-[minmax(0,1fr)_340px]" style={{ borderColor: 'var(--surface-border)' }}>
+              <IcpTelemetryList icps={benchmark.icps} scoreLabel="Current score" />
+              <ErrorStream errors={benchmark.errors} title="Live errors" />
+            </div>
+          </details>
         ) : (
           <EmptyTelemetry message="Waiting for the first per-ICP provider event." />
         )}
@@ -250,6 +273,7 @@ function IcpTelemetryList({ icps, scoreLabel }: { icps: AdminLabIcpDetail[]; sco
                 <TelemetryMetric label="Provider calls" value={icp.providerEventCount} />
                 <TelemetryMetric label="Company score rows" value={icp.companyScoreCount} />
               </div>
+              <IntentSignalList icp={icp} />
               {icp.funnel ? (
                 <div className="mt-2 grid grid-cols-5 gap-1 rounded-lg border p-2 text-center" style={{ borderColor: 'var(--surface-border)' }}>
                   {[
@@ -274,6 +298,50 @@ function IcpTelemetryList({ icps, scoreLabel }: { icps: AdminLabIcpDetail[]; sco
               <CompanyList icp={icp} />
             </div>
           </details>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function IntentSignalList({ icp }: { icp: AdminLabIcpDetail }) {
+  if (icp.intentSignals.length === 0) return null
+  return (
+    <div className="mt-3">
+      <div className="mb-2 flex items-center gap-2 text-[10px] uppercase tracking-[0.12em]" style={{ color: 'var(--text-tertiary)' }}>
+        <Target className="h-3.5 w-3.5" /> Intent signals
+      </div>
+      <div className="grid gap-2 md:grid-cols-2">
+        {icp.intentSignals.map((signal) => (
+          <div
+            key={`${signal.primary ? 'primary' : 'bonus'}:${signal.text}`}
+            className="rounded-md border px-3 py-2.5"
+            style={{ borderColor: 'var(--surface-border)', background: 'var(--surface-base)' }}
+          >
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className={cn(
+                'rounded border px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-[0.09em]',
+                signal.primary
+                  ? 'border-gold-soft bg-gold-soft text-gold'
+                  : 'border-white/10 text-white/50',
+              )}>
+                {signal.primary ? 'Primary' : 'Bonus'}
+              </span>
+              {signal.category ? (
+                <span className="rounded border px-1.5 py-0.5 text-[9px]" style={{ borderColor: 'var(--surface-border)', color: 'var(--text-tertiary)' }}>
+                  {readable(signal.category)}
+                </span>
+              ) : null}
+              {signal.maxAgeDays !== null ? (
+                <span className="rounded border px-1.5 py-0.5 text-[9px] tabular-nums" style={{ borderColor: 'var(--surface-border)', color: 'var(--text-tertiary)' }}>
+                  ≤ {signal.maxAgeDays.toLocaleString()}d old
+                </span>
+              ) : null}
+            </div>
+            <div className="mt-2 text-xs leading-relaxed" style={{ color: 'var(--text-primary)' }}>
+              {signal.text}
+            </div>
+          </div>
         ))}
       </div>
     </div>

@@ -44,6 +44,13 @@ export type AdminLabFunnelDetail = {
   scored: number
 }
 
+export type AdminLabIntentSignalDetail = {
+  text: string
+  category: string | null
+  maxAgeDays: number | null
+  primary: boolean
+}
+
 export type AdminLabIcpDetail = {
   icpRef: string
   icpHash: string | null
@@ -61,6 +68,7 @@ export type AdminLabIcpDetail = {
   failureReason: string | null
   hardFailure: boolean
   funnel: AdminLabFunnelDetail | null
+  intentSignals: AdminLabIntentSignalDetail[]
   companyScoreCount: number
   companies: AdminLabCompanyDetail[]
 }
