@@ -34,7 +34,6 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { cn } from '@/lib/utils'
 import { formatDateTime, formatRelative, shortHotkey } from '@/lib/admin-format'
 import {
-  ChampionTelemetry,
   DailyBenchmarkTelemetry,
   RunTelemetry,
 } from './AdminResearchLabTelemetry'
@@ -555,7 +554,7 @@ export function AdminResearchLab({
         <>
           <OpsHealthStrip ops={ops} />
 
-          <DailyBenchmarkTelemetry benchmark={ops.dailyBenchmark} />
+          <DailyBenchmarkTelemetry benchmark={ops.dailyBenchmark} champions={ops.champions} />
 
           <ComputeSpendPanel spend={ops.computeSpend} />
 
@@ -563,8 +562,6 @@ export function AdminResearchLab({
             <ScoringPanel scoring={ops.scoring} />
             <PipelinePanel stages={ops.pipeline} />
           </section>
-
-          <ChampionTelemetry champions={ops.champions} />
 
           <ActiveRunsPanel
             runs={ops.activeRuns}
@@ -762,16 +759,17 @@ function OpsHealthStrip({ ops }: { ops: AdminLabOpsSummary }) {
 
 function SourcingModelPopover({ model }: { model: AdminLabSourcingModelSummary }) {
   const active = model.status?.toLowerCase() === 'active'
-  const freshnessState: AdminHealthState = model.commitFreshness === 'latest'
+  const inLine = active && model.commitFreshness === 'latest'
+  const outOfLine = model.sourceAvailable && (
+    !active || model.commitFreshness === 'behind'
+  )
+  const alignmentTone = sourcingModelAlignmentTone(inLine, outOfLine)
+  const freshnessState: AdminHealthState = inLine
     ? 'healthy'
-    : model.commitFreshness === 'behind'
-      ? 'critical'
+    : outOfLine
+      ? 'degraded'
       : 'unknown'
-  const freshnessLabel = model.commitFreshness === 'latest'
-    ? 'Latest'
-    : model.commitFreshness === 'behind'
-      ? 'Behind'
-      : 'Unknown'
+  const freshnessLabel = inLine ? 'In line' : outOfLine ? 'Out of line' : 'Unknown'
   const comparisonBranch = model.comparisonBranch ?? model.branch ?? 'repository'
   const comparisonCopy = model.commitFreshness === 'latest'
     ? `Matches the latest known ${comparisonBranch} commit`
@@ -791,9 +789,9 @@ function SourcingModelPopover({ model }: { model: AdminLabSourcingModelSummary }
           title={triggerLabel}
           className="premium-focus inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition-colors hover-bg-warm"
           style={{
-            borderColor: active ? 'rgba(201, 169, 110, 0.34)' : 'var(--surface-border)',
-            background: active ? 'rgba(201, 169, 110, 0.08)' : 'var(--surface-base)',
-            color: active ? 'var(--gold)' : 'var(--text-tertiary)',
+            borderColor: alignmentTone.borderColor,
+            background: alignmentTone.background,
+            color: alignmentTone.color,
           }}
         >
           <Container className="h-3.5 w-3.5" aria-hidden />
@@ -811,8 +809,11 @@ function SourcingModelPopover({ model }: { model: AdminLabSourcingModelSummary }
       >
         <div className="flex items-start justify-between gap-4 border-b px-4 py-3" style={{ borderColor: 'var(--surface-border)' }}>
           <div className="flex min-w-0 items-start gap-2.5">
-            <div className="mt-0.5 rounded-md border p-1.5" style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)' }}>
-              <GitCommitHorizontal className="h-3.5 w-3.5 text-gold" aria-hidden />
+            <div
+              className="mt-0.5 rounded-md border p-1.5"
+              style={{ borderColor: alignmentTone.borderColor, background: alignmentTone.background }}
+            >
+              <GitCommitHorizontal className="h-3.5 w-3.5" style={{ color: alignmentTone.color }} aria-hidden />
             </div>
             <div className="min-w-0">
               <div className="text-sm font-medium">Sourcing model image</div>
@@ -826,21 +827,25 @@ function SourcingModelPopover({ model }: { model: AdminLabSourcingModelSummary }
               state={!model.sourceAvailable ? 'unknown' : active ? 'healthy' : 'degraded'}
               label={!model.sourceAvailable ? 'Unavailable' : model.status ?? 'Not reported'}
             />
-            <StatePill state={freshnessState} label={freshnessLabel} />
+            <SourcingModelAlignmentPill label={freshnessLabel} tone={alignmentTone} />
           </div>
         </div>
 
         <div className="space-y-3 p-4">
-          <div className="rounded-lg border px-3 py-2.5" style={{ borderColor: 'rgba(201, 169, 110, 0.28)', background: 'rgba(201, 169, 110, 0.06)' }}>
+          <div
+            className="rounded-lg border px-3 py-2.5"
+            style={{ borderColor: alignmentTone.borderColor, background: alignmentTone.background }}
+          >
             <div className="text-[10px] uppercase tracking-[0.12em]" style={{ color: 'var(--text-tertiary)' }}>
               Active commit
             </div>
-            <code className="mt-1.5 block break-all text-xs leading-relaxed text-gold">
+            <code className="mt-1.5 block break-all text-xs leading-relaxed" style={{ color: alignmentTone.color }}>
               {model.gitCommitSha ?? 'Not reported'}
             </code>
-            <div className="mt-2 flex items-center gap-2 text-[10px]" style={{ color: model.commitFreshness === 'behind' ? 'var(--accent-negative)' : 'var(--text-secondary)' }}>
+            <div className="mt-2 flex items-center gap-2 text-[10px]" style={{ color: alignmentTone.color }}>
               <span
                 className={cn('h-1.5 w-1.5 shrink-0 rounded-full', stateDotClass(freshnessState))}
+                style={{ background: alignmentTone.color }}
                 aria-hidden
               />
               <span>{comparisonCopy}</span>
@@ -854,7 +859,10 @@ function SourcingModelPopover({ model }: { model: AdminLabSourcingModelSummary }
           ) : null}
 
           {model.sourceAvailable && !model.commitComparisonAvailable ? (
-            <div className="rounded-lg border border-gold-soft bg-gold-soft px-3 py-2 text-[11px] leading-relaxed text-gold">
+            <div
+              className="rounded-lg border px-3 py-2 text-[11px] leading-relaxed"
+              style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)', color: 'var(--text-secondary)' }}
+            >
               Latest-commit comparison is incomplete{model.commitComparisonReason ? `: ${model.commitComparisonReason}` : '.'}
             </div>
           ) : null}
@@ -895,6 +903,55 @@ function SourcingModelPopover({ model }: { model: AdminLabSourcingModelSummary }
         </div>
       </PopoverContent>
     </Popover>
+  )
+}
+
+type SourcingModelAlignmentTone = {
+  borderColor: string
+  background: string
+  color: string
+}
+
+function sourcingModelAlignmentTone(
+  inLine: boolean,
+  outOfLine: boolean,
+): SourcingModelAlignmentTone {
+  if (inLine) {
+    return {
+      borderColor: 'rgba(80, 176, 112, 0.46)',
+      background: 'rgba(80, 176, 112, 0.11)',
+      color: '#8fd2a8',
+    }
+  }
+  if (outOfLine) {
+    return {
+      borderColor: 'rgba(207, 157, 97, 0.44)',
+      background: 'rgba(207, 157, 97, 0.10)',
+      color: '#d9ad77',
+    }
+  }
+  return {
+    borderColor: 'var(--surface-border)',
+    background: 'var(--surface-base)',
+    color: 'var(--text-tertiary)',
+  }
+}
+
+function SourcingModelAlignmentPill({
+  label,
+  tone,
+}: {
+  label: string
+  tone: SourcingModelAlignmentTone
+}) {
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em]"
+      style={{ borderColor: tone.borderColor, background: tone.background, color: tone.color }}
+    >
+      <span className="h-1.5 w-1.5 rounded-full" style={{ background: tone.color }} />
+      {label}
+    </span>
   )
 }
 

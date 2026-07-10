@@ -15,10 +15,52 @@ export type AdminLabCompanyDetail = {
   modelSide: string | null
   fitPassed: boolean | null
   intentPassed: boolean | null
+  intentScore: number | null
+  intentClaimedSignal: string | null
+  intentSource: string | null
+  intentEvidenceUrl: string | null
+  intentEvidenceDate: string | null
   failureReason: string | null
   industry: string | null
   country: string | null
   capturedAt: string | null
+}
+
+export type AdminLabCompanyIntentTelemetryInput = {
+  intent_signal?: unknown
+  intent_claimed_signal?: unknown
+  intent_source?: unknown
+  intent_evidence_url?: unknown
+  intent_evidence_date?: unknown
+}
+
+export function normalizeAdminLabCompanyIntent(
+  row: AdminLabCompanyIntentTelemetryInput,
+): Pick<
+  AdminLabCompanyDetail,
+  | 'intentScore'
+  | 'intentClaimedSignal'
+  | 'intentSource'
+  | 'intentEvidenceUrl'
+  | 'intentEvidenceDate'
+> {
+  return {
+    intentScore: finiteNumberOrNull(row.intent_signal),
+    intentClaimedSignal: stringOrNull(row.intent_claimed_signal),
+    intentSource: stringOrNull(row.intent_source),
+    intentEvidenceUrl: stringOrNull(row.intent_evidence_url),
+    intentEvidenceDate: stringOrNull(row.intent_evidence_date),
+  }
+}
+
+function finiteNumberOrNull(value: unknown): number | null {
+  if (typeof value === 'string' && value.trim() === '') return null
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric : null
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
 export type AdminLabErrorDetail = {
@@ -29,6 +71,9 @@ export type AdminLabErrorDetail = {
   statusCode: number | null
   provider: string | null
   endpoint: string | null
+  requestCommand: string | null
+  requestCommandSource: 'recorded' | 'endpoint_only' | 'unavailable'
+  requestFingerprint: string | null
   icpRef: string | null
   candidateId: string | null
   runId: string | null
@@ -65,6 +110,11 @@ export type AdminLabIcpDetail = {
   budgetUsd: number | null
   providerEventCount: number
   errorCount: number
+  runtimeStartedAt: string | null
+  runtimeEndedAt: string | null
+  lastActivityAt: string | null
+  runtimeMs: number | null
+  isInProgress: boolean
   failureReason: string | null
   hardFailure: boolean
   funnel: AdminLabFunnelDetail | null
