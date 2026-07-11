@@ -160,6 +160,8 @@ const NO_PAYMENT_VALUES = new Set([
   'no_receipt',
 ])
 
+const EXPIRED_VALUES = new Set(['expired', 'payment_expired', 'ticket_expired'])
+
 const CREDIT_BLOCK_VALUES = new Set([
   'blocked_for_credit',
   'waiting_for_credits',
@@ -290,6 +292,7 @@ const COMPLETED_STATUS_KEYS = new Set([
   'failed',
   'cancelled',
   'canceled',
+  'expired',
 ])
 const PROMISING_STATUS_KEYS = new Set([
   'scored_promising',
@@ -333,6 +336,7 @@ export const RESEARCH_LAB_STATUS_FILTER_OPTIONS: ResearchLabStatusFilterOption[]
   { value: 'completed_no_candidate', label: 'No Candidate' },
   { value: 'failed', label: 'Failed' },
   { value: 'awaiting_payment', label: 'Awaiting Funding' },
+  { value: 'expired', label: 'Expired' },
 ]
 
 export const RESEARCH_LAB_OUTCOME_FILTER_OPTIONS = RESEARCH_LAB_STATUS_FILTER_OPTIONS
@@ -375,6 +379,10 @@ export function deriveResearchLabLoopStatus(input: ResearchLabLoopStatusInput): 
 
   if (projectedLabel === 'awaiting_payment') {
     return status('awaiting_payment', 'Awaiting funding', 'pending')
+  }
+
+  if (EXPIRED_VALUES.has(projectedLabel) || EXPIRED_VALUES.has(projectedBand)) {
+    return status('expired', 'Expired', 'expired')
   }
 
   if (FAILED_VALUES.has(projectedLabel)) {
@@ -473,6 +481,7 @@ export function researchLabStatusFilterKey(
   if (normalized === 'failed' || normalized === 'rebase_unavailable') return 'failed'
   if (normalized === 'cancelled' || normalized === 'canceled') return 'failed'
   if (normalized === 'awaiting_payment') return 'awaiting_payment'
+  if (normalized === 'expired') return 'expired'
   if (normalized === 'not_started') return 'paid_not_started'
   return normalized
 }
@@ -603,6 +612,14 @@ function deriveCanonicalResearchLabLoopStatus(input: ResearchLabLoopStatusInput)
     scoredAction
   )
   if (modelResult) return modelResult
+
+  if (hasAny(canonicalValues, EXPIRED_VALUES)) {
+    return status('expired', 'Expired', 'expired', {
+      tone: 'warning',
+      label: 'Payment window expired',
+      detail: statusDetail || 'The ticket expired before its loop-start payment was recorded.',
+    })
+  }
 
   if (hasAny(canonicalValues, NO_PAYMENT_VALUES)) {
     return status('awaiting_payment', 'Awaiting funding', 'pending')
@@ -941,6 +958,9 @@ function canonicalProjectionStatus(input: ResearchLabLoopStatusInput): ResearchL
   }
 
   const ticketStatus = normalize(input.currentTicketStatus ?? input.ticketStatus)
+  if (input.hasCanonicalTicketStatus && EXPIRED_VALUES.has(ticketStatus)) {
+    return status('expired', 'Expired', 'expired')
+  }
   if (
     input.hasCanonicalTicketStatus &&
     (ticketStatus === 'running' || ticketStatus === 'queued' || ticketStatus === 'started')
@@ -1252,6 +1272,7 @@ function labelForStatus(value: string): string {
     stale: 'Stale',
     waiting_for_baseline: 'Waiting for baseline',
     awaiting_payment: 'Awaiting funding',
+    expired: 'Expired',
     not_started: 'Not started',
     failed: 'Failed',
     cancelled: 'Cancelled',

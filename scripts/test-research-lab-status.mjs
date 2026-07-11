@@ -52,6 +52,22 @@ try {
       },
     },
     {
+      name: 'canonical expired unpaid ticket renders a terminal Expired state',
+      input: {
+        publicStatus: 'expired',
+        paymentState: 'expired',
+        statusDetail: 'Payment window expired before the loop started.',
+      },
+      expected: {
+        key: 'expired',
+        label: 'Expired',
+        band: 'expired',
+        active: false,
+        scoring: false,
+        detail: 'Payment window expired before the loop started.',
+      },
+    },
+    {
       name: 'canonical paid loop with no worker run renders Paid, not started',
       input: {
         publicStatus: 'paid_not_started',
@@ -879,6 +895,7 @@ try {
     'completed_no_candidate',
     'failed',
     'awaiting_payment',
+    'expired',
   ], 'status filter options should include requested public outcome buckets')
 
   const activityLoops = [
@@ -904,6 +921,19 @@ try {
         paymentState: 'no_payment',
       }).key,
       lastActivityAt: '2026-01-08T00:00:00Z',
+    },
+    {
+      id: 'expired-payment-theta',
+      minerHotkey: 'theta-hotkey',
+      topicSignatureHash: 'billing',
+      topicTags: ['payment_state'],
+      researchArea: 'ops',
+      outcomeLabel: 'expired',
+      statusKey: deriveResearchLabLoopStatus({
+        publicStatus: 'expired',
+        paymentState: 'expired',
+      }).key,
+      lastActivityAt: '2026-01-08T01:00:00Z',
     },
     {
       id: 'paid-not-started-beta',
@@ -1083,6 +1113,11 @@ try {
     byId(filterResearchLabActivityLoops(activityLoops, { status: 'awaiting_payment' })),
     ['awaiting-payment-alpha'],
     'status filter should find awaiting funding loops'
+  )
+  assert.deepEqual(
+    byId(filterResearchLabActivityLoops(activityLoops, { status: 'expired' })),
+    ['expired-payment-theta'],
+    'status filter should find expired unpaid tickets'
   )
   assert.deepEqual(
     byId(filterResearchLabActivityLoops(activityLoops, { status: 'active' })),
