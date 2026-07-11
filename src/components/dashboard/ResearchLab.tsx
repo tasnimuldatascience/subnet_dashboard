@@ -23,6 +23,7 @@ import {
   researchLabLoopDirectionKeys as getResearchLabLoopDirectionKeys,
   researchLabStatusFilterOptionsWithCounts,
 } from '@/lib/research-lab-status'
+import { formatLabAllocationPercent } from '@/lib/research-lab-emissions'
 import type { MetagraphData } from '@/lib/types'
 
 type ResearchLabData = {
@@ -395,7 +396,6 @@ const LAB_MINER_PAGE_SIZE = 10
 
 export function ResearchLab({
   onSync,
-  metagraph,
 }: { onSync?: () => void; metagraph?: MetagraphData | null } = {}) {
   const [data, setData] = useState<ResearchLabData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -477,7 +477,6 @@ export function ResearchLab({
 
       <LabEmissionSplit
         loops={loops}
-        metagraph={metagraph}
         spend={data?.labMinerSpend ?? null}
         activity={data?.labMinerActivity ?? null}
         selectedHotkey={selectedEmissionHotkey}
@@ -677,7 +676,7 @@ type LabMinerRow = {
   active: number
   scored: number
   promising: number
-  metagraphIncentivePct: number
+  labAllocationPaidAlphaPercent: number
   displayedEmissionPct: number
   alphaEarned: number
   alphaSharePct: number
@@ -694,14 +693,12 @@ type LabMinerMode = 'window' | 'all_time'
 
 function LabEmissionSplit({
   loops,
-  metagraph,
   spend,
   activity,
   selectedHotkey,
   onSelectHotkey,
 }: {
   loops: ResearchLoop[]
-  metagraph?: MetagraphData | null
   spend?: LabMinerSpendRollup | null
   activity?: LabMinerActivityRollup | null
   selectedHotkey: string | null
@@ -710,7 +707,6 @@ function LabEmissionSplit({
   const [mode, setMode] = useState<LabMinerMode>('window')
   const [hoveredVialHotkey, setHoveredVialHotkey] = useState<string | null>(null)
   const [leaderboardPage, setLeaderboardPage] = useState(1)
-  const incentives = useMemo(() => metagraph?.incentives ?? {}, [metagraph?.incentives])
 
   const rows = useMemo<LabMinerRow[]>(() => {
     const activityByHotkey = mode === 'all_time' ? activity?.allTime : activity?.last24h
@@ -741,13 +737,10 @@ function LabEmissionSplit({
       }
     }
     const rowsWithEmission = Array.from(byHotkey.entries()).map(([hotkey, activityEntry]) => {
-      const metagraphIncentivePct = Math.max(0, incentives[hotkey] ?? 0) * 100
       const windowSpendEntry = spend?.byHotkey?.[hotkey]
       const allTimeSpendEntry = spend?.allTime?.byHotkey?.[hotkey]
       const currentAllocationEntry = spend?.currentAllocation?.byHotkey?.[hotkey]
-      const currentAllocationPaidAlphaPercent = Math.max(0, currentAllocationEntry?.paidAlphaPercent ?? 0)
-      const hasCurrentChampionReward = currentAllocationPaidAlphaPercent > 0
-        && (currentAllocationEntry?.reasons ?? []).some((reason) => reason.toLowerCase().includes('champion'))
+      const labAllocationPaidAlphaPercent = Math.max(0, currentAllocationEntry?.paidAlphaPercent ?? 0)
       const computeSpendUsd = mode === 'all_time'
         ? Math.max(0, allTimeSpendEntry?.computeSpendUsd ?? 0)
         : Math.max(0, windowSpendEntry?.computeSpendUsd ?? 0)
@@ -761,14 +754,14 @@ function LabEmissionSplit({
         scored: activityEntry.scored,
         promising: activityEntry.promising,
         lastActivityAt: activityEntry.lastActivityAt,
-        metagraphIncentivePct,
+        labAllocationPaidAlphaPercent,
         displayedEmissionPct: 0,
         alphaEarned: Math.max(0, allTimeSpendEntry?.alphaEarned ?? 0),
         alphaSharePct: 0,
         computeSpendUsd,
         scheduledReimbursementUsd,
         activeAwardCount: Math.max(0, windowSpendEntry?.activeAwardCount ?? 0),
-        hasCurrentReward: metagraphIncentivePct > 0 || hasCurrentChampionReward,
+        hasCurrentReward: labAllocationPaidAlphaPercent > 0,
         awardCount: Math.max(0, allTimeSpendEntry?.awardCount ?? 0),
         reimbursementEpochs: (mode === 'all_time'
           ? allTimeSpendEntry?.reimbursementEpochs
@@ -778,12 +771,14 @@ function LabEmissionSplit({
     const visibleRows = mode === 'all_time'
       ? rowsWithEmission
       : rowsWithEmission.filter((row) => row.computeSpendUsd > 0 || row.hasCurrentReward)
-    const displayedEmissionTotal = visibleRows.reduce((sum, row) => sum + row.metagraphIncentivePct, 0)
+    const displayedEmissionTotal = visibleRows.reduce((sum, row) => sum + row.labAllocationPaidAlphaPercent, 0)
     const totalAlphaEarned = visibleRows.reduce((sum, row) => sum + row.alphaEarned, 0)
     return visibleRows
       .map((row) => ({
         ...row,
-        displayedEmissionPct: displayedEmissionTotal > 0 ? (row.metagraphIncentivePct / displayedEmissionTotal) * 100 : 0,
+        displayedEmissionPct: displayedEmissionTotal > 0
+          ? (row.labAllocationPaidAlphaPercent / displayedEmissionTotal) * 100
+          : 0,
         alphaSharePct: totalAlphaEarned > 0 ? (row.alphaEarned / totalAlphaEarned) * 100 : 0,
       }))
       .sort(
@@ -793,7 +788,7 @@ function LabEmissionSplit({
           b.scored - a.scored ||
           a.hotkey.localeCompare(b.hotkey)
           :
-          b.metagraphIncentivePct - a.metagraphIncentivePct ||
+          b.labAllocationPaidAlphaPercent - a.labAllocationPaidAlphaPercent ||
           b.count - a.count ||
           b.scored - a.scored ||
           a.hotkey.localeCompare(b.hotkey)
@@ -801,7 +796,6 @@ function LabEmissionSplit({
   }, [
     activity?.allTime,
     activity?.last24h,
-    incentives,
     loops,
     mode,
     spend?.allTime?.byHotkey,
@@ -809,13 +803,13 @@ function LabEmissionSplit({
     spend?.currentAllocation?.byHotkey,
   ])
 
-  const barRows = rows.filter((row) => mode === 'all_time' ? row.alphaEarned > 0 : row.metagraphIncentivePct > 0)
+  const barRows = rows.filter((row) => mode === 'all_time' ? row.alphaEarned > 0 : row.labAllocationPaidAlphaPercent > 0)
   const selected = selectedHotkey ? rows.find((row) => row.hotkey === selectedHotkey) ?? null : null
   const isAllTime = mode === 'all_time'
-  const primaryMetricLabel = isAllTime ? 'Total alpha earned' : 'Incentive'
+  const primaryMetricLabel = isAllTime ? 'Total alpha earned' : 'Lab allocation'
   const emptyBarLabel = isAllTime
     ? 'No lab alpha allocation history for these hotkeys yet'
-    : 'No current metagraph incentive for these Lab-active hotkeys'
+    : 'No current Lab allocation for these Lab-active hotkeys'
   const vialSegments = useMemo(() => {
     let left = 0
     return barRows.map((row) => {
@@ -913,7 +907,7 @@ function LabEmissionSplit({
             <div className="mt-1 whitespace-nowrap font-mono text-[10px] text-[var(--platinum)]">
               {isAllTime
                 ? `${formatAlpha(hoveredVialSegment.row.alphaEarned)} ㄴ Leadpoet alpha earned`
-                : `${formatPercent(hoveredVialSegment.row.metagraphIncentivePct)} metagraph incentive`}
+                : `${formatLabAllocationPercent(hoveredVialSegment.row.labAllocationPaidAlphaPercent)} Lab allocation`}
             </div>
           </div>
         ) : null}
@@ -943,7 +937,7 @@ function LabEmissionSplit({
                     }}
                     aria-label={isAllTime
                       ? `${formatAlpha(row.alphaEarned)} alpha earned all time for hotkey ${row.hotkey}`
-                      : `${formatPercent(row.metagraphIncentivePct)} metagraph incentive for hotkey ${row.hotkey}`}
+                      : `${formatLabAllocationPercent(row.labAllocationPaidAlphaPercent)} current Lab allocation for hotkey ${row.hotkey}`}
                   />
                 )
               })
@@ -993,13 +987,13 @@ function LabEmissionSplit({
                 <span className="min-w-0">
                   <HotkeyCopyButton hotkey={row.hotkey} />
                   <span className="mt-1 block font-mono text-[10px] text-[var(--muted-2)] md:hidden">
-                    {row.count} loops · {row.active} active · {row.promising} improvements · {isAllTime ? `${formatAlpha(row.alphaEarned)} ㄴ earned` : `${formatPercent(row.metagraphIncentivePct)} incentive`} · {formatUsd(row.computeSpendUsd)} compute
+                    {row.count} loops · {row.active} active · {row.promising} improvements · {isAllTime ? `${formatAlpha(row.alphaEarned)} ㄴ earned` : `${formatLabAllocationPercent(row.labAllocationPaidAlphaPercent)} Lab allocation`} · {formatUsd(row.computeSpendUsd)} compute
                   </span>
                 </span>
               </span>
               <span className="text-right tabular-nums">
                 <span className="block font-display text-[16px] font-medium text-[var(--platinum)]">
-                  {isAllTime ? `${formatAlpha(row.alphaEarned)} ㄴ` : formatPercent(row.metagraphIncentivePct)}
+                  {isAllTime ? `${formatAlpha(row.alphaEarned)} ㄴ` : formatLabAllocationPercent(row.labAllocationPaidAlphaPercent)}
                 </span>
               </span>
               <span className="hidden text-right tabular-nums md:block">
@@ -1089,14 +1083,6 @@ function LabMinerPagination({
       </div>
     </div>
   )
-}
-
-function formatPercent(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return '0%'
-  if (value >= 10) return `${value.toFixed(1)}%`
-  if (value >= 1) return `${value.toFixed(2)}%`
-  if (value >= 0.01) return `${value.toFixed(3)}%`
-  return '<0.01%'
 }
 
 function formatUsd(value: number): string {
