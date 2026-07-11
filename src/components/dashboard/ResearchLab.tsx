@@ -857,7 +857,7 @@ function LabEmissionSplit({
           Metagraph Emissions for Lab Miners
         </div>
         <p className="mt-2 max-w-2xl text-[12px] leading-relaxed text-[var(--muted-2)]">
-          This includes both fulfillment and Lab emissions to this miner/hotkey.
+          Emission value shows the miner’s total metagraph emission share, combining Fulfillment and Research Lab rewards.
         </p>
         <p className="mt-3 text-[13px] text-[var(--muted-2)]">No Research Lab miner activity yet.</p>
       </section>
@@ -874,7 +874,7 @@ function LabEmissionSplit({
           <p className="mt-1.5 max-w-2xl text-[12px] leading-relaxed text-[var(--muted-2)]">
             {isAllTime
               ? 'Total alpha earned by hotkeys participating in the Research Lab.'
-              : 'This includes both fulfillment and Lab emissions to this miner/hotkey.'}
+              : 'Emission value shows the miner’s total metagraph emission share, combining Fulfillment and Research Lab rewards.'}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">

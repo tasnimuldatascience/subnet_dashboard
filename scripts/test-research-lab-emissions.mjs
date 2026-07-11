@@ -94,7 +94,7 @@ try {
   const componentSource = await readFile(resolve('src/components/dashboard/ResearchLab.tsx'), 'utf8')
   assert.match(componentSource, /Total alpha earned/)
   assert.match(componentSource, /Metagraph Emissions for Lab Miners/)
-  assert.match(componentSource, /This includes both fulfillment and Lab emissions to this miner\/hotkey\./)
+  assert.match(componentSource, /Emission value shows the miner’s total metagraph emission share, combining Fulfillment and Research Lab rewards\./)
   assert.match(componentSource, /Scored tests/)
   assert.doesNotMatch(componentSource, /Completed tests/)
   assert.match(componentSource, /Model improvements/)
