@@ -59,6 +59,7 @@ export const dynamic = 'force-dynamic'
 
 const LOOP_LIMIT = 50
 const LOOP_PAGE_LIMIT_MAX = 100
+const ALL_TIME_STATS_BATCH_SIZE = 1_000
 const ACTIVE_RUN_LIMIT = 40
 const COMPUTE_SPEND_DAYS = 30
 const COMPUTE_SPEND_BATCH_SIZE = 1_000
@@ -518,6 +519,7 @@ export type AdminResearchLabPayload = {
     scoredLoops: number
     failedLoops: number
     uniqueMiners: number
+    modelImprovementLoops: number
   }
   fetchedAt: string
 }
@@ -736,21 +738,17 @@ async function getCachedAdminLabOverview(
 async function buildAdminLabOverview(
   supabase: ReturnType<typeof getAdminSupabase>,
 ): Promise<AdminResearchLabPayload> {
-  const loopPage = await fetchAdminLabLoopPage(supabase, { offset: 0, limit: LOOP_LIMIT })
+  const [loopPage, stats] = await Promise.all([
+    fetchAdminLabLoopPage(supabase, { offset: 0, limit: LOOP_LIMIT }),
+    fetchAdminLabAllTimeStats(supabase),
+  ])
   const loops = loopPage.loops
   const ops = await fetchAdminLabOps(supabase, loops)
-  const miners = new Set(loops.map((loop) => loop.minerHotkey).filter(Boolean))
   return {
     loops,
     hasMoreLoops: loopPage.hasMore,
     ops,
-    stats: {
-      totalLoops: loops.length,
-      runningLoops: loops.filter((loop) => isActiveResearchLabLoopStatus(loop.statusKey)).length,
-      scoredLoops: loops.filter((loop) => isScoredResearchLabLoopStatus(loop.statusKey)).length,
-      failedLoops: loops.filter((loop) => isNoGainOrFailedResearchLabLoopStatus(loop.statusKey) || isFailedOutcome(loop.outcomeLabel, loop.outcomeBand)).length,
-      uniqueMiners: miners.size,
-    },
+    stats,
     fetchedAt: new Date().toISOString(),
   }
 }
@@ -913,6 +911,54 @@ async function fetchAdminLabLoopPage(
     loops: rows.slice(0, limit).map(normalizeLoopRow),
     hasMore: rows.length > limit,
   }
+}
+
+async function fetchAdminLabAllTimeStats(
+  supabase: ReturnType<typeof getAdminSupabase>,
+): Promise<AdminResearchLabPayload['stats']> {
+  const stats: AdminResearchLabPayload['stats'] = {
+    totalLoops: 0,
+    runningLoops: 0,
+    scoredLoops: 0,
+    failedLoops: 0,
+    uniqueMiners: 0,
+    modelImprovementLoops: 0,
+  }
+  const miners = new Set<string>()
+  let offset = 0
+
+  while (true) {
+    const { data, error } = await supabase
+      .from('research_lab_public_loop_card_current')
+      .select('*')
+      .order('created_at', { ascending: true })
+      .order('card_id', { ascending: true })
+      .range(offset, offset + ALL_TIME_STATS_BATCH_SIZE - 1)
+
+    if (error) {
+      throw new Error(`Supabase error fetching all-time Lab stats: ${error.message}`)
+    }
+
+    const rows = (data ?? []) as AdminLabLoopRow[]
+    for (const row of rows) {
+      const loop = normalizeLoopRow(row)
+      stats.totalLoops += 1
+      if (isActiveResearchLabLoopStatus(loop.statusKey)) stats.runningLoops += 1
+      if (isScoredResearchLabLoopStatus(loop.statusKey)) stats.scoredLoops += 1
+      if (
+        isNoGainOrFailedResearchLabLoopStatus(loop.statusKey) ||
+        isFailedOutcome(loop.outcomeLabel, loop.outcomeBand)
+      ) stats.failedLoops += 1
+      if (loop.statusKey === 'promoted') stats.modelImprovementLoops += 1
+      if (loop.minerHotkey) miners.add(loop.minerHotkey)
+    }
+
+    if (rows.length < ALL_TIME_STATS_BATCH_SIZE) break
+    offset += ALL_TIME_STATS_BATCH_SIZE
+  }
+
+  stats.uniqueMiners = miners.size
+  return stats
 }
 
 async function fetchAdminLabTimeline(

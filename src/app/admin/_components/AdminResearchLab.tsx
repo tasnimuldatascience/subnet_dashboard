@@ -414,6 +414,7 @@ export type AdminResearchLabPayload = {
     scoredLoops: number
     failedLoops: number
     uniqueMiners: number
+    modelImprovementLoops: number
   }
   fetchedAt: string
 }
@@ -850,12 +851,13 @@ export function AdminResearchLab({
         </div>
       ) : null}
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-        <Stat label="Recent loops" value={livePayload?.stats.totalLoops ?? 0} />
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+        <Stat label="All-time loops" value={livePayload?.stats.totalLoops ?? 0} />
         <Stat label="Running" value={livePayload?.stats.runningLoops ?? 0} />
         <Stat label="Scored" value={livePayload?.stats.scoredLoops ?? 0} accent="gold" />
         <Stat label="Failed" value={livePayload?.stats.failedLoops ?? 0} />
         <Stat label="Miners" value={livePayload?.stats.uniqueMiners ?? 0} />
+        <Stat label="Model improvements" value={livePayload?.stats.modelImprovementLoops ?? 0} accent="gold" />
       </div>
 
       {ops ? (
