@@ -7,131 +7,121 @@ on:
 
 concurrency:
   group: deploy-production
-  # Let the active SSH deployment finish before starting the next commit.
-  # Canceling the runner can leave its remote build alive on EC2.
-  cancel-in-progress: false
+  # A replacement run starts immediately and its recovery step terminates only
+  # abandoned build/cleanup processes from the superseded deployment.
+  cancel-in-progress: true
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.2.0
+        timeout-minutes: 14
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
+          timeout: 45s
+          command_timeout: 12m
+          script_stop: true
           script: |
             set -euo pipefail
 
             APP_ROOT="$HOME/subnet_dashboard"
             RELEASE_ROOT="$HOME/subnet_dashboard_releases"
-            SHARED_STATIC="$RELEASE_ROOT/shared-next-static"
-            CANDIDATE_NAME="subnet-dashboard-candidate"
+            CLEANUP_STAMP="$(date -u +%Y%m%d%H%M%S)"
+            CLEANUP_LOG="$HOME/subnet-dashboard-disk-cleanup.log"
+            REQUIRED_FREE_KB=1250000
 
-            # Failed builds can leave large release directories behind before
-            # the normal end-of-deploy retention step runs. Reclaim that space
-            # up front while preserving the release currently serving traffic.
-            mkdir -p "$RELEASE_ROOT" "$SHARED_STATIC"
+            echo "Starting bounded EC2 disk recovery"
+
+            # A canceled SSH action can leave its remote child alive. Stop only
+            # abandoned release builds, candidate servers, and release cleanup;
+            # never match the production `next start` process.
             pkill -f "$RELEASE_ROOT/release-.*/node_modules/.bin/[n]ext build" 2>/dev/null || true
             pkill -f "$RELEASE_ROOT/release-.*/node_modules/next/dist/bin/[n]ext build" 2>/dev/null || true
-            pm2 delete "$CANDIDATE_NAME" >/dev/null 2>&1 || true
-            CURRENT_RELEASE="$(readlink -f "$RELEASE_ROOT/current" 2>/dev/null || true)"
-            while IFS= read -r -d '' stale_release; do
-              if [ "$stale_release" != "$CURRENT_RELEASE" ]; then
-                rm -rf "$stale_release"
+            pkill -f "[r]m -rf .*$RELEASE_ROOT" 2>/dev/null || true
+            pm2 delete subnet-dashboard-candidate >/dev/null 2>&1 || true
+
+            # The 8 GB instance cannot safely hold isolated releases. Rename
+            # bulky generated directories in constant time, then delete them in
+            # the background while reporting free-space progress. Future deploys
+            # build in place and no longer recreate this release tree.
+            cleanup_paths=()
+            if [ -d "$RELEASE_ROOT" ]; then
+              RELEASE_TRASH="$HOME/subnet_dashboard_releases.cleanup-$CLEANUP_STAMP"
+              mv "$RELEASE_ROOT" "$RELEASE_TRASH"
+              cleanup_paths+=("$RELEASE_TRASH")
+            fi
+
+            if [ -d "$APP_ROOT/.next/cache" ]; then
+              NEXT_CACHE_TRASH="$HOME/subnet_dashboard-next-cache.cleanup-$CLEANUP_STAMP"
+              mv "$APP_ROOT/.next/cache" "$NEXT_CACHE_TRASH"
+              cleanup_paths+=("$NEXT_CACHE_TRASH")
+            fi
+
+            NPM_CACHE="$(npm config get cache)"
+            if [ -d "$NPM_CACHE" ]; then
+              NPM_CACHE_TRASH="$HOME/subnet_dashboard-npm-cache.cleanup-$CLEANUP_STAMP"
+              mv "$NPM_CACHE" "$NPM_CACHE_TRASH"
+              cleanup_paths+=("$NPM_CACHE_TRASH")
+            fi
+
+            cleanup_pid=""
+            if [ "${#cleanup_paths[@]}" -gt 0 ]; then
+              nohup rm -rf -- "${cleanup_paths[@]}" >"$CLEANUP_LOG" 2>&1 </dev/null &
+              cleanup_pid="$!"
+              echo "Background cleanup started as PID $cleanup_pid"
+            fi
+
+            disk_ready=false
+            for attempt in $(seq 1 120); do
+              available_kb="$(df -Pk "$HOME" | awk 'NR == 2 { print $4 }')"
+              echo "Disk recovery $attempt/120: ${available_kb} KB available"
+              if [ "$available_kb" -ge "$REQUIRED_FREE_KB" ]; then
+                disk_ready=true
+                break
               fi
-            done < <(find "$RELEASE_ROOT" -mindepth 1 -maxdepth 1 -type d -name 'release-*' -print0)
+              if [ -n "$cleanup_pid" ] && ! kill -0 "$cleanup_pid" 2>/dev/null; then
+                echo "Background cleanup ended before enough space was recovered"
+                break
+              fi
+              sleep 5
+            done
 
-            # These caches are not needed by the running Next.js process and
-            # can consume most of a small EC2 root volume after repeated builds.
-            rm -rf "$APP_ROOT/.next/cache"
-            npm cache clean --force >/dev/null 2>&1 || true
+            if [ "$disk_ready" != true ]; then
+              echo "EC2 still has insufficient disk space"
+              df -h "$HOME"
+              tail -n 50 "$CLEANUP_LOG" 2>/dev/null || true
+              exit 1
+            fi
+
             df -h "$HOME"
-
             cd "$APP_ROOT"
             git fetch origin main
             git checkout main
             git merge --ff-only origin/main
-            DEPLOY_SHA="$(git rev-parse HEAD)"
-            RELEASE_DIR="$RELEASE_ROOT/release-${DEPLOY_SHA}-$(date -u +%Y%m%d%H%M%S)"
+            echo "Deploying commit: $(git rev-parse --short HEAD)"
 
-            # The EC2 volume is intentionally small. Keep one dependency tree
-            # shared by the live and candidate releases instead of installing a
-            # second full copy for every build. Refresh it only when the lockfile
-            # changes so ordinary application deploys remain fast and compact.
-            LOCK_HASH="$(sha256sum package-lock.json | cut -d ' ' -f 1)"
-            INSTALLED_LOCK_FILE="$RELEASE_ROOT/installed-package-lock.sha256"
-            if [ ! -d "$APP_ROOT/node_modules" ] || [ "$(cat "$INSTALLED_LOCK_FILE" 2>/dev/null || true)" != "$LOCK_HASH" ]; then
-              npm ci --no-audit --no-fund
-              printf '%s\n' "$LOCK_HASH" > "$INSTALLED_LOCK_FILE"
-            fi
-            npm cache clean --force >/dev/null 2>&1 || true
-
-            echo "Preparing commit: ${DEPLOY_SHA:0:7}"
-            mkdir -p "$RELEASE_DIR"
-            git archive "$DEPLOY_SHA" | tar -x -C "$RELEASE_DIR"
-
-            # Production secrets live outside Git. Make the same files available
-            # to the isolated release without copying their contents.
-            for env_name in .env .env.local .env.production .env.production.local; do
-              if [ -f "$APP_ROOT/$env_name" ]; then
-                ln -s "$APP_ROOT/$env_name" "$RELEASE_DIR/$env_name"
-              fi
-            done
-
-            cd "$RELEASE_DIR"
-            ln -s "$APP_ROOT/node_modules" "$RELEASE_DIR/node_modules"
+            # Update the single dependency tree in place, then build once. This
+            # avoids the duplicate node_modules and .next trees that filled EC2.
+            npm install --no-audit --no-fund
             export BUILD_TIME="$(date -u +%Y%m%d%H%M%S)"
             NODE_OPTIONS='--max-old-space-size=768' npm run build
 
-            # During a rolling reload, old and new workers briefly coexist. Keep
-            # their hashed Next.js assets in one shared directory so either worker
-            # can serve a page generated by the other version.
-            if [ -d "$APP_ROOT/.next/static" ]; then
-              cp -a "$APP_ROOT/.next/static/." "$SHARED_STATIC/"
+            if pm2 describe subnet-dashboard >/dev/null 2>&1; then
+              pm2 startOrReload "$APP_ROOT/ecosystem.config.cjs" --update-env || {
+                pm2 delete subnet-dashboard || true
+                pm2 start "$APP_ROOT/ecosystem.config.cjs" --update-env
+              }
+            else
+              pm2 start "$APP_ROOT/ecosystem.config.cjs" --update-env
             fi
-            cp -a "$RELEASE_DIR/.next/static/." "$SHARED_STATIC/"
-            if [ -d "$APP_ROOT/.next/static" ] && [ ! -L "$APP_ROOT/.next/static" ]; then
-              cp -a "$SHARED_STATIC/." "$APP_ROOT/.next/static/"
-            fi
-            rm -rf "$RELEASE_DIR/.next/static"
-            ln -s "$SHARED_STATIC" "$RELEASE_DIR/.next/static"
-
-            # Boot the candidate on a private port first. A failed build or boot
-            # never disturbs the production process listening on port 3000.
-            pm2 delete "$CANDIDATE_NAME" >/dev/null 2>&1 || true
-            PORT=3001 NODE_OPTIONS='--max-old-space-size=512' pm2 start npm \
-              --name "$CANDIDATE_NAME" \
-              --cwd "$RELEASE_DIR" \
-              --max-memory-restart 700M \
-              -- start
-
-            candidate_healthy=false
-            for attempt in $(seq 1 30); do
-              if curl --fail --silent --show-error http://127.0.0.1:3001/icon-64.png > /dev/null; then
-                candidate_healthy=true
-                break
-              fi
-              sleep 2
-            done
-
-            if [ "$candidate_healthy" != true ]; then
-              echo "Candidate failed to become healthy; production was not changed"
-              pm2 logs "$CANDIDATE_NAME" --lines 100 --nostream
-              pm2 delete "$CANDIDATE_NAME" >/dev/null 2>&1 || true
-              exit 1
-            fi
-
-            pm2 delete "$CANDIDATE_NAME"
-
-            # Once production is managed in cluster mode, PM2 starts the
-            # replacement worker before retiring the old one. The first run of
-            # this workflow also performs the one-time fork-to-cluster migration.
-            pm2 startOrReload "$RELEASE_DIR/ecosystem.config.cjs" --update-env
 
             production_healthy=false
-            for attempt in $(seq 1 15); do
+            for attempt in $(seq 1 30); do
               if curl --fail --silent --show-error http://127.0.0.1:3000/icon-64.png > /dev/null; then
                 production_healthy=true
                 break
@@ -140,18 +130,11 @@ jobs:
             done
 
             if [ "$production_healthy" != true ]; then
-              echo "Production health check failed after reload"
+              echo "Production health check failed after PM2 reload"
               pm2 status
               pm2 logs subnet-dashboard --lines 100 --nostream
               exit 1
             fi
 
-            ln -sfn "$RELEASE_DIR" "$RELEASE_ROOT/current"
             pm2 save
-
-            # Keep the five newest releases for inspection or manual rollback.
-            ls -1dt "$RELEASE_ROOT"/release-* 2>/dev/null | tail -n +6 | xargs -r rm -rf
-
             echo "Deploy complete: $(date)"
-          script_stop: true
-          command_timeout: 10m
