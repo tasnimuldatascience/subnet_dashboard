@@ -3,10 +3,13 @@ name: Deploy to EC2
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: deploy-production
-  cancel-in-progress: false
+  # A GitHub runner startup failure can otherwise leave a newer production
+  # deploy pending behind a stale run. Always prefer the latest main commit.
+  cancel-in-progress: true
 
 jobs:
   deploy:
