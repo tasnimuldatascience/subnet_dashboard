@@ -1,5 +1,7 @@
 const path = require("node:path");
 
+const nextDistDir = process.env.NEXT_DIST_DIR || ".next";
+
 module.exports = {
   apps: [
     {
@@ -17,6 +19,7 @@ module.exports = {
       env: {
         NODE_ENV: "production",
         NODE_OPTIONS: "--max-old-space-size=512",
+        NEXT_DIST_DIR: nextDistDir,
       },
     },
   ],
