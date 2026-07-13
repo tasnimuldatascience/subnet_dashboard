@@ -19,6 +19,10 @@ import { cn } from '@/lib/utils'
 
 const REFRESH_INTERVAL_MS = 30_000
 const ACTIVE_VALIDATOR_MAX_BLOCKS = 360
+const SUBNET_NETUID = 71
+const SUBNET_TEMPO_BLOCKS = 360
+const EPOCH_INTERVAL_BLOCKS = SUBNET_TEMPO_BLOCKS + 1
+const BLOCK_TIME_SECONDS = 12
 
 type MetagraphPayload = MetagraphData & { cachedAt?: number }
 type SortKey =
@@ -113,7 +117,30 @@ function formatEmission(value: number): string {
   return value.toFixed(6).replace(/0+$/, '').replace(/\.$/, '') || '0'
 }
 
-function SummaryCard({ label, value, detail }: { label: string; value: string; detail: string }) {
+function blocksUntilNextEpoch(currentBlock: number): number {
+  const epochPosition = (currentBlock + SUBNET_NETUID + 1) % EPOCH_INTERVAL_BLOCKS
+  return epochPosition === 0 ? 0 : EPOCH_INTERVAL_BLOCKS - epochPosition
+}
+
+function formatEpochCountdown(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds))
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  return `${hours}h ${minutes}m ${seconds % 60}s`
+}
+
+function SummaryCard({
+  label,
+  value,
+  detail,
+  progress,
+}: {
+  label: string
+  value: string
+  detail?: string
+  progress?: number
+}) {
+  const progressPercent = progress === undefined ? null : Math.min(100, Math.max(0, progress))
   return (
     <div
       className="rounded-lg border px-4 py-3"
@@ -123,7 +150,12 @@ function SummaryCard({ label, value, detail }: { label: string; value: string; d
         {label}
       </div>
       <div className="mt-1.5 text-2xl font-medium tabular-nums" style={{ color: 'var(--text-primary)' }}>{value}</div>
-      <div className="mt-1 text-[11px]" style={{ color: 'var(--text-secondary)' }}>{detail}</div>
+      {progressPercent !== null && (
+        <div className="mt-3 h-1.5 overflow-hidden rounded-full" style={{ background: 'var(--surface-border-strong)' }}>
+          <div className="h-full rounded-full bg-gold transition-[width] duration-300" style={{ width: `${progressPercent}%` }} />
+        </div>
+      )}
+      {detail && <div className="mt-1 text-[11px]" style={{ color: 'var(--text-secondary)' }}>{detail}</div>}
     </div>
   )
 }
@@ -184,6 +216,7 @@ export function AdminMetagraph() {
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null)
+  const [countdownTick, setCountdownTick] = useState(0)
   const [search, setSearch] = useState('')
   const [detailsExpanded, setDetailsExpanded] = useState(false)
   const [sortKey, setSortKey] = useState<SortKey>('stake')
@@ -198,6 +231,7 @@ export function AdminMetagraph() {
       if (payload.error) throw new Error(payload.error)
       setData(payload)
       setLastSyncedAt(Date.now())
+      setCountdownTick(0)
       setError(null)
     } catch (fetchError) {
       setError(fetchError instanceof Error ? fetchError.message : 'Failed to refresh the metagraph')
@@ -225,6 +259,11 @@ export function AdminMetagraph() {
     }
   }, [fetchMetagraph])
 
+  useEffect(() => {
+    const interval = window.setInterval(() => setCountdownTick((tick) => tick + 1), 1000)
+    return () => window.clearInterval(interval)
+  }, [])
+
   const rows = useMemo(() => validatorRows(data), [data])
   const visibleRows = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -243,9 +282,16 @@ export function AdminMetagraph() {
 
   const freshnessAvailable = data?.currentBlock !== null && data?.currentBlock !== undefined
   const activeRows = rows.filter((row) => row.updated !== null && row.updated < ACTIVE_VALIDATOR_MAX_BLOCKS)
-  const avgVTrust = activeRows.length > 0
-    ? activeRows.reduce((sum, row) => sum + row.validatorTrust, 0) / activeRows.length
-    : 0
+  const estimatedCurrentBlock = data?.currentBlock === null || data?.currentBlock === undefined
+    ? null
+    : data.currentBlock + Math.floor(countdownTick / BLOCK_TIME_SECONDS)
+  const nextEpochBlocks = estimatedCurrentBlock === null ? null : blocksUntilNextEpoch(estimatedCurrentBlock)
+  const nextEpochSeconds = nextEpochBlocks === null
+    ? null
+    : Math.max(0, (nextEpochBlocks * BLOCK_TIME_SECONDS) - (countdownTick % BLOCK_TIME_SECONDS))
+  const epochRemainingPercent = nextEpochBlocks === null
+    ? undefined
+    : (nextEpochBlocks / SUBNET_TEMPO_BLOCKS) * 100
 
   const handleSort = (column: SortKey) => {
     if (column === sortKey) {
@@ -299,11 +345,16 @@ export function AdminMetagraph() {
         </div>
       </div>
 
-      <div className="grid gap-2 p-3 sm:grid-cols-2">
+      <div className="grid gap-2 p-3 md:grid-cols-3">
         <SummaryCard
-          label="Average VTrust"
-          value={loading || !freshnessAvailable || activeRows.length === 0 ? '—' : formatMetric(avgVTrust)}
-          detail="Across active validators"
+          label="Blocks Until Next Epoch"
+          value={loading || nextEpochBlocks === null ? '—' : formatAmount(nextEpochBlocks, 0)}
+          progress={epochRemainingPercent}
+        />
+        <SummaryCard
+          label="Time Until Next Epoch"
+          value={loading || nextEpochSeconds === null ? '—' : formatEpochCountdown(nextEpochSeconds)}
+          progress={epochRemainingPercent}
         />
         <SummaryCard
           label="Active validators"
