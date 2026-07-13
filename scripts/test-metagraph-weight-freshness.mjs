@@ -227,8 +227,14 @@ class Subtensor:
   }
 
   const metagraphUiSource = await readFile(resolve('src/app/admin/_components/AdminMetagraph.tsx'), 'utf8')
-  assert.match(metagraphUiSource, /const ACTIVE_VALIDATOR_MAX_EPOCHS = 360/)
-  assert.match(metagraphUiSource, /row\.updated < ACTIVE_VALIDATOR_MAX_EPOCHS/)
+  assert.match(metagraphUiSource, /const ACTIVE_VALIDATOR_MAX_BLOCKS = 360/)
+  assert.match(metagraphUiSource, /row\.updated < ACTIVE_VALIDATOR_MAX_BLOCKS/)
+  assert.match(metagraphUiSource, /Weight updated < \$\{ACTIVE_VALIDATOR_MAX_BLOCKS\} blocks ago/)
+  assert.match(metagraphUiSource, /label="Updated \(blocks\)"/)
+  assert.match(metagraphUiSource, /const \[detailsExpanded, setDetailsExpanded\] = useState\(false\)/)
+  assert.match(metagraphUiSource, /aria-expanded=\{detailsExpanded\}/)
+  assert.match(metagraphUiSource, /Show validator details/)
+  assert.match(metagraphUiSource, /Hide validator details/)
   assert.match(metagraphUiSource, /\.filter\(\(row\) => !row\.isMiner\)/)
   assert.match(metagraphUiSource, /formatAmount\(activeRows\.length, 0\)\}\/\$\{formatAmount\(rows\.length, 0\)/)
   const tableHead = metagraphUiSource.slice(

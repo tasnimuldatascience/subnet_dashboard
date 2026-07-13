@@ -6,6 +6,7 @@ import {
   ArrowUp,
   ArrowUpDown,
   Check,
+  ChevronDown,
   Copy,
   RefreshCw,
   Search,
@@ -17,7 +18,7 @@ import { shortHotkey } from '@/lib/admin-format'
 import { cn } from '@/lib/utils'
 
 const REFRESH_INTERVAL_MS = 30_000
-const ACTIVE_VALIDATOR_MAX_EPOCHS = 360
+const ACTIVE_VALIDATOR_MAX_BLOCKS = 360
 
 type MetagraphPayload = MetagraphData & { cachedAt?: number }
 type SortKey =
@@ -184,6 +185,7 @@ export function AdminMetagraph() {
   const [error, setError] = useState<string | null>(null)
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null)
   const [search, setSearch] = useState('')
+  const [detailsExpanded, setDetailsExpanded] = useState(false)
   const [sortKey, setSortKey] = useState<SortKey>('stake')
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
 
@@ -240,7 +242,7 @@ export function AdminMetagraph() {
   }, [rows, search, sortDirection, sortKey])
 
   const freshnessAvailable = data?.currentBlock !== null && data?.currentBlock !== undefined
-  const activeRows = rows.filter((row) => row.updated !== null && row.updated < ACTIVE_VALIDATOR_MAX_EPOCHS)
+  const activeRows = rows.filter((row) => row.updated !== null && row.updated < ACTIVE_VALIDATOR_MAX_BLOCKS)
   const avgVTrust = activeRows.length > 0
     ? activeRows.reduce((sum, row) => sum + row.validatorTrust, 0) / activeRows.length
     : 0
@@ -306,7 +308,7 @@ export function AdminMetagraph() {
         <SummaryCard
           label="Active validators"
           value={loading || !freshnessAvailable ? '—' : `${formatAmount(activeRows.length, 0)}/${formatAmount(rows.length, 0)}`}
-          detail={`Weight updated < ${ACTIVE_VALIDATOR_MAX_EPOCHS} epochs ago`}
+          detail={`Weight updated < ${ACTIVE_VALIDATOR_MAX_BLOCKS} blocks ago`}
         />
       </div>
 
@@ -321,19 +323,34 @@ export function AdminMetagraph() {
           <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>
             {visibleRows.length === rows.length ? `${rows.length} validators` : `${visibleRows.length} of ${rows.length} validators`}
           </div>
-          <label className="relative block w-full sm:w-80">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2" style={{ color: 'var(--text-tertiary)' }} />
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search name, UID, key, or axon"
-              className="h-8 w-full rounded-lg border bg-transparent pl-9 pr-3 text-xs outline-none transition-colors focus:border-gold-strong"
-              style={{ borderColor: 'var(--surface-border-strong)', color: 'var(--text-primary)' }}
-            />
-          </label>
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+            {detailsExpanded && (
+              <label className="relative block w-full sm:w-80">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2" style={{ color: 'var(--text-tertiary)' }} />
+                <input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search name, UID, key, or axon"
+                  className="h-8 w-full rounded-lg border bg-transparent pl-9 pr-3 text-xs outline-none transition-colors focus:border-gold-strong"
+                  style={{ borderColor: 'var(--surface-border-strong)', color: 'var(--text-primary)' }}
+                />
+              </label>
+            )}
+            <button
+              type="button"
+              aria-expanded={detailsExpanded}
+              aria-controls="metagraph-validator-details"
+              onClick={() => setDetailsExpanded((expanded) => !expanded)}
+              className="inline-flex h-8 shrink-0 items-center justify-center gap-2 rounded-lg border px-3 text-[11px] font-medium transition-colors hover:text-gold"
+              style={{ borderColor: 'var(--surface-border-strong)', color: 'var(--text-secondary)' }}
+            >
+              {detailsExpanded ? 'Hide validator details' : 'Show validator details'}
+              <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', detailsExpanded ? 'rotate-180' : '')} />
+            </button>
+          </div>
         </div>
 
-        <div className="overflow-x-auto">
+        {detailsExpanded && <div id="metagraph-validator-details" className="overflow-x-auto">
           <table className="min-w-[1900px] w-full border-collapse text-left text-xs">
             <thead style={{ background: 'var(--surface)' }}>
               <tr className="border-b" style={{ borderColor: 'var(--surface-border)' }}>
@@ -343,7 +360,7 @@ export function AdminMetagraph() {
                 <th className="px-3 py-3 font-medium" style={{ color: 'var(--text-tertiary)' }}><SortButton column="name" active={sortKey} direction={sortDirection} onSort={handleSort} /></th>
                 <th className="px-3 py-3 text-right font-medium" style={{ color: 'var(--text-tertiary)' }}><SortButton column="stake" label="Stake weight (α)" active={sortKey} direction={sortDirection} onSort={handleSort} /></th>
                 <th className="px-3 py-3 text-right font-medium" style={{ color: 'var(--text-tertiary)' }}><SortButton column="validatorTrust" active={sortKey} direction={sortDirection} onSort={handleSort} /></th>
-                <th className="px-3 py-3 text-right font-medium" style={{ color: 'var(--text-tertiary)' }}><SortButton column="updated" label="Updated (epochs)" active={sortKey} direction={sortDirection} onSort={handleSort} /></th>
+                <th className="px-3 py-3 text-right font-medium" style={{ color: 'var(--text-tertiary)' }}><SortButton column="updated" label="Updated (blocks)" active={sortKey} direction={sortDirection} onSort={handleSort} /></th>
                 <th className="px-3 py-3 text-right font-medium" style={{ color: 'var(--text-tertiary)' }}><SortButton column="trust" active={sortKey} direction={sortDirection} onSort={handleSort} /></th>
                 <th className="px-3 py-3 text-right font-medium" style={{ color: 'var(--text-tertiary)' }}><SortButton column="consensus" active={sortKey} direction={sortDirection} onSort={handleSort} /></th>
                 <th className="px-3 py-3 text-right font-medium" style={{ color: 'var(--text-tertiary)' }}><SortButton column="incentive" active={sortKey} direction={sortDirection} onSort={handleSort} /></th>
@@ -373,8 +390,8 @@ export function AdminMetagraph() {
                   <td className="px-3 py-3.5 text-right font-medium text-gold-bright">{formatAmount(row.stake, 2)}</td>
                   <td className="px-3 py-3.5 text-right" style={{ color: 'var(--text-primary)' }}>{formatMetric(row.validatorTrust)}</td>
                   <td
-                    className={cn('px-3 py-3.5 text-right font-medium', row.updated !== null && row.updated >= ACTIVE_VALIDATOR_MAX_EPOCHS ? 'text-amber-warm' : '')}
-                    style={row.updated !== null && row.updated < ACTIVE_VALIDATOR_MAX_EPOCHS ? { color: 'var(--text-primary)' } : undefined}
+                    className={cn('px-3 py-3.5 text-right font-medium', row.updated !== null && row.updated >= ACTIVE_VALIDATOR_MAX_BLOCKS ? 'text-amber-warm' : '')}
+                    style={row.updated !== null && row.updated < ACTIVE_VALIDATOR_MAX_BLOCKS ? { color: 'var(--text-primary)' } : undefined}
                   >
                     {row.updated === null ? '—' : formatAmount(row.updated, 0)}
                   </td>
@@ -403,7 +420,7 @@ export function AdminMetagraph() {
               Reading the latest metagraph…
             </div>
           )}
-        </div>
+        </div>}
       </div>
     </section>
   )
