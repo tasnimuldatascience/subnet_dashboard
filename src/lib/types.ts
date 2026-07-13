@@ -99,6 +99,21 @@ export interface MetagraphData {
   emissions: Record<string, number>
   stakes: Record<string, number>
   isValidator: Record<string, boolean>
+  /** Whether the neuron was active in the latest metagraph snapshot. */
+  active: Record<string, boolean>
+  /** Human-readable on-chain coldkey identities, keyed by neuron hotkey. */
+  names: Record<string, string>
+  ranks: Record<string, number>
+  trusts: Record<string, number>
+  validatorTrusts: Record<string, number>
+  consensus: Record<string, number>
+  dividends: Record<string, number>
+  /** Axon address in host:port form, or null when the neuron is not serving one. */
+  axons: Record<string, string | null>
+  /** Block at which each neuron most recently set weights, keyed by hotkey. */
+  lastUpdates: Record<string, number>
+  /** Finalized chain head when available, otherwise the best head or null. */
+  currentBlock: number | null
   totalNeurons: number
   alphaPrice: number | null
   error: string | null

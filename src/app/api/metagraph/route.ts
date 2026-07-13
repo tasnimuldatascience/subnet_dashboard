@@ -13,13 +13,11 @@ export async function GET() {
       cachedAt: Date.now()
     })
 
-    // HTTP cache headers - aligned with server memory TTL (2 min) to avoid stale CDN data
-    // max-age=60: Browser caches for 1 minute
-    // s-maxage=120: CDN caches for 2 minutes (matches METAGRAPH_TTL)
-    // stale-while-revalidate=60: Serve stale for 1 minute while revalidating
+    // Keep HTTP caching aligned with the 30-second in-memory snapshot. Admin
+    // clients also add a cache buster and poll every 30 seconds.
     response.headers.set(
       'Cache-Control',
-      'public, max-age=60, s-maxage=120, stale-while-revalidate=60'
+      'public, max-age=15, s-maxage=30, stale-while-revalidate=15'
     )
 
     return response
@@ -33,7 +31,18 @@ export async function GET() {
       emissions: {},
       stakes: {},
       isValidator: {},
+      active: {},
+      names: {},
+      ranks: {},
+      trusts: {},
+      validatorTrusts: {},
+      consensus: {},
+      dividends: {},
+      axons: {},
+      lastUpdates: {},
+      currentBlock: null,
       totalNeurons: 0,
+      alphaPrice: null,
       error: error instanceof Error ? error.message : 'Failed to fetch metagraph data'
     })
   }
