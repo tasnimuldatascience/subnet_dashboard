@@ -56,22 +56,6 @@ async function fetchSubmittedLeads(): Promise<AdminSubmittedLeadsPayload> {
   return (await res.json()) as AdminSubmittedLeadsPayload
 }
 
-async function fetchResearchLab(): Promise<AdminResearchLabPayload> {
-  const h = await headers()
-  const host = h.get('x-forwarded-host') ?? h.get('host')
-  const proto = h.get('x-forwarded-proto') ?? 'https'
-  const base = host ? `${proto}://${host}` : ''
-  const auth = h.get('authorization')
-  const res = await fetch(`${base}/api/admin/research-lab`, {
-    cache: 'no-store',
-    headers: auth ? { authorization: auth } : undefined,
-  })
-  if (!res.ok) {
-    throw new Error(`API returned ${res.status}: ${await res.text()}`)
-  }
-  return (await res.json()) as AdminResearchLabPayload
-}
-
 async function fetchResearchLabEconomics(): Promise<ResearchLabEconomicsPayload> {
   const h = await headers()
   const host = h.get('x-forwarded-host') ?? h.get('host')
@@ -173,14 +157,14 @@ export default async function AdminLandingPage({
   const activeView = getAdminView(params.view)
   const fulfillmentTab = getFulfillmentTab(params.tab)
   let chains: ChainSummary[] = []
-  let labPayload: AdminResearchLabPayload | null = null
+  const labPayload: AdminResearchLabPayload | null = null
   let economicsPayload: ResearchLabEconomicsPayload | null = null
   let submittedLeadsPayload: AdminSubmittedLeadsPayload | null = null
   let error: string | null = null
   try {
-    if (activeView === 'lab') {
-      labPayload = await fetchResearchLab()
-    } else if (activeView === 'economics') {
+    // The Lab view renders its shell immediately and loads the operational
+    // snapshot client-side. Other, smaller admin views keep server fetching.
+    if (activeView === 'economics') {
       economicsPayload = await fetchResearchLabEconomics()
     } else if (activeView === 'fulfillment' && fulfillmentTab === 'submitted-leads') {
       submittedLeadsPayload = await fetchSubmittedLeads()

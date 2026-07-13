@@ -47,7 +47,7 @@ jobs:
 
               production_healthy=false
               for attempt in $(seq 1 20); do
-                if curl --fail --silent --show-error http://127.0.0.1:3000/icon-64.png > /dev/null; then
+                if curl --fail --silent --show-error --max-time 10 http://127.0.0.1:3000/api/health/live > /dev/null; then
                   production_healthy=true
                   break
                 fi
@@ -225,7 +225,7 @@ jobs:
 
             active_healthy=false
             for attempt in $(seq 1 15); do
-              if curl --fail --silent --show-error http://127.0.0.1:3000/icon-64.png > /dev/null; then
+              if curl --fail --silent --show-error --max-time 10 http://127.0.0.1:3000/api/health/ready > /dev/null; then
                 active_healthy=true
                 break
               fi
@@ -241,7 +241,7 @@ jobs:
 
             # Runtime dependencies remain on EC2, but compilation happened on the
             # GitHub runner so it cannot starve the live production worker.
-            npm install --no-audit --no-fund
+            npm ci --omit=dev --no-audit --no-fund
             rm -rf "$STAGED_BUILD"
             tar -xzf "$ARTIFACT" -C "$APP_ROOT"
             rm -f "$ARTIFACT"
@@ -271,7 +271,7 @@ jobs:
 
             candidate_healthy=false
             for attempt in $(seq 1 30); do
-              if curl --fail --silent --show-error http://127.0.0.1:3001/icon-64.png > /dev/null; then
+              if curl --fail --silent --show-error --max-time 10 http://127.0.0.1:3001/api/health/ready > /dev/null; then
                 candidate_healthy=true
                 break
               fi
@@ -294,7 +294,7 @@ jobs:
 
             production_healthy=false
             for attempt in $(seq 1 30); do
-              if curl --fail --silent --show-error http://127.0.0.1:3000/icon-64.png > /dev/null; then
+              if curl --fail --silent --show-error --max-time 10 http://127.0.0.1:3000/api/health/ready > /dev/null; then
                 production_healthy=true
                 break
               fi
@@ -318,7 +318,7 @@ jobs:
               sleep 3
               current_pid="$(pm2 pid subnet-dashboard)"
               if [ -z "$current_pid" ] || [ "$current_pid" != "$production_pid" ] || \
-                ! curl --fail --silent --show-error http://127.0.0.1:3000/icon-64.png > /dev/null; then
+                ! curl --fail --silent --show-error --max-time 10 http://127.0.0.1:3000/api/health/ready > /dev/null; then
                 production_stable=false
                 break
               fi
@@ -345,3 +345,12 @@ jobs:
 
             pm2 save
             echo "Deploy complete: $(date)"
+
+      - name: Verify public production path
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 6 --retry-all-errors \
+            --retry-delay 5 --connect-timeout 5 --max-time 15 \
+            https://subnet71.com/api/health/ready > /dev/null
+          curl --fail --silent --show-error --connect-timeout 5 --max-time 20 \
+            https://subnet71.com/ > /dev/null

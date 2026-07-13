@@ -57,7 +57,8 @@ import {
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-const LOOP_LIMIT = 250
+const LOOP_LIMIT = 50
+const LOOP_PAGE_LIMIT_MAX = 100
 const ACTIVE_RUN_LIMIT = 40
 const COMPUTE_SPEND_DAYS = 30
 const COMPUTE_SPEND_BATCH_SIZE = 1_000
@@ -122,7 +123,8 @@ const LIVE_BENCHMARK_STALE_MS = 15 * 60 * 1000
 const LEADS_PER_ICP_NORMALIZER = 5
 const ALERT_MONITOR_ID = 'research-lab-alerts:v1'
 const DEFAULT_ALERT_MONITOR_INTERVAL_MS = 60_000
-const ADMIN_LAB_OVERVIEW_CACHE_MS = 20_000
+const ADMIN_LAB_OVERVIEW_CACHE_MS = 45_000
+const ADMIN_LAB_OVERVIEW_STALE_MS = 5 * 60_000
 const ADMIN_LAB_ACTIVE_DETAIL_CACHE_MS = 5_000
 const ADMIN_LAB_TERMINAL_DETAIL_CACHE_MS = 30_000
 const ADMIN_LAB_DETAIL_CACHE_LIMIT = 200
@@ -508,6 +510,7 @@ export type AdminLabOpsSummary = {
 
 export type AdminResearchLabPayload = {
   loops: AdminLabLoopSummary[]
+  hasMoreLoops: boolean
   ops: AdminLabOpsSummary
   stats: {
     totalLoops: number
@@ -558,9 +561,13 @@ export type AdminResearchLabTimelinePayload = {
   fetchedAt: string
 }
 
-type AdminLabCacheStatus = 'hit' | 'miss' | 'shared'
+type AdminLabCacheStatus = 'hit' | 'miss' | 'shared' | 'stale'
 
-let adminLabOverviewCache: { payload: AdminResearchLabPayload; expiresAt: number } | null = null
+let adminLabOverviewCache: {
+  payload: AdminResearchLabPayload
+  freshUntil: number
+  staleUntil: number
+} | null = null
 let adminLabOverviewInFlight: Promise<AdminResearchLabPayload> | null = null
 const adminLabTimelineCache = new Map<string, {
   payload: AdminResearchLabTimelinePayload | null
@@ -575,6 +582,26 @@ export async function GET(request: NextRequest) {
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'admin supabase not configured'
     return NextResponse.json({ error: msg }, { status: 503 })
+  }
+
+  const mode = request.nextUrl.searchParams.get('mode')
+  if (mode === 'loops') {
+    const requestedOffset = Number(request.nextUrl.searchParams.get('offset') ?? 0)
+    const requestedLimit = Number(request.nextUrl.searchParams.get('limit') ?? LOOP_LIMIT)
+    const offset = Number.isSafeInteger(requestedOffset) ? Math.max(0, requestedOffset) : 0
+    const limit = Number.isSafeInteger(requestedLimit)
+      ? Math.min(LOOP_PAGE_LIMIT_MAX, Math.max(1, requestedLimit))
+      : LOOP_LIMIT
+    try {
+      const page = await fetchAdminLabLoopPage(supabase, { offset, limit })
+      return NextResponse.json(
+        { ...page, offset, limit, fetchedAt: new Date().toISOString() },
+        { headers: { 'Cache-Control': 'private, no-store' } },
+      )
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Unknown Supabase error'
+      return NextResponse.json({ error: msg }, { status: 502 })
+    }
   }
 
   const ticketId = request.nextUrl.searchParams.get('ticketId')?.trim()
@@ -611,7 +638,7 @@ export async function GET(request: NextRequest) {
     const msg = e instanceof Error ? e.message : 'Unknown Supabase error'
     return NextResponse.json({ error: msg }, { status: 502 })
   }
-  const refreshView = request.nextUrl.searchParams.get('mode') === 'refresh'
+  const refreshView = mode === 'refresh'
   return NextResponse.json(
     refreshView ? buildAdminLabRefreshPayload(overview) : overview,
     {
@@ -664,8 +691,29 @@ async function getCachedAdminLabOverview(
   supabase: ReturnType<typeof getAdminSupabase>,
 ): Promise<{ payload: AdminResearchLabPayload; status: AdminLabCacheStatus }> {
   const now = Date.now()
-  if (adminLabOverviewCache && adminLabOverviewCache.expiresAt > now) {
+  if (adminLabOverviewCache && adminLabOverviewCache.freshUntil > now) {
     return { payload: adminLabOverviewCache.payload, status: 'hit' }
+  }
+  if (adminLabOverviewCache && adminLabOverviewCache.staleUntil > now) {
+    if (!adminLabOverviewInFlight) {
+      adminLabOverviewInFlight = buildAdminLabOverview(supabase)
+      void adminLabOverviewInFlight
+        .then((payload) => {
+          const refreshedAt = Date.now()
+          adminLabOverviewCache = {
+            payload,
+            freshUntil: refreshedAt + ADMIN_LAB_OVERVIEW_CACHE_MS,
+            staleUntil: refreshedAt + ADMIN_LAB_OVERVIEW_STALE_MS,
+          }
+        })
+        .catch((error) => {
+          console.warn('[admin:research-lab] background overview refresh failed', error)
+        })
+        .finally(() => {
+          adminLabOverviewInFlight = null
+        })
+    }
+    return { payload: adminLabOverviewCache.payload, status: 'stale' }
   }
   if (adminLabOverviewInFlight) {
     return { payload: await adminLabOverviewInFlight, status: 'shared' }
@@ -676,7 +724,8 @@ async function getCachedAdminLabOverview(
     const payload = await adminLabOverviewInFlight
     adminLabOverviewCache = {
       payload,
-      expiresAt: Date.now() + ADMIN_LAB_OVERVIEW_CACHE_MS,
+      freshUntil: Date.now() + ADMIN_LAB_OVERVIEW_CACHE_MS,
+      staleUntil: Date.now() + ADMIN_LAB_OVERVIEW_STALE_MS,
     }
     return { payload, status: 'miss' }
   } finally {
@@ -687,11 +736,13 @@ async function getCachedAdminLabOverview(
 async function buildAdminLabOverview(
   supabase: ReturnType<typeof getAdminSupabase>,
 ): Promise<AdminResearchLabPayload> {
-  const loops = await fetchAdminLabLoops(supabase)
+  const loopPage = await fetchAdminLabLoopPage(supabase, { offset: 0, limit: LOOP_LIMIT })
+  const loops = loopPage.loops
   const ops = await fetchAdminLabOps(supabase, loops)
   const miners = new Set(loops.map((loop) => loop.minerHotkey).filter(Boolean))
   return {
     loops,
+    hasMoreLoops: loopPage.hasMore,
     ops,
     stats: {
       totalLoops: loops.length,
@@ -842,21 +893,26 @@ function isValidValidatorHotkey(value: string): boolean {
   }
 }
 
-async function fetchAdminLabLoops(
+async function fetchAdminLabLoopPage(
   supabase: ReturnType<typeof getAdminSupabase>,
-): Promise<AdminLabLoopSummary[]> {
+  { offset, limit }: { offset: number; limit: number },
+): Promise<{ loops: AdminLabLoopSummary[]; hasMore: boolean }> {
   const { data, error } = await supabase
     .from('research_lab_public_loop_card_current')
     .select('*')
     .order('current_last_activity_at', { ascending: false, nullsFirst: false })
     .order('created_at', { ascending: false })
-    .limit(LOOP_LIMIT)
+    .range(offset, offset + limit)
 
   if (error) {
     throw new Error(`Supabase error: ${error.message}`)
   }
 
-  return ((data ?? []) as AdminLabLoopRow[]).map(normalizeLoopRow)
+  const rows = (data ?? []) as AdminLabLoopRow[]
+  return {
+    loops: rows.slice(0, limit).map(normalizeLoopRow),
+    hasMore: rows.length > limit,
+  }
 }
 
 async function fetchAdminLabTimeline(

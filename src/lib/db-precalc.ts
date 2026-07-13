@@ -17,6 +17,21 @@ if (!globalForDashboard.transformedDashboardCache) {
   globalForDashboard.transformedDashboardCache = null
 }
 
+export type DashboardCacheHealth = {
+  available: boolean
+  ageMs: number | null
+  updatedAt: string | null
+}
+
+export function getDashboardCacheHealth(now = Date.now()): DashboardCacheHealth {
+  const entry = globalForDashboard.transformedDashboardCache
+  return {
+    available: Boolean(entry),
+    ageMs: entry ? Math.max(0, now - entry.timestamp) : null,
+    updatedAt: entry?.data.updatedAt ?? null,
+  }
+}
+
 // Clean up rejection reason - exported for use in UI components
 export function cleanRejectionReason(reason: string | null | undefined): string {
   if (!reason || reason === 'N/A') return 'N/A'
@@ -301,7 +316,7 @@ async function fetchMinerStatsRows(activeHotkeys: string[]): Promise<Record<stri
 
   const { data, error } = await supabase
     .from('dashboard_miner_stats')
-    .select('*')
+    .select('hotkey,total,accepted,rejected,pending,acceptance_rate,avg_rep_score,epochs,rejection_reasons_raw')
     .in('hotkey', activeHotkeys)
 
   if (error) {

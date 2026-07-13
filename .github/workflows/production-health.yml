@@ -1,0 +1,25 @@
+name: Production health
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: production-health
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check liveness, readiness, and public dashboard
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --connect-timeout 5 --max-time 15 \
+            https://subnet71.com/api/health/live > /dev/null
+          curl --fail --silent --show-error --connect-timeout 5 --max-time 15 \
+            https://subnet71.com/api/health/ready > /dev/null
+          curl --fail --silent --show-error --connect-timeout 5 --max-time 20 \
+            https://subnet71.com/ > /dev/null

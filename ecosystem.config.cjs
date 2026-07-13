@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
 const path = require("node:path");
 
 const nextDistDir = process.env.NEXT_DIST_DIR || ".next";

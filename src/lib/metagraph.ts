@@ -51,6 +51,31 @@ if (!globalForMetagraph.inFlightRequest) {
 // admin view operationally useful without turning every browser poll into a
 // separate chain query.
 const METAGRAPH_TTL = 30 * 1000
+// A chain read should never hold a user request hostage once we have a
+// successful snapshot. Serve the last good value while a refresh happens in
+// the background; the five-minute cache warmer normally replaces it well
+// before this safety window expires.
+const METAGRAPH_STALE_TTL = 10 * 60 * 1000
+
+export type MetagraphCacheHealth = {
+  available: boolean
+  ageMs: number | null
+  fresh: boolean
+  refreshing: boolean
+  totalNeurons: number
+}
+
+export function getMetagraphCacheHealth(now = Date.now()): MetagraphCacheHealth {
+  const entry = globalForMetagraph.metagraphCache
+  const ageMs = entry ? Math.max(0, now - entry.timestamp) : null
+  return {
+    available: Boolean(entry?.data.totalNeurons),
+    ageMs,
+    fresh: ageMs !== null && ageMs < METAGRAPH_TTL,
+    refreshing: Boolean(globalForMetagraph.inFlightRequest),
+    totalNeurons: entry?.data.totalNeurons ?? 0,
+  }
+}
 
 // Cached data can survive a hot reload, so tolerate snapshots created before
 // weight-freshness telemetry was added.
@@ -684,17 +709,43 @@ export async function fetchMetagraphFresh(): Promise<MetagraphData> {
 // Cached metagraph fetch (handles 1000s of concurrent requests)
 export async function fetchMetagraph(): Promise<MetagraphData> {
   const now = Date.now()
+  const cached = globalForMetagraph.metagraphCache
+  const cacheAge = cached ? now - cached.timestamp : Number.POSITIVE_INFINITY
 
   // Return cached if available and fresh (and not an error result)
   if (
-    globalForMetagraph.metagraphCache &&
-    now - globalForMetagraph.metagraphCache.timestamp < METAGRAPH_TTL &&
-    globalForMetagraph.metagraphCache.data.totalNeurons > 0
+    cached &&
+    cacheAge < METAGRAPH_TTL &&
+    cached.data.totalNeurons > 0
   ) {
     console.log('[Metagraph] Cache HIT')
-    const data = withFreshnessDefaults(globalForMetagraph.metagraphCache.data)
-    globalForMetagraph.metagraphCache.data = data
+    const data = withFreshnessDefaults(cached.data)
+    cached.data = data
     return data
+  }
+
+  // Once a successful snapshot exists, return it immediately and refresh in
+  // the background. This keeps a slow Python/RPC call off the request path.
+  if (cached && cacheAge < METAGRAPH_STALE_TTL && cached.data.totalNeurons > 0) {
+    if (!globalForMetagraph.inFlightRequest) {
+      const refreshPromise = (async () => {
+        try {
+          const data = await fetchMetagraphFromBittensor()
+          if (data.totalNeurons > 0) {
+            globalForMetagraph.metagraphCache = { data, timestamp: Date.now() }
+          }
+          return data
+        } finally {
+          globalForMetagraph.inFlightRequest = null
+        }
+      })()
+      globalForMetagraph.inFlightRequest = refreshPromise
+      void refreshPromise.catch((error) => {
+        console.warn('[Metagraph] Background refresh failed; keeping stale snapshot', error)
+      })
+    }
+    console.log('[Metagraph] Cache STALE - serving snapshot while refreshing')
+    return withFreshnessDefaults(cached.data)
   }
 
   // If a request is already in flight, wait for it (deduplication)

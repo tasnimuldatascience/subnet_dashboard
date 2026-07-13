@@ -35,10 +35,12 @@ export async function GET() {
       qualificationMinerHotkeys,
     })
 
-    // No HTTP caching - always return fresh data from server cache
+    // The payload is identical for every public visitor. Let browsers and
+    // shared caches absorb synchronized one-minute polling while the server's
+    // stale-safe caches refresh independently.
     response.headers.set(
       'Cache-Control',
-      'no-store, no-cache, must-revalidate'
+      'public, max-age=15, s-maxage=45, stale-while-revalidate=300'
     )
 
     return response

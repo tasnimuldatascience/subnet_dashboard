@@ -156,10 +156,9 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
       }
 
       try {
-        const cacheBuster = `?t=${Date.now()}`
         const [dashboardRes, metagraphRes] = await Promise.all([
-          fetch(`/api/dashboard${cacheBuster}`),
-          fetch(`/api/metagraph${cacheBuster}`)
+          fetch('/api/dashboard'),
+          fetch('/api/metagraph')
         ])
         if (dashboardRes.ok && mounted) {
           const newData = await dashboardRes.json()
@@ -205,10 +204,9 @@ export function DashboardClient({ initialData, metagraph: initialMetagraph }: Da
       if (document.visibilityState !== 'visible') return
       const fetchData = async () => {
         try {
-          const cacheBuster = `?t=${Date.now()}`
           const [dashboardRes, metagraphRes] = await Promise.all([
-            fetch(`/api/dashboard${cacheBuster}`),
-            fetch(`/api/metagraph${cacheBuster}`)
+            fetch('/api/dashboard'),
+            fetch('/api/metagraph')
           ])
           if (dashboardRes.ok) {
             const newData = await dashboardRes.json()

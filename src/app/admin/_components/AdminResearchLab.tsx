@@ -406,6 +406,7 @@ type AdminLabOpsSummary = {
 
 export type AdminResearchLabPayload = {
   loops: AdminLabLoopSummary[]
+  hasMoreLoops: boolean
   ops: AdminLabOpsSummary
   stats: {
     totalLoops: number
@@ -495,8 +496,10 @@ export function AdminResearchLab({
   error: string | null
 }) {
   const [livePayload, setLivePayload] = useState(payload)
+  const [initialLoading, setInitialLoading] = useState(!payload)
   const [liveRefreshError, setLiveRefreshError] = useState<string | null>(null)
   const [liveRefreshing, setLiveRefreshing] = useState(false)
+  const [loadingMoreLoops, setLoadingMoreLoops] = useState(false)
   const loops = useMemo(() => livePayload?.loops ?? [], [livePayload?.loops])
   const ops = livePayload?.ops ?? null
   const [query, setQuery] = useState('')
@@ -524,6 +527,38 @@ export function AdminResearchLab({
   }
 
   useEffect(() => setLivePayload(payload), [payload])
+
+  // Render the admin shell immediately. The large operational snapshot is
+  // loaded client-side so a cold cache can no longer delay the first byte of
+  // the page by several seconds.
+  useEffect(() => {
+    if (payload) {
+      setInitialLoading(false)
+      return
+    }
+    const controller = new AbortController()
+    const loadInitial = async () => {
+      setInitialLoading(true)
+      try {
+        const res = await fetch('/api/admin/research-lab', {
+          cache: 'no-store',
+          signal: controller.signal,
+        })
+        const body = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(body.error || `Initial Lab load failed with ${res.status}`)
+        setLivePayload(body as AdminResearchLabPayload)
+        setLiveRefreshError(null)
+      } catch (e) {
+        if (!controller.signal.aborted) {
+          setLiveRefreshError(e instanceof Error ? e.message : 'Initial Lab load failed')
+        }
+      } finally {
+        if (!controller.signal.aborted) setInitialLoading(false)
+      }
+    }
+    void loadInitial()
+    return () => controller.abort()
+  }, [payload])
 
   useEffect(() => {
     if (urlSelectionAppliedRef.current || loops.length === 0) return
@@ -641,6 +676,39 @@ export function AdminResearchLab({
       ].some((value) => value.toLowerCase().includes(q)),
     )
   }, [loops, query])
+
+  const loadMoreLoops = async () => {
+    if (!livePayload?.hasMoreLoops || loadingMoreLoops) return
+    setLoadingMoreLoops(true)
+    try {
+      const params = new URLSearchParams({
+        mode: 'loops',
+        offset: String(loops.length),
+        limit: '50',
+      })
+      const res = await fetch(`/api/admin/research-lab?${params.toString()}`, { cache: 'no-store' })
+      const body = await res.json().catch(() => ({})) as {
+        loops?: AdminLabLoopSummary[]
+        hasMore?: boolean
+        error?: string
+      }
+      if (!res.ok) throw new Error(body.error || `Loop page failed with ${res.status}`)
+      setLivePayload((current) => {
+        if (!current) return current
+        const merged = new Map(current.loops.map((loop) => [loop.ticketId, loop]))
+        for (const loop of body.loops ?? []) merged.set(loop.ticketId, loop)
+        return {
+          ...current,
+          loops: Array.from(merged.values()),
+          hasMoreLoops: Boolean(body.hasMore),
+        }
+      })
+    } catch (e) {
+      setLiveRefreshError(e instanceof Error ? e.message : 'Could not load more loops')
+    } finally {
+      setLoadingMoreLoops(false)
+    }
+  }
 
   const selectedLoop =
     loops.find((loop) => loop.ticketId === selectedTicketId) ??
@@ -775,14 +843,15 @@ export function AdminResearchLab({
           {error}
         </div>
       ) : null}
-      {liveRefreshError && livePayload ? (
+      {liveRefreshError ? (
         <div className="rounded-xl border border-burgundy-soft bg-burgundy-soft px-4 py-3 text-xs text-burgundy">
-          Live refresh error: {liveRefreshError}. Showing the most recent successful snapshot.
+          {livePayload ? 'Live refresh error' : 'Initial load error'}: {liveRefreshError}.
+          {livePayload ? ' Showing the most recent successful snapshot.' : ''}
         </div>
       ) : null}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-        <Stat label="Loops" value={livePayload?.stats.totalLoops ?? 0} />
+        <Stat label="Recent loops" value={livePayload?.stats.totalLoops ?? 0} />
         <Stat label="Running" value={livePayload?.stats.runningLoops ?? 0} />
         <Stat label="Scored" value={livePayload?.stats.scoredLoops ?? 0} accent="gold" />
         <Stat label="Failed" value={livePayload?.stats.failedLoops ?? 0} />
@@ -851,7 +920,12 @@ export function AdminResearchLab({
               background: 'var(--surface-base)',
             }}
           >
-            {filteredLoops.length === 0 ? (
+            {initialLoading && filteredLoops.length === 0 ? (
+              <div className="flex items-center justify-center gap-2 p-8 text-sm" style={{ color: 'var(--text-secondary)' }}>
+                <Loader2 className="h-4 w-4 animate-spin text-gold" />
+                Loading Lab overview...
+              </div>
+            ) : filteredLoops.length === 0 ? (
               <div className="p-8 text-center text-sm" style={{ color: 'var(--text-secondary)' }}>
                 No Lab loops match the current search.
               </div>
@@ -868,6 +942,18 @@ export function AdminResearchLab({
               </div>
             )}
           </div>
+          {livePayload?.hasMoreLoops && !query.trim() ? (
+            <button
+              type="button"
+              onClick={() => void loadMoreLoops()}
+              disabled={loadingMoreLoops}
+              className="premium-focus flex w-full items-center justify-center gap-2 rounded-lg border px-3 py-2 text-xs disabled:opacity-50"
+              style={{ borderColor: 'var(--surface-border)', color: 'var(--text-secondary)' }}
+            >
+              {loadingMoreLoops ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+              {loadingMoreLoops ? 'Loading more loops...' : 'Load 50 more loops'}
+            </button>
+          ) : null}
         </div>
 
         <div
@@ -2970,6 +3056,7 @@ function mergeAdminResearchLabRefresh(
 
   return {
     loops,
+    hasMoreLoops: current.hasMoreLoops,
     ops: {
       ...current.ops,
       ...refresh.ops,
