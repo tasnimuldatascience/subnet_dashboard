@@ -7,9 +7,9 @@ on:
 
 concurrency:
   group: deploy-production
-  # A GitHub runner startup failure can otherwise leave a newer production
-  # deploy pending behind a stale run. Always prefer the latest main commit.
-  cancel-in-progress: true
+  # Let the active SSH deployment finish before starting the next commit.
+  # Canceling the runner can leave its remote build alive on EC2.
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -33,6 +33,9 @@ jobs:
             # the normal end-of-deploy retention step runs. Reclaim that space
             # up front while preserving the release currently serving traffic.
             mkdir -p "$RELEASE_ROOT" "$SHARED_STATIC"
+            pkill -f "$RELEASE_ROOT/release-.*/node_modules/.bin/[n]ext build" 2>/dev/null || true
+            pkill -f "$RELEASE_ROOT/release-.*/node_modules/next/dist/bin/[n]ext build" 2>/dev/null || true
+            pm2 delete "$CANDIDATE_NAME" >/dev/null 2>&1 || true
             CURRENT_RELEASE="$(readlink -f "$RELEASE_ROOT/current" 2>/dev/null || true)"
             while IFS= read -r -d '' stale_release; do
               if [ "$stale_release" != "$CURRENT_RELEASE" ]; then
