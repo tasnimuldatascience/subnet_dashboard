@@ -694,6 +694,7 @@ type LabMinerRow = {
   promising: number
   metagraphIncentivePct: number
   displayedEmissionPct: number
+  isCurrentLabRecipient: boolean
   alphaEarned: number
   alphaSharePct: number
   computeSpendUsd: number
@@ -755,10 +756,23 @@ function LabEmissionSplit({
         byHotkey.set(loop.minerHotkey, current)
       }
     }
+    if (mode === 'window') {
+      for (const hotkey of Object.keys(spend?.currentAllocation?.byHotkey ?? {})) {
+        if (byHotkey.has(hotkey)) continue
+        byHotkey.set(hotkey, {
+          count: 0,
+          active: 0,
+          scored: 0,
+          promising: 0,
+          lastActivityAt: activity?.allTime?.[hotkey]?.lastActivityAt ?? '',
+        })
+      }
+    }
     const rowsWithEmission = Array.from(byHotkey.entries()).map(([hotkey, activityEntry]) => {
       const metagraphIncentivePct = Math.max(0, incentives[hotkey] ?? 0) * 100
       const windowSpendEntry = spend?.byHotkey?.[hotkey]
       const allTimeSpendEntry = spend?.allTime?.byHotkey?.[hotkey]
+      const currentAllocationEntry = spend?.currentAllocation?.byHotkey?.[hotkey]
       const computeSpendUsd = mode === 'all_time'
         ? Math.max(0, allTimeSpendEntry?.computeSpendUsd ?? 0)
         : Math.max(0, windowSpendEntry?.computeSpendUsd ?? 0)
@@ -774,6 +788,7 @@ function LabEmissionSplit({
         lastActivityAt: activityEntry.lastActivityAt,
         metagraphIncentivePct,
         displayedEmissionPct: 0,
+        isCurrentLabRecipient: Boolean(currentAllocationEntry),
         alphaEarned: Math.max(0, allTimeSpendEntry?.alphaEarned ?? 0),
         alphaSharePct: 0,
         computeSpendUsd,
@@ -788,7 +803,9 @@ function LabEmissionSplit({
     })
     const visibleRows = mode === 'all_time'
       ? rowsWithEmission
-      : rowsWithEmission.filter((row) => row.computeSpendUsd > 0 || row.hasCurrentReward)
+      : rowsWithEmission.filter(
+          (row) => row.computeSpendUsd > 0 || row.hasCurrentReward || row.isCurrentLabRecipient
+        )
     const displayedEmissionTotal = visibleRows.reduce((sum, row) => sum + row.metagraphIncentivePct, 0)
     const totalAlphaEarned = visibleRows.reduce((sum, row) => sum + row.alphaEarned, 0)
     return visibleRows
@@ -819,6 +836,7 @@ function LabEmissionSplit({
     mode,
     spend?.allTime?.byHotkey,
     spend?.byHotkey,
+    spend?.currentAllocation?.byHotkey,
   ])
 
   const barRows = rows.filter((row) => mode === 'all_time' ? row.alphaEarned > 0 : row.metagraphIncentivePct > 0)
@@ -871,7 +889,7 @@ function LabEmissionSplit({
           Metagraph Emissions for Lab Miners
         </div>
         <p className="mt-2 max-w-2xl text-[12px] leading-relaxed text-[var(--muted-2)]">
-          Emission value shows the miner’s total metagraph emission share, combining Fulfillment and Research Lab rewards.
+          Live metagraph emission for every current Lab recipient, including queued champions. Loop activity and compute cover the last 24 hours.
         </p>
         <p className="mt-3 text-[13px] text-[var(--muted-2)]">No Research Lab miner activity yet.</p>
       </section>
@@ -888,7 +906,7 @@ function LabEmissionSplit({
           <p className="mt-1.5 max-w-2xl text-[12px] leading-relaxed text-[var(--muted-2)]">
             {isAllTime
               ? 'Total alpha earned by hotkeys participating in the Research Lab.'
-              : 'Emission value shows the miner’s total metagraph emission share, combining Fulfillment and Research Lab rewards.'}
+              : 'Live metagraph emission for every current Lab recipient, including queued champions. Loop activity and compute cover the last 24 hours.'}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
