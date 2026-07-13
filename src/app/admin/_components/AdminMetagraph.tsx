@@ -126,7 +126,7 @@ function blocksUntilNextEpoch(currentBlock: number): number {
 function formatEpochMinutes(totalSeconds: number): string {
   const seconds = Math.max(0, Math.floor(totalSeconds))
   const minutes = Math.ceil(seconds / 60)
-  return `${minutes}m / ${EPOCH_DURATION_MINUTES}m`
+  return `${minutes}m`
 }
 
 function SummaryCard({
@@ -366,7 +366,7 @@ export function AdminMetagraph() {
       <div className="grid gap-2 p-3 md:grid-cols-3">
         <SummaryCard
           label="Blocks Until Next Epoch"
-          value={loading || nextEpochBlocks === null ? '—' : `${formatAmount(nextEpochBlocks, 0)} / ${SUBNET_TEMPO_BLOCKS}`}
+          value={loading || nextEpochBlocks === null ? '—' : formatAmount(nextEpochBlocks, 0)}
           progress={blockRemainingPercent}
         />
         <SummaryCard
