@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { decodeAddress } from '@polkadot/util-crypto'
 import { getAdminSupabase } from '@/lib/admin-supabase'
 import {
   buildResearchLabLoopTimeline,
@@ -26,9 +27,19 @@ import {
   type ResearchLabTerminalReceiptEvent,
 } from '@/lib/research-lab-compute-spend'
 import { fetchGatewayPcr0Acceptance } from '@/lib/research-lab-pcr0-readiness'
+import { fetchMetagraph } from '@/lib/metagraph'
+import {
+  evaluateResearchLabAlerts,
+  type ResearchLabAlertObservations,
+  type ResearchLabEvaluatedAlert,
+  type ResearchLabValidatorAlertObservation,
+} from '@/lib/research-lab-alerts'
+import { parseResearchLabAlertDeliveryConfig } from '@/lib/research-lab-alert-delivery'
 import {
   normalizeAdminLabCompanyIntent,
   normalizeAdminLabGatewayControl,
+  parseAdminLabScoreBundleDiagnostics,
+  type AdminLabCandidateArtifactDetail,
   type AdminLabCandidateRunDetail,
   type AdminLabChampionSummary,
   type AdminLabCompanyDetail,
@@ -38,6 +49,7 @@ import {
   type AdminLabIcpDetail,
   type AdminLabIntentSignalDetail,
   type AdminLabRunDetail,
+  type AdminLabScoreBundleDiagnostics,
   type AdminLabTelemetryState,
   type AdminLabWorkflowControlSummary,
 } from '@/lib/admin-research-lab-telemetry'
@@ -98,6 +110,13 @@ const COMPANY_TELEMETRY_SELECT = [
 ].join(',')
 const LIVE_BENCHMARK_STALE_MS = 15 * 60 * 1000
 const LEADS_PER_ICP_NORMALIZER = 5
+const ALERT_MONITOR_ID = 'research-lab-alerts:v1'
+const DEFAULT_ALERT_MONITOR_INTERVAL_MS = 60_000
+const ADMIN_LAB_OVERVIEW_CACHE_MS = 20_000
+const ADMIN_LAB_ACTIVE_DETAIL_CACHE_MS = 5_000
+const ADMIN_LAB_TERMINAL_DETAIL_CACHE_MS = 30_000
+const ADMIN_LAB_DETAIL_CACHE_LIMIT = 200
+const ADMIN_LAB_REFRESH_RECENT_LOOP_LIMIT = 25
 
 type AdminHealthState = 'healthy' | 'degraded' | 'critical' | 'unknown'
 type AdminScoringState = 'active' | 'paused' | 'stalled' | 'blocked' | 'idle' | 'unknown'
@@ -279,7 +298,7 @@ export type AdminLabBenchmarkSummary = {
 
 export type AdminLabAlertSummary = {
   state: AdminHealthState
-  source: 'ops_telemetry' | 'public_transparency_log' | 'none'
+  source: 'ops_telemetry' | 'public_transparency_log' | 'canonical_evaluator' | 'combined' | 'none'
   sourceAvailable: boolean
   unavailableReason: string | null
   totalLast24h: number
@@ -292,7 +311,47 @@ export type AdminLabAlertSummary = {
   latestObservedAt: string | null
   latestCheckpointAt: string | null
   latestCheckpointUrl: string | null
+  operations: AdminLabAlertOperationsSummary
   recent: AdminLabAlert[]
+}
+
+export type AdminLabAlertOperationsSummary = {
+  state: AdminHealthState
+  sourceAvailable: boolean
+  unavailableReason: string | null
+  monitorEnabled: boolean
+  monitorIntervalMs: number
+  monitoredValidatorCount: number
+  validators: AdminLabMonitoredValidator[]
+  emailConfigured: boolean
+  discordConfigured: boolean
+  deliveryReady: boolean
+  configurationBlockers: string[]
+  lastStartedAt: string | null
+  lastCompletedAt: string | null
+  lastErrorAt: string | null
+  lastError: string | null
+  heartbeatAgeMs: number | null
+  leaseActive: boolean
+  pendingDeliveryCount: number
+  overdueDeliveryCount: number
+  succeededDeliveryCount24h: number
+  failedDeliveryCount24h: number
+  latestDeliveryAt: string | null
+  oldestPendingAt: string | null
+  detail: string
+}
+
+export type AdminLabMonitoredValidator = {
+  hotkey: string
+  label: string | null
+  source: 'database' | 'environment'
+  enabled: boolean
+  monitorPcr0: boolean
+  monitorOffchainWeights: boolean
+  monitorOnchainWeights: boolean
+  expectedPcr0: string | null
+  updatedAt: string | null
 }
 
 export type AdminLabAlert = {
@@ -305,6 +364,14 @@ export type AdminLabAlert = {
   count: number
   firstSeenAt: string | null
   lastSeenAt: string | null
+  detail?: string | null
+  signal?: string | null
+  scope?: string | null
+  entityId?: string | null
+  validatorId?: string | null
+  ageMs?: number | null
+  ageBlocks?: number | null
+  sources?: string[]
 }
 
 export type AdminLabAttestationSummary = {
@@ -403,6 +470,8 @@ export type AdminLabOpsSummary = {
   pipeline: AdminLabPipelineStage[]
   benchmark: AdminLabBenchmarkSummary
   alerts: AdminLabAlertSummary
+  /** Raw canonical evaluator output for the independent durable monitor. */
+  evaluatedAlerts: ResearchLabEvaluatedAlert[]
   attestation: AdminLabAttestationSummary
   sourcingModel: AdminLabSourcingModelSummary
   computeSpend: AdminLabComputeSpendSummary
@@ -423,12 +492,54 @@ export type AdminResearchLabPayload = {
   fetchedAt: string
 }
 
+export type AdminLabLoopRefresh = Pick<
+  AdminLabLoopSummary,
+  | 'ticketId'
+  | 'runId'
+  | 'receiptId'
+  | 'outcomeLabel'
+  | 'outcomeBand'
+  | 'publicStatus'
+  | 'paymentState'
+  | 'executionState'
+  | 'candidateState'
+  | 'resultState'
+  | 'opsReason'
+  | 'statusDetail'
+  | 'opsWarnings'
+  | 'statusKey'
+  | 'statusLabel'
+  | 'statusNote'
+  | 'actionNote'
+  | 'candidateCount'
+  | 'scoredCandidateCount'
+  | 'lastActivityAt'
+>
+
+export type AdminResearchLabRefreshPayload = {
+  recentLoops: AdminLabLoopSummary[]
+  loopStates: AdminLabLoopRefresh[]
+  ops: Omit<AdminLabOpsSummary, 'champions' | 'evaluatedAlerts'>
+  stats: AdminResearchLabPayload['stats']
+  fetchedAt: string
+}
+
 export type AdminResearchLabTimelinePayload = {
   loop: AdminLabLoopSummary
   timeline: ResearchLabLoopTimeline
   runDetail: AdminLabRunDetail
   fetchedAt: string
 }
+
+type AdminLabCacheStatus = 'hit' | 'miss' | 'shared'
+
+let adminLabOverviewCache: { payload: AdminResearchLabPayload; expiresAt: number } | null = null
+let adminLabOverviewInFlight: Promise<AdminResearchLabPayload> | null = null
+const adminLabTimelineCache = new Map<string, {
+  payload: AdminResearchLabTimelinePayload | null
+  expiresAt: number
+}>()
+const adminLabTimelineInFlight = new Map<string, Promise<AdminResearchLabTimelinePayload | null>>()
 
 export async function GET(request: NextRequest) {
   let supabase
@@ -441,44 +552,267 @@ export async function GET(request: NextRequest) {
 
   const ticketId = request.nextUrl.searchParams.get('ticketId')?.trim()
   if (ticketId) {
+    const runId = request.nextUrl.searchParams.get('runId')?.trim() || null
     let detail: AdminResearchLabTimelinePayload | null = null
+    let cacheStatus: AdminLabCacheStatus = 'miss'
     try {
-      detail = await fetchAdminLabTimeline(supabase, ticketId)
+      const cached = await getCachedAdminLabTimeline(supabase, ticketId, runId)
+      detail = cached.payload
+      cacheStatus = cached.status
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Unknown Supabase error'
       return NextResponse.json({ error: msg }, { status: 502 })
     }
     if (!detail) {
-      return NextResponse.json({ error: 'Research Lab loop not found' }, { status: 404 })
+      return NextResponse.json({ error: 'Research Lab loop or requested run not found' }, { status: 404 })
     }
-    return NextResponse.json(detail, { headers: { 'Cache-Control': 'no-store' } })
+    return NextResponse.json(detail, {
+      headers: {
+        'Cache-Control': 'private, no-store',
+        'X-Admin-Lab-Cache': cacheStatus,
+      },
+    })
   }
 
-	  let loops: AdminLabLoopSummary[] = []
-	  let ops: AdminLabOpsSummary
-	  try {
-	    loops = await fetchAdminLabLoops(supabase)
-	    ops = await fetchAdminLabOps(supabase, loops)
-	  } catch (e) {
-	    const msg = e instanceof Error ? e.message : 'Unknown Supabase error'
-	    return NextResponse.json({ error: msg }, { status: 502 })
+  let overview: AdminResearchLabPayload
+  let cacheStatus: AdminLabCacheStatus = 'miss'
+  try {
+    const cached = await getCachedAdminLabOverview(supabase)
+    overview = cached.payload
+    cacheStatus = cached.status
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Unknown Supabase error'
+    return NextResponse.json({ error: msg }, { status: 502 })
   }
-  const miners = new Set(loops.map((loop) => loop.minerHotkey).filter(Boolean))
+  const refreshView = request.nextUrl.searchParams.get('mode') === 'refresh'
   return NextResponse.json(
-	    {
-	      loops,
-	      ops,
-	      stats: {
-	        totalLoops: loops.length,
-	        runningLoops: loops.filter((loop) => isActiveResearchLabLoopStatus(loop.statusKey)).length,
-	        scoredLoops: loops.filter((loop) => isScoredResearchLabLoopStatus(loop.statusKey)).length,
-	        failedLoops: loops.filter((loop) => isNoGainOrFailedResearchLabLoopStatus(loop.statusKey) || isFailedOutcome(loop.outcomeLabel, loop.outcomeBand)).length,
-	        uniqueMiners: miners.size,
-	      },
-      fetchedAt: new Date().toISOString(),
-    } satisfies AdminResearchLabPayload,
+    refreshView ? buildAdminLabRefreshPayload(overview) : overview,
+    {
+      headers: {
+        'Cache-Control': 'private, no-store',
+        'X-Admin-Lab-Cache': cacheStatus,
+        'X-Admin-Lab-View': refreshView ? 'refresh' : 'full',
+      },
+    },
+  )
+}
+
+function buildAdminLabRefreshPayload(
+  overview: AdminResearchLabPayload,
+): AdminResearchLabRefreshPayload {
+  const ops = { ...overview.ops } as Partial<AdminLabOpsSummary>
+  delete ops.champions
+  delete ops.evaluatedAlerts
+  return {
+    recentLoops: overview.loops.slice(0, ADMIN_LAB_REFRESH_RECENT_LOOP_LIMIT),
+    loopStates: overview.loops.map((loop) => ({
+      ticketId: loop.ticketId,
+      runId: loop.runId,
+      receiptId: loop.receiptId,
+      outcomeLabel: loop.outcomeLabel,
+      outcomeBand: loop.outcomeBand,
+      publicStatus: loop.publicStatus,
+      paymentState: loop.paymentState,
+      executionState: loop.executionState,
+      candidateState: loop.candidateState,
+      resultState: loop.resultState,
+      opsReason: loop.opsReason,
+      statusDetail: loop.statusDetail,
+      opsWarnings: loop.opsWarnings,
+      statusKey: loop.statusKey,
+      statusLabel: loop.statusLabel,
+      statusNote: loop.statusNote,
+      actionNote: loop.actionNote,
+      candidateCount: loop.candidateCount,
+      scoredCandidateCount: loop.scoredCandidateCount,
+      lastActivityAt: loop.lastActivityAt,
+    })),
+    ops: ops as AdminResearchLabRefreshPayload['ops'],
+    stats: overview.stats,
+    fetchedAt: overview.fetchedAt,
+  }
+}
+
+async function getCachedAdminLabOverview(
+  supabase: ReturnType<typeof getAdminSupabase>,
+): Promise<{ payload: AdminResearchLabPayload; status: AdminLabCacheStatus }> {
+  const now = Date.now()
+  if (adminLabOverviewCache && adminLabOverviewCache.expiresAt > now) {
+    return { payload: adminLabOverviewCache.payload, status: 'hit' }
+  }
+  if (adminLabOverviewInFlight) {
+    return { payload: await adminLabOverviewInFlight, status: 'shared' }
+  }
+
+  adminLabOverviewInFlight = buildAdminLabOverview(supabase)
+  try {
+    const payload = await adminLabOverviewInFlight
+    adminLabOverviewCache = {
+      payload,
+      expiresAt: Date.now() + ADMIN_LAB_OVERVIEW_CACHE_MS,
+    }
+    return { payload, status: 'miss' }
+  } finally {
+    adminLabOverviewInFlight = null
+  }
+}
+
+async function buildAdminLabOverview(
+  supabase: ReturnType<typeof getAdminSupabase>,
+): Promise<AdminResearchLabPayload> {
+  const loops = await fetchAdminLabLoops(supabase)
+  const ops = await fetchAdminLabOps(supabase, loops)
+  const miners = new Set(loops.map((loop) => loop.minerHotkey).filter(Boolean))
+  return {
+    loops,
+    ops,
+    stats: {
+      totalLoops: loops.length,
+      runningLoops: loops.filter((loop) => isActiveResearchLabLoopStatus(loop.statusKey)).length,
+      scoredLoops: loops.filter((loop) => isScoredResearchLabLoopStatus(loop.statusKey)).length,
+      failedLoops: loops.filter((loop) => isNoGainOrFailedResearchLabLoopStatus(loop.statusKey) || isFailedOutcome(loop.outcomeLabel, loop.outcomeBand)).length,
+      uniqueMiners: miners.size,
+    },
+    fetchedAt: new Date().toISOString(),
+  }
+}
+
+async function getCachedAdminLabTimeline(
+  supabase: ReturnType<typeof getAdminSupabase>,
+  ticketId: string,
+  runId: string | null,
+): Promise<{ payload: AdminResearchLabTimelinePayload | null; status: AdminLabCacheStatus }> {
+  const key = `${ticketId}\u0000${runId ?? 'current'}`
+  const now = Date.now()
+  const cached = adminLabTimelineCache.get(key)
+  if (cached && cached.expiresAt > now) return { payload: cached.payload, status: 'hit' }
+  const inFlight = adminLabTimelineInFlight.get(key)
+  if (inFlight) return { payload: await inFlight, status: 'shared' }
+
+  const request = fetchAdminLabTimeline(supabase, ticketId, runId)
+  adminLabTimelineInFlight.set(key, request)
+  try {
+    const payload = await request
+    const terminal = payload?.runDetail.state === 'completed' || payload?.runDetail.state === 'failed'
+    adminLabTimelineCache.set(key, {
+      payload,
+      expiresAt: Date.now() + (terminal ? ADMIN_LAB_TERMINAL_DETAIL_CACHE_MS : ADMIN_LAB_ACTIVE_DETAIL_CACHE_MS),
+    })
+    pruneAdminLabTimelineCache()
+    return { payload, status: 'miss' }
+  } finally {
+    adminLabTimelineInFlight.delete(key)
+  }
+}
+
+function pruneAdminLabTimelineCache(): void {
+  const now = Date.now()
+  for (const [key, value] of adminLabTimelineCache) {
+    if (value.expiresAt <= now) adminLabTimelineCache.delete(key)
+  }
+  while (adminLabTimelineCache.size > ADMIN_LAB_DETAIL_CACHE_LIMIT) {
+    const oldestKey = adminLabTimelineCache.keys().next().value as string | undefined
+    if (!oldestKey) break
+    adminLabTimelineCache.delete(oldestKey)
+  }
+}
+
+function invalidateAdminLabOverviewCache(): void {
+  adminLabOverviewCache = null
+}
+
+export async function POST(request: NextRequest) {
+  const origin = request.headers.get('origin')
+  if (origin && origin !== request.nextUrl.origin) {
+    return NextResponse.json({ error: 'Cross-origin validator registry writes are not allowed.' }, { status: 403 })
+  }
+
+  let supabase
+  try {
+    supabase = getAdminSupabase()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'admin supabase not configured'
+    return NextResponse.json({ error: message }, { status: 503 })
+  }
+
+  let body: Record<string, unknown>
+  try {
+    body = await request.json() as Record<string, unknown>
+  } catch {
+    return NextResponse.json({ error: 'Request body must be valid JSON.' }, { status: 400 })
+  }
+
+  const action = stringOr(body.action)
+  const hotkey = stringOr(body.hotkey)
+  if (!hotkey || !isValidValidatorHotkey(hotkey)) {
+    return NextResponse.json({ error: 'A valid Bittensor validator hotkey is required.' }, { status: 400 })
+  }
+
+  if (action === 'remove_validator_monitor') {
+    const { error } = await supabase
+      .from('ops_validator_registry')
+      .delete()
+      .eq('validator_hotkey', hotkey)
+    if (error) return NextResponse.json({ error: error.message }, { status: 502 })
+    invalidateAdminLabOverviewCache()
+    return NextResponse.json({ ok: true, hotkey }, { headers: { 'Cache-Control': 'no-store' } })
+  }
+
+  if (action !== 'upsert_validator_monitor') {
+    return NextResponse.json({ error: 'Unsupported validator registry action.' }, { status: 400 })
+  }
+
+  const label = stringOr(body.label)?.slice(0, 80) ?? null
+  const rawExpectedPcr0 = stringOr(body.expectedPcr0)
+  const expectedPcr0 = rawExpectedPcr0 ? normalizePcr0(rawExpectedPcr0) : null
+  if (rawExpectedPcr0 && !expectedPcr0) {
+    return NextResponse.json({ error: 'Expected PCR0 must be a 96-character hexadecimal value.' }, { status: 400 })
+  }
+  const row = {
+    validator_hotkey: hotkey,
+    label,
+    enabled: booleanOr(body.enabled) ?? true,
+    monitor_pcr0: booleanOr(body.monitorPcr0) ?? true,
+    monitor_offchain_weights: booleanOr(body.monitorOffchainWeights) ?? true,
+    monitor_onchain_weights: booleanOr(body.monitorOnchainWeights) ?? true,
+    expected_pcr0: expectedPcr0,
+    created_by: 'admin_dashboard',
+    updated_at: new Date().toISOString(),
+  }
+  const { data, error } = await supabase
+    .from('ops_validator_registry')
+    .upsert(row, { onConflict: 'validator_hotkey' })
+    .select('*')
+    .single()
+  if (error) return NextResponse.json({ error: error.message }, { status: 502 })
+  invalidateAdminLabOverviewCache()
+
+  return NextResponse.json(
+    {
+      ok: true,
+      validator: {
+        hotkey: data.validator_hotkey,
+        label: data.label,
+        source: 'database',
+        enabled: data.enabled,
+        monitorPcr0: data.monitor_pcr0,
+        monitorOffchainWeights: data.monitor_offchain_weights,
+        monitorOnchainWeights: data.monitor_onchain_weights,
+        expectedPcr0: data.expected_pcr0,
+        updatedAt: data.updated_at,
+      } satisfies AdminLabMonitoredValidator,
+    },
     { headers: { 'Cache-Control': 'no-store' } },
   )
+}
+
+function isValidValidatorHotkey(value: string): boolean {
+  if (!/^[1-9A-HJ-NP-Za-km-z]{40,64}$/.test(value)) return false
+  try {
+    return decodeAddress(value).length === 32
+  } catch {
+    return false
+  }
 }
 
 async function fetchAdminLabLoops(
@@ -501,6 +835,7 @@ async function fetchAdminLabLoops(
 async function fetchAdminLabTimeline(
   supabase: ReturnType<typeof getAdminSupabase>,
   ticketId: string,
+  requestedRunId: string | null,
 ): Promise<AdminResearchLabTimelinePayload | null> {
   const { data, error } = await supabase
     .from('research_lab_public_loop_card_current')
@@ -559,7 +894,11 @@ async function fetchAdminLabTimeline(
     },
     sources,
   })
-  const runDetail = await fetchAdminLabRunDetail(supabase, loop)
+  if (requestedRunId && !timeline.runs.some((run) => run.runId === requestedRunId)) {
+    return null
+  }
+  const selectedRunId = requestedRunId ?? currentRunId ?? null
+  const runDetail = await fetchAdminLabRunDetail(supabase, loop, selectedRunId)
 
   return { loop, timeline, runDetail, fetchedAt: new Date().toISOString() }
 }
@@ -650,12 +989,13 @@ async function fetchAdminLabOps(
     scoreMetrics,
     controls,
     benchmark,
-    alerts,
+    baseAlerts,
     attestation,
     sourcingModel,
     computeSpend,
     dailyBenchmark,
     champions,
+    metagraph,
   ] = await Promise.all([
     fetchScoreBundleMetrics(supabase, loops),
     fetchGatewayWorkflowControls(supabase),
@@ -666,6 +1006,7 @@ async function fetchAdminLabOps(
     fetchComputeSpendSummary(supabase),
     fetchDailyBenchmarkTelemetry(supabase, icpMetadata),
     fetchChampionTelemetry(supabase, icpMetadata),
+    fetchMetagraph(),
   ])
 
   const dataFreshness = buildDataFreshness(loops)
@@ -677,6 +1018,19 @@ async function fetchAdminLabOps(
     metrics: scoreMetrics,
     control: controls.scoring,
   })
+  const evaluatedAlerts = evaluateResearchLabAlerts(
+    buildCanonicalAlertObservations({
+      loops,
+      activeRuns,
+      benchmark: dailyBenchmark,
+      baseAlerts,
+      attestation,
+      dataFreshness,
+      metagraph,
+    }),
+    { now: Date.now() },
+  )
+  const alerts = mergeEvaluatedAlertSummary(baseAlerts, evaluatedAlerts)
   const healthSignals = buildHealthSignals({
     dataFreshness,
     benchmark,
@@ -694,12 +1048,234 @@ async function fetchAdminLabOps(
     pipeline,
     benchmark,
     alerts,
+    evaluatedAlerts,
     attestation,
     sourcingModel,
     computeSpend,
     dailyBenchmark,
     champions,
   }
+}
+
+function buildCanonicalAlertObservations(input: {
+  loops: AdminLabLoopSummary[]
+  activeRuns: AdminLabActiveRun[]
+  benchmark: AdminLabDailyBenchmark
+  baseAlerts: AdminLabAlertSummary
+  attestation: AdminLabAttestationSummary
+  dataFreshness: AdminLabDataFreshness
+  metagraph: Awaited<ReturnType<typeof fetchMetagraph>>
+}): ResearchLabAlertObservations {
+  const configuredValidators = input.baseAlerts.operations.validators.filter((validator) => validator.enabled)
+  const configured = configuredValidators.map((validator) => validator.hotkey)
+  const configuredSet = new Set(configured)
+  const configuredByHotkey = new Map(configuredValidators.map((validator) => [validator.hotkey, validator]))
+  const nodeByValidator = new Map<string, AdminLabAttestationNode>()
+  for (const node of input.attestation.nodes) {
+    const validatorId = node.hotkey ?? node.nodeId
+    if (!validatorId) continue
+    const current = nodeByValidator.get(validatorId)
+    if (!current || timestampOrZero(node.attestedAt) > timestampOrZero(current.attestedAt)) {
+      nodeByValidator.set(validatorId, node)
+    }
+  }
+
+  const validatorIds = uniqueStrings([
+    ...configured,
+    ...nodeByValidator.keys(),
+  ])
+  const metagraphAvailable = !input.metagraph.error
+  const validators: ResearchLabValidatorAlertObservation[] = validatorIds.map((validatorId) => {
+    const node = nodeByValidator.get(validatorId)
+    const expected = configuredSet.has(validatorId)
+    const monitor = configuredByHotkey.get(validatorId)
+    const source = expected ? 'configured validator telemetry' : 'observed validator telemetry'
+    const monitorPcr0 = monitor ? monitor.monitorPcr0 : Boolean(node)
+    const monitorOffchainWeights = monitor
+      ? monitor.monitorOffchainWeights
+      : Boolean(node && input.attestation.source === 'published_weight_bundles')
+    const monitorOnchainWeights = monitor ? monitor.monitorOnchainWeights : Boolean(node)
+    return {
+      validatorId,
+      source,
+      pcr0: monitorPcr0
+        ? {
+            observedPcr0: node?.observedPcr0 ?? null,
+            expectedPcr0: monitor?.expectedPcr0 ?? node?.expectedPcr0 ?? input.attestation.expectedPcr0,
+            matched: node?.matched ?? null,
+            observedAt: node?.attestedAt ?? null,
+          }
+        : undefined,
+      offchainWeightBundle:
+        monitorOffchainWeights
+          ? {
+              publishedAt: node?.attestedAt ?? null,
+              bundleId: node?.transparencyEventHash ?? null,
+            }
+          : undefined,
+      onchainUpdate: metagraphAvailable && monitorOnchainWeights
+        ? {
+            lastUpdateBlock: input.metagraph.lastUpdates[validatorId] ?? null,
+            currentBlock: input.metagraph.currentBlock,
+          }
+        : undefined,
+    }
+  })
+
+  const benchmarks: ResearchLabAlertObservations['benchmarks'] =
+    input.benchmark.benchmarkDate || input.benchmark.startedAt
+      ? [{
+          benchmarkId: input.benchmark.benchmarkDate
+            ? `${input.benchmark.benchmarkDate}:attempt:${input.benchmark.attempt ?? 0}`
+            : input.benchmark.rollingWindowHash ?? 'daily-benchmark',
+          source: 'daily benchmark telemetry',
+          status: input.benchmark.state === 'stalled' ? 'running' : input.benchmark.state,
+          startedAt: input.benchmark.startedAt,
+          lastActivityAt: input.benchmark.lastActivityAt,
+          failedAt: input.benchmark.state === 'failed' ? input.benchmark.completedAt : null,
+          error: input.benchmark.state === 'failed' ? input.benchmark.detail : null,
+        }]
+      : []
+
+  const activeRuns: Array<NonNullable<ResearchLabAlertObservations['activeRuns']>[number]> = input.activeRuns.map((run) => ({
+    runId: run.runId ?? run.ticketId,
+    validatorId: run.minerHotkey || null,
+    source: 'research lab run telemetry',
+    status: run.statusKey,
+    startedAt: run.submittedAt,
+    lastActivityAt: run.lastActivityAt,
+    blocked: Boolean(run.blocker && /(?:block|wait|pause|stale|rescore)/i.test(`${run.statusKey} ${run.blocker}`)),
+    blockedAt: run.blocker ? run.lastActivityAt : null,
+    blocker: run.blocker,
+  }))
+  const representedRuns = new Set(activeRuns.map((run) => run.runId))
+  for (const loop of input.loops) {
+    const runId = loop.runId ?? loop.ticketId
+    if (representedRuns.has(runId)) continue
+    if (!/(?:blocked|waiting_for_baseline|needs_rescore|recovery|paused|stalled)/i.test(loop.statusKey)) continue
+    activeRuns.push({
+      runId,
+      validatorId: loop.minerHotkey || null,
+      source: 'research lab blocked-loop telemetry',
+      status: loop.statusKey,
+      startedAt: loop.submittedAt,
+      lastActivityAt: loop.lastActivityAt,
+      blocked: true,
+      blockedAt: loop.lastActivityAt,
+      blocker: loop.actionNote?.detail ?? loop.statusNote?.detail ?? loop.statusDetail ?? loop.opsReason ?? null,
+    })
+  }
+
+  const transparencyCheckpoints: ResearchLabAlertObservations['transparencyCheckpoints'] =
+    input.baseAlerts.source === 'public_transparency_log' || input.baseAlerts.source === 'combined'
+      ? [{
+          checkpointId: `subnet-${LEADPOET_NETUID}`,
+          source: 'public transparency log',
+          checkpointAt: input.baseAlerts.latestCheckpointAt,
+        }]
+      : []
+
+  return {
+    validators,
+    benchmarks,
+    activeRuns,
+    transparencyCheckpoints,
+    dataFreshness: [{
+      sourceId: 'research-lab-activity',
+      source: 'research lab public loop projection',
+      observedAt: input.dataFreshness.latestActivityAt,
+    }],
+  }
+}
+
+function configuredValidatorHotkeys(): string[] {
+  return uniqueStrings([
+    ...splitEnvList(process.env.OPS_MONITORED_VALIDATOR_HOTKEYS),
+    ...splitEnvList(process.env.OPS_OWN_VALIDATOR_HOTKEYS),
+    ...splitEnvList(process.env.OPS_VALIDATOR_HOTKEYS),
+  ])
+}
+
+function splitEnvList(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(/[\s,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function mergeEvaluatedAlertSummary(
+  base: AdminLabAlertSummary,
+  evaluated: ResearchLabEvaluatedAlert[],
+): AdminLabAlertSummary {
+  if (evaluated.length === 0) return base
+  const detectedAt = new Date().toISOString()
+  const alerts = new Map<string, AdminLabAlert>()
+  for (const alert of base.recent) alerts.set(alert.fingerprint || alert.id, alert)
+
+  for (const alert of evaluated) {
+    const canonical: AdminLabAlert = {
+      id: alert.fingerprint,
+      severity: alert.severity,
+      source: alert.sources.join(', '),
+      title: alert.title,
+      fingerprint: alert.fingerprint,
+      status: 'active',
+      count: Math.max(1, alert.occurrences),
+      firstSeenAt: alert.observedAt ?? detectedAt,
+      lastSeenAt: detectedAt,
+      detail: alert.detail,
+      signal: alert.signal,
+      scope: alert.scope,
+      entityId: alert.entityId,
+      validatorId: alert.validatorId,
+      ageMs: alert.ageMs,
+      ageBlocks: alert.ageBlocks,
+      sources: alert.sources,
+    }
+    const current = alerts.get(alert.fingerprint)
+    alerts.set(alert.fingerprint, current ? mergeAdminAlert(current, canonical) : canonical)
+  }
+
+  const recent = Array.from(alerts.values()).sort(
+    (a, b) => alertSeverityRank(b.severity) - alertSeverityRank(a.severity) ||
+      timestampOrZero(b.lastSeenAt ?? b.firstSeenAt) - timestampOrZero(a.lastSeenAt ?? a.firstSeenAt),
+  )
+  const criticalLast24h = recent.filter((alert) => alert.severity.toLowerCase() === 'critical').length
+  const warningLast24h = recent.filter((alert) => ['warning', 'warn'].includes(alert.severity.toLowerCase())).length
+  const totalLast24h = recent.reduce((sum, alert) => sum + Math.max(1, alert.count), 0)
+  return {
+    ...base,
+    state: criticalLast24h > 0 ? 'critical' : warningLast24h > 0 ? 'degraded' : 'healthy',
+    source: base.sourceAvailable && base.source !== 'none' ? 'combined' : 'canonical_evaluator',
+    sourceAvailable: true,
+    totalLast24h,
+    criticalLast24h,
+    warningLast24h,
+    activeCount: recent.filter((alert) => !['resolved', 'closed'].includes(alert.status.toLowerCase())).length,
+    latestObservedAt: latestIso(base.latestObservedAt, detectedAt) ?? detectedAt,
+    recent: recent.slice(0, 24),
+  }
+}
+
+function mergeAdminAlert(existing: AdminLabAlert, canonical: AdminLabAlert): AdminLabAlert {
+  return {
+    ...existing,
+    ...canonical,
+    severity: alertSeverityRank(canonical.severity) >= alertSeverityRank(existing.severity)
+      ? canonical.severity
+      : existing.severity,
+    source: uniqueStrings([existing.source, canonical.source]).join(', '),
+    count: Math.max(existing.count, canonical.count),
+    firstSeenAt: earliestIso(existing.firstSeenAt, canonical.firstSeenAt) ?? null,
+    lastSeenAt: latestIso(existing.lastSeenAt, canonical.lastSeenAt) ?? null,
+    sources: uniqueStrings([...(existing.sources ?? []), ...(canonical.sources ?? [])]),
+  }
+}
+
+function alertSeverityRank(value: string): number {
+  if (value.toLowerCase() === 'critical') return 2
+  if (['warning', 'warn'].includes(value.toLowerCase())) return 1
+  return 0
 }
 
 type IcpMetadata = {
@@ -1301,34 +1877,63 @@ function buildScoreBundleIcpDetails(
 async function fetchAdminLabRunDetail(
   supabase: ReturnType<typeof getAdminSupabase>,
   loop: AdminLabLoopSummary,
+  runId: string | null,
 ): Promise<AdminLabRunDetail> {
+  let candidateQuery = supabase
+    .from('research_lab_candidate_evaluation_current')
+    .select('candidate_id, ticket_id, run_id, candidate_kind, candidate_artifact_hash, candidate_patch_hash, candidate_model_manifest_hash, candidate_source_diff_hash, candidate_patch_manifest, hypothesis_doc, candidate_build_doc, current_candidate_status, current_reason, current_score_bundle_id, current_event_hash, current_status_at, redacted_public_summary, created_at')
+    .eq('ticket_id', loop.ticketId)
+    .order('created_at', { ascending: false, nullsFirst: false })
+    .limit(200)
+  let bundleQuery = supabase
+    .from('research_evaluation_score_bundle_current')
+    .select('score_bundle_id, ticket_id, run_id, score_bundle_doc, current_event_status, current_event_type, current_reason, current_status_at, created_at')
+    .eq('ticket_id', loop.ticketId)
+    .order('created_at', { ascending: false, nullsFirst: false })
+    .limit(200)
+  let companyQuery = supabase
+    .from('research_lab_company_label_examples')
+    .select(COMPANY_TELEMETRY_SELECT)
+    .eq('ticket_id', loop.ticketId)
+    .order('created_at', { ascending: false, nullsFirst: false })
+    .limit(LIVE_TELEMETRY_LIMIT)
+  let dispatchQuery = supabase
+    .from('research_lab_scoring_dispatch_events')
+    .select('dispatch_event_id, dispatch_status, dispatch_type, candidate_id, run_id, score_bundle_id, worker_ref, event_doc, created_at')
+    .eq('ticket_id', loop.ticketId)
+    .order('created_at', { ascending: false, nullsFirst: false })
+    .limit(500)
+
+  // A ticket can be retried many times. Keep the inspector honest by
+  // applying the selected run to every source that can carry run_id before
+  // costs and errors are joined through that run's candidate IDs.
+  if (runId) {
+    candidateQuery = candidateQuery.eq('run_id', runId)
+    bundleQuery = bundleQuery.eq('run_id', runId)
+    companyQuery = companyQuery.eq('run_id', runId)
+    dispatchQuery = dispatchQuery.eq('run_id', runId)
+  }
+
   const [candidateResult, bundleResult, companyResult, dispatchResult, metadata] = await Promise.all([
-    supabase
-      .from('research_lab_candidate_evaluation_current')
-      .select('candidate_id, ticket_id, run_id, current_candidate_status, current_reason, current_score_bundle_id, current_status_at, redacted_public_summary, created_at')
-      .eq('ticket_id', loop.ticketId)
-      .order('created_at', { ascending: false, nullsFirst: false })
-      .limit(200),
-    supabase
-      .from('research_evaluation_score_bundle_current')
-      .select('score_bundle_id, ticket_id, run_id, score_bundle_doc, current_event_status, current_event_type, current_reason, current_status_at, created_at')
-      .eq('ticket_id', loop.ticketId)
-      .order('created_at', { ascending: false, nullsFirst: false })
-      .limit(200),
-    supabase
-      .from('research_lab_company_label_examples')
-      .select(COMPANY_TELEMETRY_SELECT)
-      .eq('ticket_id', loop.ticketId)
-      .order('created_at', { ascending: false, nullsFirst: false })
-      .limit(LIVE_TELEMETRY_LIMIT),
-    supabase
-      .from('research_lab_scoring_dispatch_events')
-      .select('dispatch_event_id, dispatch_status, dispatch_type, candidate_id, run_id, score_bundle_id, worker_ref, event_doc, created_at')
-      .eq('ticket_id', loop.ticketId)
-      .order('created_at', { ascending: false, nullsFirst: false })
-      .limit(500),
+    candidateQuery,
+    bundleQuery,
+    companyQuery,
+    dispatchQuery,
     fetchIcpMetadata(supabase),
   ])
+
+  const sourceErrors = [
+    ['candidates', candidateResult.error],
+    ['score bundles', bundleResult.error],
+    ['company telemetry', companyResult.error],
+    ['dispatch events', dispatchResult.error],
+  ] as const
+  const unavailableSources = sourceErrors
+    .filter((entry) => Boolean(entry[1]))
+    .map(([source, sourceError]) => `${source}: ${sourceError?.message ?? 'unavailable'}`)
+  if (unavailableSources.length > 0) {
+    throw new Error(`Run telemetry source failure — ${unavailableSources.join('; ')}`)
+  }
 
   const candidateRows = (candidateResult.data ?? []) as Array<Record<string, unknown>>
   const bundleRows = (bundleResult.data ?? []) as Array<Record<string, unknown>>
@@ -1343,8 +1948,7 @@ async function fetchAdminLabRunDetail(
       .in('candidate_id', batch)
       .limit(LIVE_TELEMETRY_LIMIT)
     if (error) {
-      console.warn('[admin:research-lab] run provider telemetry unavailable', error.message)
-      break
+      throw new Error(`Run provider telemetry failure — ${error.message}`)
     }
     costRows.push(...((data ?? []) as ProviderCostTelemetryRow[]))
   }
@@ -1360,9 +1964,12 @@ async function fetchAdminLabRunDetail(
     const costs = costRows.filter((row) => row.candidate_id === candidateId)
     const score = buildScoreBundleIcpDetails(bundle, companies, costs, metadata)
     const aggregates = objectRecord(objectRecord(bundle?.score_bundle_doc)?.aggregates) ?? {}
+    const diagnostics = parseAdminLabScoreBundleDiagnostics(bundle?.score_bundle_doc)
     const errors = [
       ...buildProviderErrors(costs, candidateId),
       ...buildDispatchErrors(dispatchRows.filter((row) => stringOr(row.candidate_id) === candidateId)),
+      ...buildCandidateStatusErrors(candidate, candidateId),
+      ...buildScoreBundleDiagnosticErrors(diagnostics, bundle, candidateId),
     ]
     return {
       candidateId,
@@ -1381,20 +1988,26 @@ async function fetchAdminLabRunDetail(
       providerEventCount: costs.length,
       companyCount: companies.length || score.icps.reduce((sum, icp) => sum + icp.companyScoreCount, 0),
       errorCount: errors.reduce((sum, item) => sum + item.count, 0),
+      diagnostics,
+      artifact: parseCandidateArtifactDetail(candidate),
       icps: score.icps,
       errors,
     }
   })
 
-  const runErrors = [...buildProviderErrors(costRows), ...buildDispatchErrors(dispatchRows)]
+  const runErrors = dedupeAdminErrors([
+    ...buildProviderErrors(costRows),
+    ...buildDispatchErrors(dispatchRows),
+    ...candidates.flatMap((candidate) => candidate.errors.filter((error) => error.source === 'candidate' || error.source === 'score_bundle')),
+  ])
   const totalBudgetUsd = candidates.some((candidate) => candidate.budgetUsd !== null)
     ? roundTelemetry(candidates.reduce((sum, candidate) => sum + (candidate.budgetUsd ?? 0), 0))
     : null
   return {
     ticketId: loop.ticketId,
-    runId: loop.runId,
-    state: telemetryStateForLoop(loop),
-    phase: phaseForLoop(loop),
+    runId,
+    state: telemetryStateForRun(loop, runId, candidateRows, bundleRows, dispatchRows),
+    phase: phaseForRun(loop, runId, candidateRows, bundleRows, dispatchRows),
     totalSpendUsd: roundTelemetry(costRows.reduce((sum, row) => sum + numberOr(row.cost_usd, 0), 0)),
     totalBudgetUsd,
     providerEventCount: costRows.length,
@@ -1477,6 +2090,7 @@ function buildProviderErrors(rows: ProviderCostTelemetryRow[], candidateId?: str
     const icpRef = stringOr(row.icp_ref) ?? null
     const requestFingerprint = stringOr(row.request_fingerprint) ?? null
     const requestCommand = providerRequestCommand(row)
+    const diagnosticDetail = providerDiagnosticDetail(row)
     const requestIdentity = requestFingerprint ?? requestCommand.value ?? ''
     const key = `${provider}\u0000${endpoint ?? ''}\u0000${statusCode}\u0000${icpRef ?? ''}\u0000${requestIdentity}`
     const current = grouped.get(key)
@@ -1489,7 +2103,7 @@ function buildProviderErrors(rows: ProviderCostTelemetryRow[], candidateId?: str
       id: `provider:${key}`,
       source: 'provider',
       title: `${provider} returned HTTP ${statusCode}`,
-      detail: endpoint,
+      detail: diagnosticDetail,
       statusCode,
       provider,
       endpoint,
@@ -1504,6 +2118,28 @@ function buildProviderErrors(rows: ProviderCostTelemetryRow[], candidateId?: str
     })
   }
   return Array.from(grouped.values()).sort((a, b) => timestampOrZero(b.occurredAt) - timestampOrZero(a.occurredAt))
+}
+
+function providerDiagnosticDetail(row: ProviderCostTelemetryRow): string | null {
+  const doc = objectRecord(row.event_doc) ?? {}
+  const response = objectRecord(doc.response) ?? {}
+  const values = [
+    doc.failure_class,
+    doc.tracking_reason,
+    doc.error,
+    doc.error_message,
+    doc.message,
+    doc.detail,
+    doc.error_excerpt,
+    doc.response_excerpt,
+    response.error,
+    response.message,
+  ]
+    .map(stringOr)
+    .filter((value): value is string => Boolean(value))
+    .map(redactDiagnosticText)
+  const unique = Array.from(new Set(values))
+  return unique.length > 0 ? unique.join(' · ').slice(0, 1_600) : null
 }
 
 type ProviderRequestCommand = {
@@ -1619,21 +2255,40 @@ function sanitizeHttpRequestLine(value: string): string | null {
 
 function buildDispatchErrors(rows: Array<Record<string, unknown>>): AdminLabErrorDetail[] {
   return rows
-    .filter((row) => (stringOr(row.dispatch_status) ?? '').toLowerCase() === 'failed')
+    .filter((row) => {
+      const status = (stringOr(row.dispatch_status) ?? '').toLowerCase()
+      return ['failed', 'rejected', 'timed_out', 'timeout', 'cancelled', 'canceled'].includes(status)
+    })
     .map((row, index) => {
       const doc = objectRecord(row.event_doc) ?? {}
       const diagnostics = doc.error_diagnostics
+      const status = (stringOr(row.dispatch_status) ?? 'failed').toLowerCase()
+      const failureClass = stringOr(doc.failure_class)
+      const stage = stringOr(doc.stage)
+      const detail = [
+        failureClass,
+        stage,
+        summarizeUnknown(diagnostics),
+        stringOr(doc.error),
+        stringOr(doc.reason),
+        stringOr(doc.message),
+      ]
+        .filter((value): value is string => Boolean(value))
+        .map(redactDiagnosticText)
+      const requestCommand = recordedHttpRequestLine(
+        stringOr(doc.request_command) ?? stringOr(doc.request_line),
+      )
       return {
         id: stringOr(row.dispatch_event_id) ?? `dispatch:${index}`,
         source: 'dispatch' as const,
-        title: `${stringOr(row.dispatch_type) ?? 'Scoring dispatch'} failed`,
-        detail: summarizeUnknown(diagnostics) ?? stringOr(doc.error) ?? stringOr(doc.message) ?? null,
-        statusCode: null,
-        provider: null,
-        endpoint: null,
-        requestCommand: null,
-        requestCommandSource: 'unavailable' as const,
-        requestFingerprint: null,
+        title: `${stringOr(row.dispatch_type) ?? 'Scoring dispatch'} ${status}`,
+        detail: Array.from(new Set(detail)).join(' · ').slice(0, 1_600) || null,
+        statusCode: finiteNumberOrNull(doc.status_code),
+        provider: stringOr(doc.provider) ?? null,
+        endpoint: stringOr(doc.endpoint) ?? null,
+        requestCommand,
+        requestCommandSource: requestCommand ? 'recorded' as const : 'unavailable' as const,
+        requestFingerprint: stringOr(doc.error_hash) ?? stringOr(doc.request_fingerprint) ?? null,
         icpRef: stringOr(doc.icp_ref) ?? null,
         candidateId: stringOr(row.candidate_id) ?? null,
         runId: stringOr(row.run_id) ?? null,
@@ -1641,6 +2296,202 @@ function buildDispatchErrors(rows: Array<Record<string, unknown>>): AdminLabErro
         occurredAt: isoStringOr(row.created_at) ?? null,
       }
     })
+}
+
+function redactDiagnosticText(value: string): string {
+  return value
+    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, 'Bearer [redacted]')
+    .replace(
+      /\b(api[-_]?key|access[-_]?token|auth(?:orization)?|password|pass|secret|signature|credential)\b(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;&]+)/gi,
+      '$1$2[redacted]',
+    )
+    .slice(0, 1_600)
+}
+
+function buildCandidateStatusErrors(
+  row: Record<string, unknown>,
+  candidateId: string,
+): AdminLabErrorDetail[] {
+  const status = (stringOr(row.current_candidate_status) ?? '').toLowerCase()
+  const failureLike = /(?:fail|reject|block|cancel|timed_out|timeout|no_candidate|no_buildable|needs_rescore)/.test(status)
+  if (!failureLike) return []
+  const reason = stringOr(row.current_reason)
+  return [{
+    id: `candidate:${candidateId}:${status || 'failed'}`,
+    source: 'candidate',
+    title: `Candidate ${readableDiagnosticKey(status || 'failed')}`,
+    detail: reason ? redactDiagnosticText(reason) : null,
+    statusCode: null,
+    provider: null,
+    endpoint: null,
+    requestCommand: null,
+    requestCommandSource: 'unavailable',
+    requestFingerprint: stringOr(row.current_event_hash) ?? null,
+    icpRef: null,
+    candidateId,
+    runId: stringOr(row.run_id) ?? null,
+    count: 1,
+    occurredAt: isoStringOr(row.current_status_at) ?? isoStringOr(row.created_at) ?? null,
+  }]
+}
+
+function buildScoreBundleDiagnosticErrors(
+  diagnostics: AdminLabScoreBundleDiagnostics,
+  bundle: Record<string, unknown> | undefined,
+  candidateId: string,
+): AdminLabErrorDetail[] {
+  if (!bundle) return []
+  const bundleId = stringOr(bundle.score_bundle_id) ?? 'unknown-score-bundle'
+  const runId = stringOr(bundle.run_id) ?? null
+  const occurredAt = isoStringOr(bundle.current_status_at) ?? isoStringOr(bundle.created_at) ?? null
+  const errors: AdminLabErrorDetail[] = []
+  const classOccurrences = new Map<string, number>()
+
+  diagnostics.perIcpResults.forEach((row, rowIndex) => {
+    const classes = row.failureClasses.length > 0
+      ? row.failureClasses
+      : row.failureReason || /(?:fail|error|reject|block|timeout)/i.test(row.status ?? '')
+        ? ['icp_scoring_failure']
+        : []
+    for (const failureClass of classes) {
+      classOccurrences.set(failureClass, (classOccurrences.get(failureClass) ?? 0) + 1)
+      errors.push({
+        id: `score-bundle:${bundleId}:${row.icpRef ?? rowIndex}:${failureClass}`,
+        source: 'score_bundle',
+        title: `ICP · ${readableDiagnosticKey(failureClass)}`,
+        detail: row.failureReason ? redactDiagnosticText(row.failureReason) : null,
+        statusCode: null,
+        provider: null,
+        endpoint: null,
+        requestCommand: null,
+        requestCommandSource: 'unavailable',
+        requestFingerprint: bundleId,
+        icpRef: row.icpRef,
+        candidateId,
+        runId,
+        count: 1,
+        occurredAt,
+      })
+    }
+  })
+
+  for (const [failureClass, count] of Object.entries(diagnostics.scoringHealth?.failureClassCounts ?? {})) {
+    const residual = Math.max(0, count - (classOccurrences.get(failureClass) ?? 0))
+    if (residual === 0) continue
+    errors.push({
+      id: `score-bundle:${bundleId}:health:${failureClass}`,
+      source: 'score_bundle',
+      title: `Scoring health · ${readableDiagnosticKey(failureClass)}`,
+      detail: `The score bundle recorded ${count.toLocaleString()} occurrence${count === 1 ? '' : 's'} of this failure class; ${residual.toLocaleString()} were not itemized in per-ICP results.`,
+      statusCode: null,
+      provider: null,
+      endpoint: null,
+      requestCommand: null,
+      requestCommandSource: 'unavailable',
+      requestFingerprint: bundleId,
+      icpRef: null,
+      candidateId,
+      runId,
+      count: residual,
+      occurredAt,
+    })
+  }
+
+  const bundleStatus = (stringOr(bundle.current_event_status) ?? '').toLowerCase()
+  const bundleReason = stringOr(bundle.current_reason)
+  if (bundleReason && /(?:fail|error|reject|block|cancel|timeout)/.test(bundleStatus)) {
+    errors.push({
+      id: `score-bundle:${bundleId}:status:${bundleStatus}`,
+      source: 'score_bundle',
+      title: `Score bundle ${readableDiagnosticKey(bundleStatus)}`,
+      detail: redactDiagnosticText(bundleReason),
+      statusCode: null,
+      provider: null,
+      endpoint: null,
+      requestCommand: null,
+      requestCommandSource: 'unavailable',
+      requestFingerprint: bundleId,
+      icpRef: null,
+      candidateId,
+      runId,
+      count: 1,
+      occurredAt,
+    })
+  }
+
+  return errors
+}
+
+function parseCandidateArtifactDetail(row: Record<string, unknown>): AdminLabCandidateArtifactDetail {
+  const hypothesis = objectRecord(row.hypothesis_doc) ?? {}
+  const patchManifest = objectRecord(row.candidate_patch_manifest) ?? {}
+  const patchDoc = objectRecord(patchManifest.patch_doc) ?? {}
+  const build = objectRecord(row.candidate_build_doc) ?? {}
+  const planAlignment = objectRecord(build.plan_alignment) ?? objectRecord(patchDoc.plan_alignment) ?? {}
+  return {
+    candidateKind: stringOr(row.candidate_kind) ?? stringOr(patchManifest.candidate_kind) ?? null,
+    lane: stringOr(patchDoc.lane) ?? stringOr(planAlignment.detected_lane) ?? null,
+    targetComponent: stringOr(patchManifest.target_component_id) ?? null,
+    targetFiles: uniqueStrings([
+      ...arrayOfStrings(patchDoc.target_files),
+      ...arrayOfStrings(patchManifest.target_files),
+    ]),
+    changedFiles: arrayOfStrings(build.changed_files),
+    mechanism: stringOr(hypothesis.mechanism) ?? stringOr(planAlignment.detected_mechanism) ?? null,
+    expectedImprovement: summarizeArtifactValue(hypothesis.expected_improvement ?? patchDoc.expected_improvement),
+    predictedDelta: finiteNumberOrNull(hypothesis.predicted_delta),
+    failureMode: summarizeArtifactValue(hypothesis.failure_mode),
+    falsifier: summarizeArtifactValue(hypothesis.falsifier),
+    risk: summarizeArtifactValue(hypothesis.risk ?? patchDoc.risk),
+    testPlan: summarizeArtifactValue(patchDoc.test_plan),
+    rollbackPlan: summarizeArtifactValue(patchDoc.rollback_plan),
+    validationResult: summarizeArtifactValue(patchManifest.validation_result),
+    buildValidation: summarizeArtifactValue(build.build_validation),
+    planVerdict: stringOr(planAlignment.verdict) ?? null,
+    planReason: summarizeArtifactValue(planAlignment.reason ?? planAlignment.blocking_issue),
+    planConfidence: finiteNumberOrNull(planAlignment.confidence),
+    candidateGitCommitSha: stringOr(build.candidate_git_commit_sha) ?? stringOr(build.recorded_git_commit_sha) ?? null,
+    parentGitCommitSha: stringOr(build.parent_git_commit_sha) ?? null,
+    candidateArtifactHash: stringOr(row.candidate_artifact_hash) ?? stringOr(patchManifest.candidate_artifact_hash) ?? null,
+    candidatePatchHash: stringOr(row.candidate_patch_hash) ?? stringOr(patchManifest.manifest_hash) ?? null,
+    sourceDiffHash: stringOr(row.candidate_source_diff_hash) ?? stringOr(build.source_diff_hash) ?? null,
+    modelManifestHash: stringOr(row.candidate_model_manifest_hash) ?? stringOr(patchManifest.candidate_model_manifest_hash) ?? null,
+  }
+}
+
+function summarizeArtifactValue(value: unknown): string | null {
+  if (value === null || value === undefined || value === '') return null
+  if (typeof value === 'string') return redactDiagnosticText(value)
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (Array.isArray(value)) {
+    const parts = value.map(summarizeArtifactValue).filter((item): item is string => Boolean(item))
+    return parts.length > 0 ? parts.join(' · ').slice(0, 1_600) : null
+  }
+  const record = objectRecord(value)
+  if (!record) return null
+  const summary = stringOr(record.summary) ?? stringOr(record.detail) ?? stringOr(record.reason) ?? stringOr(record.message) ?? stringOr(record.status)
+  if (summary) return redactDiagnosticText(summary)
+  try {
+    return redactDiagnosticText(JSON.stringify(record))
+  } catch {
+    return null
+  }
+}
+
+function dedupeAdminErrors(errors: AdminLabErrorDetail[]): AdminLabErrorDetail[] {
+  const byId = new Map<string, AdminLabErrorDetail>()
+  for (const error of errors) {
+    const current = byId.get(error.id)
+    if (!current || timestampOrZero(error.occurredAt) > timestampOrZero(current.occurredAt)) {
+      byId.set(error.id, error)
+    }
+  }
+  return Array.from(byId.values()).sort((a, b) => timestampOrZero(b.occurredAt) - timestampOrZero(a.occurredAt))
+}
+
+function readableDiagnosticKey(value: string): string {
+  const readable = value.replace(/[_-]+/g, ' ').trim()
+  return readable ? readable.replace(/\b\w/g, (char) => char.toUpperCase()) : 'Unknown'
 }
 
 function normalizeFunnel(value: unknown): AdminLabFunnelDetail | null {
@@ -1673,6 +2524,31 @@ function telemetryStateForLoop(loop: AdminLabLoopSummary): AdminLabTelemetryStat
     return value.includes('fail') || value.includes('cancel') ? 'failed' : 'completed'
   }
   if (isFailedOutcome(loop.outcomeLabel, loop.outcomeBand)) return 'failed'
+  return 'unknown'
+}
+
+function telemetryStateForRun(
+  loop: AdminLabLoopSummary,
+  runId: string | null,
+  candidates: Array<Record<string, unknown>>,
+  bundles: Array<Record<string, unknown>>,
+  dispatches: Array<Record<string, unknown>>,
+): AdminLabTelemetryState {
+  if ((runId ?? '') === (loop.runId ?? '')) return telemetryStateForLoop(loop)
+
+  const operationalStatuses = [
+    ...candidates.map((row) => stringOr(row.current_candidate_status)),
+    ...bundles.map((row) => stringOr(row.current_event_status)),
+    ...dispatches.map((row) => stringOr(row.dispatch_status)),
+  ].filter(Boolean).map((value) => value!.toLowerCase())
+
+  if (operationalStatuses.some((value) => /(?:^|_)(?:failed|error|cancelled|canceled)(?:$|_)/.test(value))) {
+    return 'failed'
+  }
+  if (operationalStatuses.some((value) => /(?:^|_)(?:queued|started|running|processing|scoring|in_progress)(?:$|_)/.test(value))) {
+    return 'active'
+  }
+  if (candidates.length > 0 || bundles.length > 0 || dispatches.length > 0) return 'completed'
   return 'unknown'
 }
 
@@ -2298,20 +3174,221 @@ function emptyBenchmarkSummary(detail: string): AdminLabBenchmarkSummary {
 async function fetchAlertSummary(
   supabase: ReturnType<typeof getAdminSupabase>,
 ): Promise<AdminLabAlertSummary> {
-  const current = await fetchOptionalRows(supabase, 'ops_alert_current', 500)
-  if (current.sourceAvailable && current.rows.length > 0) {
-    return summarizeOpsAlerts(current.rows)
-  }
-
-  const events = await fetchOptionalRows(supabase, 'ops_alert_events', 500)
-  if (events.sourceAvailable && events.rows.length > 0) {
-    return summarizeOpsAlerts(events.rows)
-  }
-
-  return fetchPublicLogAlertSummary(
+  const [current, events, operations] = await Promise.all([
+    fetchOptionalRows(supabase, 'ops_alert_current', 500),
+    fetchOptionalRows(supabase, 'ops_alert_events', 500),
+    fetchAlertOperationsSummary(supabase),
+  ])
+  const opsRows = current.sourceAvailable && current.rows.length > 0
+    ? current.rows
+    : events.sourceAvailable
+      ? events.rows
+      : []
+  const publicSummary = await fetchPublicLogAlertSummary(
     supabase,
     current.unavailableReason ?? events.unavailableReason,
   )
+  const summary = opsRows.length === 0
+    ? publicSummary
+    : publicSummary.sourceAvailable
+      ? mergeBaseAlertSummaries(summarizeOpsAlerts(opsRows), publicSummary)
+      : {
+          ...summarizeOpsAlerts(opsRows),
+          unavailableReason: publicSummary.unavailableReason,
+        }
+  return { ...summary, operations }
+}
+
+async function fetchAlertOperationsSummary(
+  supabase: ReturnType<typeof getAdminSupabase>,
+): Promise<AdminLabAlertOperationsSummary> {
+  const [monitorResult, deliveryResult, registryResult] = await Promise.all([
+    supabase
+      .from('ops_alert_monitor_state')
+      .select('*')
+      .eq('monitor_id', ALERT_MONITOR_ID)
+      .limit(1),
+    supabase
+      .from('ops_alert_delivery_events')
+      .select('status,due_at,attempted_at,completed_at,created_at,error_detail,channel')
+      .order('created_at', { ascending: false })
+      .limit(1_000),
+    supabase
+      .from('ops_validator_registry')
+      .select('*')
+      .order('updated_at', { ascending: false })
+      .limit(500),
+  ])
+
+  const sourceErrors = [
+    monitorResult.error?.message,
+    deliveryResult.error?.message,
+    registryResult.error?.message,
+  ].filter(Boolean)
+  const sourceAvailable = sourceErrors.length === 0
+  const monitor = ((monitorResult.data ?? []) as Array<Record<string, unknown>>)[0] ?? null
+  const deliveries = (deliveryResult.data ?? []) as Array<Record<string, unknown>>
+  const now = Date.now()
+  const since24h = now - 24 * 60 * 60 * 1000
+  const monitorEnabled = process.env.RESEARCH_LAB_ALERT_MONITOR_ENABLED === 'true'
+  const monitorIntervalMs = alertMonitorIntervalMs(process.env.RESEARCH_LAB_ALERT_MONITOR_INTERVAL_MS)
+  const validatorMap = new Map<string, AdminLabMonitoredValidator>()
+  for (const row of (registryResult.data ?? []) as Array<Record<string, unknown>>) {
+    const hotkey = stringOr(row.validator_hotkey)
+    if (!hotkey) continue
+    validatorMap.set(hotkey, {
+      hotkey,
+      label: stringOr(row.label) ?? null,
+      source: 'database',
+      enabled: booleanOr(row.enabled) ?? true,
+      monitorPcr0: booleanOr(row.monitor_pcr0) ?? true,
+      monitorOffchainWeights: booleanOr(row.monitor_offchain_weights) ?? true,
+      monitorOnchainWeights: booleanOr(row.monitor_onchain_weights) ?? true,
+      expectedPcr0: stringOr(row.expected_pcr0) ?? null,
+      updatedAt: isoStringOr(row.updated_at) ?? null,
+    })
+  }
+  for (const hotkey of configuredValidatorHotkeys()) {
+    const existing = validatorMap.get(hotkey)
+    validatorMap.set(hotkey, {
+      hotkey,
+      label: existing?.label ?? null,
+      source: 'environment',
+      enabled: true,
+      monitorPcr0: true,
+      monitorOffchainWeights: true,
+      monitorOnchainWeights: true,
+      expectedPcr0: existing?.expectedPcr0 ?? null,
+      updatedAt: existing?.updatedAt ?? null,
+    })
+  }
+  const validators = Array.from(validatorMap.values()).sort((left, right) =>
+    Number(right.enabled) - Number(left.enabled) ||
+      (left.label ?? left.hotkey).localeCompare(right.label ?? right.hotkey),
+  )
+  const monitoredValidatorCount = validators.filter((validator) => validator.enabled).length
+  let emailConfigured = false
+  let discordConfigured = false
+  let deliveryConfigError: string | null = null
+  try {
+    const config = parseResearchLabAlertDeliveryConfig(process.env)
+    emailConfigured = Boolean(config.email)
+    discordConfigured = Boolean(config.discord)
+  } catch (error) {
+    deliveryConfigError = error instanceof Error ? error.message : 'Alert delivery configuration is invalid.'
+  }
+
+  const lastStartedAt = stringOr(monitor?.last_started_at) ?? null
+  const lastCompletedAt = stringOr(monitor?.last_completed_at) ?? null
+  const lastErrorAt = stringOr(monitor?.last_error_at) ?? null
+  const lastError = stringOr(monitor?.last_error) ?? null
+  const heartbeatAgeMs = lastCompletedAt ? Math.max(0, now - timestampOrZero(lastCompletedAt)) : null
+  const leaseExpiresAt = stringOr(monitor?.lease_expires_at)
+  const leaseActive = Boolean(stringOr(monitor?.lease_owner) && timestampOrZero(leaseExpiresAt) > now)
+  const pending = deliveries.filter((row) => stringOr(row.status) === 'pending')
+  const overdue = pending.filter((row) => timestampOrZero(stringOr(row.due_at)) < now)
+  const completedWithin24h = deliveries.filter((row) =>
+    timestampOrZero(stringOr(row.completed_at) ?? stringOr(row.attempted_at) ?? stringOr(row.created_at)) >= since24h,
+  )
+  const succeededDeliveryCount24h = completedWithin24h.filter((row) => stringOr(row.status) === 'succeeded').length
+  const failedDeliveryCount24h = completedWithin24h.filter((row) => stringOr(row.status) === 'failed').length
+  const latestDeliveryAt = latestIso(...deliveries.map((row) =>
+    stringOr(row.completed_at) ?? stringOr(row.attempted_at) ?? stringOr(row.created_at),
+  )) ?? null
+  const oldestPendingAt = earliestIso(...pending.map((row) => stringOr(row.due_at))) ?? null
+  const deliveryReady = !deliveryConfigError && (emailConfigured || discordConfigured)
+  const configurationBlockers: string[] = []
+  if (!monitorEnabled) configurationBlockers.push('Background monitor is disabled')
+  if (monitoredValidatorCount === 0) configurationBlockers.push('No validator hotkeys are registered')
+  if (!deliveryReady) configurationBlockers.push(deliveryConfigError ?? 'No email or Discord destination is configured')
+  if (!sourceAvailable) configurationBlockers.push('Durable alert operations tables are unavailable')
+
+  const heartbeatCriticalMs = Math.max(10 * monitorIntervalMs, 10 * 60 * 1000)
+  const heartbeatDegradedMs = Math.max(3 * monitorIntervalMs, 3 * 60 * 1000)
+  const unresolvedMonitorError = Boolean(
+    lastErrorAt && (!lastCompletedAt || timestampOrZero(lastErrorAt) > timestampOrZero(lastCompletedAt)),
+  )
+  let state: AdminHealthState = 'healthy'
+  if (!sourceAvailable) state = 'unknown'
+  else if (!monitorEnabled || monitoredValidatorCount === 0 || !deliveryReady) state = 'degraded'
+  else if (heartbeatAgeMs === null || heartbeatAgeMs > heartbeatCriticalMs || unresolvedMonitorError) state = 'critical'
+  else if (heartbeatAgeMs > heartbeatDegradedMs || overdue.length > 0 || failedDeliveryCount24h > 0) state = 'degraded'
+
+  const channelLabel = [emailConfigured ? 'email' : null, discordConfigured ? 'Discord' : null]
+    .filter(Boolean)
+    .join(' + ')
+  const detail = !sourceAvailable
+    ? `Alert operations telemetry unavailable: ${sourceErrors.join('; ')}`
+    : configurationBlockers.length > 0
+      ? configurationBlockers.join('; ')
+      : heartbeatAgeMs === null
+        ? 'Monitor is configured but has never completed a heartbeat.'
+        : `${channelLabel} paging ready; ${pending.length} pending, ${failedDeliveryCount24h} failed in 24h.`
+
+  return {
+    state,
+    sourceAvailable,
+    unavailableReason: sourceErrors.join('; ') || null,
+    monitorEnabled,
+    monitorIntervalMs,
+    monitoredValidatorCount,
+    validators,
+    emailConfigured,
+    discordConfigured,
+    deliveryReady,
+    configurationBlockers,
+    lastStartedAt,
+    lastCompletedAt,
+    lastErrorAt,
+    lastError,
+    heartbeatAgeMs,
+    leaseActive,
+    pendingDeliveryCount: pending.length,
+    overdueDeliveryCount: overdue.length,
+    succeededDeliveryCount24h,
+    failedDeliveryCount24h,
+    latestDeliveryAt,
+    oldestPendingAt,
+    detail,
+  }
+}
+
+function alertMonitorIntervalMs(value: string | undefined): number {
+  const requested = Number(value)
+  return Number.isFinite(requested)
+    ? Math.min(15 * 60_000, Math.max(30_000, Math.trunc(requested)))
+    : DEFAULT_ALERT_MONITOR_INTERVAL_MS
+}
+
+function mergeBaseAlertSummaries(
+  ops: AdminLabAlertSummary,
+  publicSummary: AdminLabAlertSummary,
+): AdminLabAlertSummary {
+  const byFingerprint = new Map<string, AdminLabAlert>()
+  for (const alert of [...ops.recent, ...publicSummary.recent]) {
+    const key = alert.fingerprint || alert.id
+    const current = byFingerprint.get(key)
+    byFingerprint.set(key, current ? mergeAdminAlert(current, alert) : alert)
+  }
+  const recent = Array.from(byFingerprint.values()).sort(
+    (a, b) => alertSeverityRank(b.severity) - alertSeverityRank(a.severity) ||
+      timestampOrZero(b.lastSeenAt ?? b.firstSeenAt) - timestampOrZero(a.lastSeenAt ?? a.firstSeenAt),
+  )
+  const criticalLast24h = recent.filter((alert) => alert.severity.toLowerCase() === 'critical').length
+  const warningLast24h = recent.filter((alert) => ['warning', 'warn'].includes(alert.severity.toLowerCase())).length
+  return {
+    ...publicSummary,
+    state: worstHealthState([ops.state, publicSummary.state]),
+    source: 'combined',
+    sourceAvailable: true,
+    unavailableReason: null,
+    totalLast24h: recent.reduce((sum, alert) => sum + Math.max(1, alert.count), 0),
+    criticalLast24h,
+    warningLast24h,
+    activeCount: recent.filter((alert) => !['resolved', 'closed'].includes(alert.status.toLowerCase())).length,
+    latestObservedAt: latestIso(ops.latestObservedAt, publicSummary.latestObservedAt) ?? null,
+    recent: recent.slice(0, 24),
+  }
 }
 
 function summarizeOpsAlerts(rows: Array<Record<string, unknown>>): AdminLabAlertSummary {
@@ -2347,6 +3424,7 @@ function summarizeOpsAlerts(rows: Array<Record<string, unknown>>): AdminLabAlert
     latestObservedAt: latestIso(...alerts.map((alert) => alert.lastSeenAt ?? alert.firstSeenAt)) ?? null,
     latestCheckpointAt: null,
     latestCheckpointUrl: null,
+    operations: emptyAlertOperationsSummary(),
     recent: alerts.slice(0, 8),
   }
 }
@@ -2399,9 +3477,12 @@ async function fetchPublicLogAlertSummary(
   const latestCheckpointAt = latestIso(...checkpointRows.map((row) => row.ts)) ?? null
   const latestObservedAt = latestIso(...rows.map((row) => row.ts)) ?? null
   const latestCheckpoint = checkpointRows.find((row) => row.ts === latestCheckpointAt) ?? null
-  const auditEpochs = new Set(auditRows.map((row) => row.payload_epoch).filter(Boolean))
+  const auditEpochs = new Set(
+    auditRows.flatMap((row) => [row.payload_epoch, row.payload_epoch_id]).filter(Boolean),
+  )
   const missingAuditRows = weightRows.filter((row) =>
-    Boolean(row.payload_epoch_id) && !auditEpochs.has(row.payload_epoch_id),
+    Boolean(row.payload_epoch_id ?? row.payload_epoch) &&
+      !auditEpochs.has(row.payload_epoch_id ?? row.payload_epoch),
   )
   const alerts: AdminLabAlert[] = []
 
@@ -2531,6 +3612,7 @@ async function fetchPublicLogAlertSummary(
     latestCheckpointUrl: latestCheckpoint?.arweave_tx_id
       ? `https://viewblock.io/arweave/tx/${encodeURIComponent(latestCheckpoint.arweave_tx_id)}`
       : null,
+    operations: emptyAlertOperationsSummary(),
     recent: alerts.slice(0, 8),
   }
 }
@@ -2551,7 +3633,37 @@ function emptyAlertSummary(unavailableReason: string | null): AdminLabAlertSumma
     latestObservedAt: null,
     latestCheckpointAt: null,
     latestCheckpointUrl: null,
+    operations: emptyAlertOperationsSummary(),
     recent: [],
+  }
+}
+
+function emptyAlertOperationsSummary(): AdminLabAlertOperationsSummary {
+  return {
+    state: 'unknown',
+    sourceAvailable: false,
+    unavailableReason: null,
+    monitorEnabled: false,
+    monitorIntervalMs: DEFAULT_ALERT_MONITOR_INTERVAL_MS,
+    monitoredValidatorCount: 0,
+    validators: [],
+    emailConfigured: false,
+    discordConfigured: false,
+    deliveryReady: false,
+    configurationBlockers: [],
+    lastStartedAt: null,
+    lastCompletedAt: null,
+    lastErrorAt: null,
+    lastError: null,
+    heartbeatAgeMs: null,
+    leaseActive: false,
+    pendingDeliveryCount: 0,
+    overdueDeliveryCount: 0,
+    succeededDeliveryCount24h: 0,
+    failedDeliveryCount24h: 0,
+    latestDeliveryAt: null,
+    oldestPendingAt: null,
+    detail: 'Alert operations telemetry has not been loaded.',
   }
 }
 
@@ -2572,6 +3684,13 @@ function normalizeAlertRow(row: Record<string, unknown>): AdminLabAlert | null {
       isoStringOr(row.updated_at) ??
       isoStringOr(row.created_at) ??
       null,
+    detail: stringOr(row.detail) ?? stringOr(row.description) ?? null,
+    signal: stringOr(row.signal) ?? stringOr(row.alert_signal) ?? null,
+    scope: stringOr(row.scope) ?? null,
+    entityId: stringOr(row.entity_id) ?? null,
+    validatorId: stringOr(row.validator_id) ?? null,
+    ageBlocks: finiteNumberOrNull(row.age_blocks),
+    sources: arrayOfStrings(row.sources),
   }
 }
 
@@ -3044,10 +4163,26 @@ function buildHealthSignals(input: {
       state: input.alerts.state,
       detail: input.alerts.sourceAvailable
         ? input.alerts.source === 'public_transparency_log'
-          ? `${input.alerts.verifiedEventCount} signed events checked (${input.alerts.weightSubmissionCount} weights, ${input.alerts.epochAuditCount} audits); ${input.alerts.activeCount} derived issues.`
+          ? `${input.alerts.verifiedEventCount} stored event-hash envelopes matched (${input.alerts.weightSubmissionCount} weights, ${input.alerts.epochAuditCount} audits); ${input.alerts.activeCount} derived issues. This is an integrity-link check, not signature verification.`
+          : input.alerts.source === 'combined'
+            ? `${input.alerts.activeCount} canonical or persisted issues across validator, benchmark, run, weight, PCR0, and transparency checks.`
           : `${input.alerts.criticalLast24h} critical, ${input.alerts.warningLast24h} warning, ${input.alerts.activeCount} active.`
         : 'No alert telemetry or public transparency log is readable.',
       updatedAt: input.alerts.latestObservedAt ?? input.alerts.recent[0]?.lastSeenAt,
+    },
+    {
+      id: 'alert_delivery',
+      label: 'Paging',
+      value: !input.alerts.operations.monitorEnabled
+        ? 'Disabled'
+        : input.alerts.operations.state === 'healthy'
+          ? 'Ready'
+          : input.alerts.operations.deliveryReady
+            ? 'Attention'
+            : 'Not wired',
+      state: input.alerts.operations.state,
+      detail: input.alerts.operations.detail,
+      updatedAt: input.alerts.operations.lastCompletedAt ?? input.alerts.operations.lastErrorAt,
     },
     {
       id: 'benchmark',
@@ -3390,6 +4525,22 @@ function phaseForLoop(loop: AdminLabLoopSummary): string {
   if (isCompletedResearchLabLoopStatus(status)) return 'complete'
   if (isActiveResearchLabLoopStatus(status)) return 'auto research'
   return status || 'unknown'
+}
+
+function phaseForRun(
+  loop: AdminLabLoopSummary,
+  runId: string | null,
+  candidates: Array<Record<string, unknown>>,
+  bundles: Array<Record<string, unknown>>,
+  dispatches: Array<Record<string, unknown>>,
+): string {
+  if ((runId ?? '') === (loop.runId ?? '')) return phaseForLoop(loop)
+  const state = telemetryStateForRun(loop, runId, candidates, bundles, dispatches)
+  if (state === 'failed') return 'failed'
+  if (state === 'completed') return 'complete'
+  if (bundles.length > 0 || dispatches.length > 0) return 'scoring'
+  if (candidates.length > 0) return 'candidate'
+  return runId ? 'run activity' : 'ticket activity'
 }
 
 function worstHealthState(states: AdminHealthState[]): AdminHealthState {

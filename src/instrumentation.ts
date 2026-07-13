@@ -36,6 +36,7 @@
 // Module-level flag so a re-import (Next.js HMR, dev-mode reload)
 // doesn't stack a second deep-research timer on top of the first one.
 let sweepIntervalHandle: NodeJS.Timeout | null = null
+let alertMonitorIntervalHandle: NodeJS.Timeout | null = null
 
 const SWEEP_INTERVAL_MS = 60_000
 
@@ -43,6 +44,8 @@ const SWEEP_INTERVAL_MS = 60_000
 // of the server finish booting (DB pool, route handlers, cache warm-up)
 // before we start firing off background OpenRouter calls.
 const SWEEP_INITIAL_DELAY_MS = 15_000
+const ALERT_MONITOR_INITIAL_DELAY_MS = 30_000
+const DEFAULT_ALERT_MONITOR_INTERVAL_MS = 60_000
 
 export async function register(): Promise<void> {
   // Wrapper form (not early return) is load-bearing — see file header.
@@ -89,7 +92,53 @@ export async function register(): Promise<void> {
     }
 
     // -------------------------------------------------------------
-    // 2. Deep Research auto-sweep loop.
+    // 2. Durable Research Lab admission-control alert monitor.
+    //    Explicit enablement prevents an application-only rollout from
+    //    hammering deployments where the alert schema is not installed.
+    // -------------------------------------------------------------
+    if (process.env.RESEARCH_LAB_ALERT_MONITOR_ENABLED === 'true') {
+      if (alertMonitorIntervalHandle === null) {
+        const requestedInterval = Number(process.env.RESEARCH_LAB_ALERT_MONITOR_INTERVAL_MS)
+        const intervalMs = Number.isFinite(requestedInterval)
+          ? Math.min(15 * 60_000, Math.max(30_000, Math.trunc(requestedInterval)))
+          : DEFAULT_ALERT_MONITOR_INTERVAL_MS
+        const tick = async () => {
+          try {
+            const { runResearchLabAlertMonitor } = await import(
+              './lib/research-lab-alert-monitor'
+            )
+            const result = await runResearchLabAlertMonitor()
+            if (result.acquired && (result.transitionCount > 0 || result.deliveryCount > 0)) {
+              console.log(
+                `[research_lab_alerts] ${result.transitionCount} transition(s), ` +
+                  `${result.deliveryCount} delivery attempt(s), ` +
+                  `${result.deliveryFailureCount} failure(s)`,
+              )
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err)
+            console.error('[research_lab_alerts] monitor tick failed:', msg)
+          }
+        }
+
+        console.log(
+          `[research_lab_alerts] starting durable monitor ` +
+            `(first tick in ${ALERT_MONITOR_INITIAL_DELAY_MS / 1000}s, ` +
+            `then every ${intervalMs / 1000}s)`,
+        )
+        setTimeout(() => {
+          void tick()
+          alertMonitorIntervalHandle = setInterval(() => void tick(), intervalMs)
+        }, ALERT_MONITOR_INITIAL_DELAY_MS)
+      }
+    } else {
+      console.log(
+        '[research_lab_alerts] monitor disabled; set RESEARCH_LAB_ALERT_MONITOR_ENABLED=true to enable',
+      )
+    }
+
+    // -------------------------------------------------------------
+    // 3. Deep Research auto-sweep loop.
     // -------------------------------------------------------------
     if (sweepIntervalHandle !== null) {
       console.log('[deep_research] sweep interval already running, skipping')

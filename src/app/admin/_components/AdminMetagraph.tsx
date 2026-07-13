@@ -18,6 +18,7 @@ import { shortHotkey } from '@/lib/admin-format'
 import { cn } from '@/lib/utils'
 
 const REFRESH_INTERVAL_MS = 30_000
+const ACTIVE_VALIDATOR_MAX_EPOCHS = 360
 
 type MetagraphPayload = MetagraphData & { cachedAt?: number }
 type SortKey =
@@ -57,7 +58,7 @@ function validatorRows(data: MetagraphPayload | null): ValidatorRow[] {
   if (!data) return []
 
   return Object.entries(data.hotkeyToUid)
-    .filter(([hotkey]) => data.isValidator[hotkey] && data.active[hotkey] !== false)
+    .filter(([hotkey]) => data.isValidator[hotkey])
     .map(([hotkey, uid]) => {
       const lastUpdate = data.lastUpdates[hotkey]
       const updated = data.currentBlock !== null && Number.isFinite(lastUpdate)
@@ -114,13 +115,13 @@ function formatEmission(value: number): string {
 function SummaryCard({ label, value, detail }: { label: string; value: string; detail: string }) {
   return (
     <div
-      className="rounded-2xl border px-5 py-4"
-      style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)' }}
+      className="rounded-lg border px-4 py-3"
+      style={{ borderColor: 'var(--surface-border)', background: 'var(--surface-base)' }}
     >
       <div className="text-[10px] uppercase tracking-[0.16em]" style={{ color: 'var(--text-tertiary)' }}>
         {label}
       </div>
-      <div className="mt-2 text-2xl font-medium" style={{ color: 'var(--text-primary)' }}>{value}</div>
+      <div className="mt-1.5 text-2xl font-medium tabular-nums" style={{ color: 'var(--text-primary)' }}>{value}</div>
       <div className="mt-1 text-[11px]" style={{ color: 'var(--text-secondary)' }}>{detail}</div>
     </div>
   )
@@ -238,11 +239,11 @@ export function AdminMetagraph() {
       })
   }, [rows, search, sortDirection, sortKey])
 
-  const totalStake = rows.reduce((sum, row) => sum + row.stake, 0)
-  const avgVTrust = rows.length > 0
-    ? rows.reduce((sum, row) => sum + row.validatorTrust, 0) / rows.length
+  const freshnessAvailable = data?.currentBlock !== null && data?.currentBlock !== undefined
+  const activeRows = rows.filter((row) => row.updated !== null && row.updated < ACTIVE_VALIDATOR_MAX_EPOCHS)
+  const avgVTrust = activeRows.length > 0
+    ? activeRows.reduce((sum, row) => sum + row.validatorTrust, 0) / activeRows.length
     : 0
-  const serving = rows.filter((row) => Boolean(row.axon)).length
 
   const handleSort = (column: SortKey) => {
     if (column === sortKey) {
@@ -254,36 +255,40 @@ export function AdminMetagraph() {
   }
 
   return (
-    <section className="space-y-5">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
+    <section
+      className="overflow-hidden rounded-xl border"
+      style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)' }}
+    >
+      <div
+        className="flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+        style={{ borderColor: 'var(--surface-border)' }}
+      >
+        <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-semibold tracking-tight" style={{ color: 'var(--text-primary)' }}>
+            <h2 className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
               Metagraph
-            </h1>
+            </h2>
             <span className="rounded-full border border-white/[0.08] px-2 py-0.5 text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-secondary)' }}>
               SN71
             </span>
           </div>
-          <p className="mt-1 max-w-3xl text-sm" style={{ color: 'var(--text-secondary)' }}>
-            Live on-chain view of every active Leadpoet validator, refreshed every 30 seconds.
+          <p className="mt-0.5 text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
+            Validator weights and trust · refreshes every 30 seconds
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <div
-            className="inline-flex h-9 items-center gap-2 rounded-xl border px-3 text-[11px]"
+            className="inline-flex h-8 items-center gap-2 rounded-lg border px-2.5 text-[10px]"
             style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)', color: 'var(--text-secondary)' }}
           >
             <Wifi className="h-3.5 w-3.5 text-gold" />
-            <span>Live · 30s</span>
-            <span style={{ color: 'var(--text-tertiary)' }}>·</span>
             <span>{lastSyncedAt ? new Date(lastSyncedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'Syncing…'}</span>
           </div>
           <button
             type="button"
             onClick={() => void fetchMetagraph()}
             disabled={refreshing}
-            className="inline-flex h-9 items-center gap-2 rounded-xl border px-3 text-xs transition-colors hover:text-gold disabled:opacity-60"
+            className="inline-flex h-8 items-center gap-2 rounded-lg border px-2.5 text-[11px] transition-colors hover:text-gold disabled:opacity-60"
             style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)', color: 'var(--text-secondary)' }}
           >
             <RefreshCw className={cn('h-3.5 w-3.5', refreshing ? 'animate-spin' : '')} />
@@ -292,21 +297,27 @@ export function AdminMetagraph() {
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <SummaryCard label="Active validators" value={loading ? '—' : formatAmount(rows.length, 0)} detail={`${data?.totalNeurons ?? 0} total subnet neurons`} />
-        <SummaryCard label="Stake weight (α)" value={loading ? '—' : formatAmount(totalStake, 2)} detail="Across active validators" />
-        <SummaryCard label="Average VTrust" value={loading ? '—' : formatMetric(avgVTrust)} detail="Current validator consensus" />
-        <SummaryCard label="Serving axons" value={loading ? '—' : `${serving} / ${rows.length}`} detail={data?.currentBlock ? `Chain head ${formatAmount(data.currentBlock, 0)}` : 'Chain head unavailable'} />
+      <div className="grid gap-2 p-3 sm:grid-cols-2">
+        <SummaryCard
+          label="Average VTrust"
+          value={loading || !freshnessAvailable || activeRows.length === 0 ? '—' : formatMetric(avgVTrust)}
+          detail="Across active validators"
+        />
+        <SummaryCard
+          label="Active validators"
+          value={loading || !freshnessAvailable ? '—' : formatAmount(activeRows.length, 0)}
+          detail={`Weight updated < ${ACTIVE_VALIDATOR_MAX_EPOCHS} epochs ago`}
+        />
       </div>
 
       {error && (
-        <div className="rounded-xl border border-burgundy-soft bg-burgundy-soft px-4 py-3 text-sm text-burgundy">
+        <div className="mx-3 mb-3 rounded-lg border border-burgundy-soft bg-burgundy-soft px-3 py-2 text-xs text-burgundy">
           Refresh failed: {error}. Showing the last successful snapshot when available.
         </div>
       )}
 
-      <div className="overflow-hidden rounded-2xl border" style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)' }}>
-        <div className="flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between" style={{ borderColor: 'var(--surface-border)' }}>
+      <div className="border-t" style={{ borderColor: 'var(--surface-border)' }}>
+        <div className="flex flex-col gap-2 border-b px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between" style={{ borderColor: 'var(--surface-border)' }}>
           <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>
             {visibleRows.length === rows.length ? `${rows.length} validators` : `${visibleRows.length} of ${rows.length} validators`}
           </div>
@@ -316,15 +327,15 @@ export function AdminMetagraph() {
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Search name, UID, key, or axon"
-              className="h-9 w-full rounded-xl border bg-transparent pl-9 pr-3 text-xs outline-none transition-colors focus:border-gold-strong"
+              className="h-8 w-full rounded-lg border bg-transparent pl-9 pr-3 text-xs outline-none transition-colors focus:border-gold-strong"
               style={{ borderColor: 'var(--surface-border-strong)', color: 'var(--text-primary)' }}
             />
           </label>
         </div>
 
-        <div className="max-h-[68vh] overflow-auto">
+        <div className="overflow-x-auto">
           <table className="min-w-[1900px] w-full border-collapse text-left text-xs">
-            <thead className="sticky top-0 z-10" style={{ background: 'var(--surface)' }}>
+            <thead style={{ background: 'var(--surface)' }}>
               <tr className="border-b" style={{ borderColor: 'var(--surface-border)' }}>
                 <th className="px-4 py-3 font-medium" style={{ color: 'var(--text-tertiary)' }}>Pos</th>
                 <th className="px-3 py-3 font-medium" style={{ color: 'var(--text-tertiary)' }}>Type</th>
@@ -332,12 +343,12 @@ export function AdminMetagraph() {
                 <th className="px-3 py-3 font-medium" style={{ color: 'var(--text-tertiary)' }}><SortButton column="name" active={sortKey} direction={sortDirection} onSort={handleSort} /></th>
                 <th className="px-3 py-3 text-right font-medium" style={{ color: 'var(--text-tertiary)' }}><SortButton column="stake" label="Stake weight (α)" active={sortKey} direction={sortDirection} onSort={handleSort} /></th>
                 <th className="px-3 py-3 text-right font-medium" style={{ color: 'var(--text-tertiary)' }}><SortButton column="validatorTrust" active={sortKey} direction={sortDirection} onSort={handleSort} /></th>
+                <th className="px-3 py-3 text-right font-medium" style={{ color: 'var(--text-tertiary)' }}><SortButton column="updated" label="Updated (epochs)" active={sortKey} direction={sortDirection} onSort={handleSort} /></th>
                 <th className="px-3 py-3 text-right font-medium" style={{ color: 'var(--text-tertiary)' }}><SortButton column="trust" active={sortKey} direction={sortDirection} onSort={handleSort} /></th>
                 <th className="px-3 py-3 text-right font-medium" style={{ color: 'var(--text-tertiary)' }}><SortButton column="consensus" active={sortKey} direction={sortDirection} onSort={handleSort} /></th>
                 <th className="px-3 py-3 text-right font-medium" style={{ color: 'var(--text-tertiary)' }}><SortButton column="incentive" active={sortKey} direction={sortDirection} onSort={handleSort} /></th>
                 <th className="px-3 py-3 text-right font-medium" style={{ color: 'var(--text-tertiary)' }}><SortButton column="dividends" active={sortKey} direction={sortDirection} onSort={handleSort} /></th>
                 <th className="px-3 py-3 text-right font-medium" style={{ color: 'var(--text-tertiary)' }}><SortButton column="emission" label="Emission (α/epoch)" active={sortKey} direction={sortDirection} onSort={handleSort} /></th>
-                <th className="px-3 py-3 text-right font-medium" style={{ color: 'var(--text-tertiary)' }}><SortButton column="updated" active={sortKey} direction={sortDirection} onSort={handleSort} /></th>
                 <th className="px-3 py-3 font-medium" style={{ color: 'var(--text-tertiary)' }}>Axon</th>
                 <th className="px-3 py-3 font-medium" style={{ color: 'var(--text-tertiary)' }}>Hotkey</th>
                 <th className="px-3 py-3 font-medium" style={{ color: 'var(--text-tertiary)' }}>Coldkey</th>
@@ -362,14 +373,17 @@ export function AdminMetagraph() {
                   </td>
                   <td className="px-3 py-3.5 text-right font-medium text-gold-bright">{formatAmount(row.stake, 2)}</td>
                   <td className="px-3 py-3.5 text-right" style={{ color: 'var(--text-primary)' }}>{formatMetric(row.validatorTrust)}</td>
+                  <td
+                    className={cn('px-3 py-3.5 text-right font-medium', row.updated !== null && row.updated >= ACTIVE_VALIDATOR_MAX_EPOCHS ? 'text-amber-warm' : '')}
+                    style={row.updated !== null && row.updated < ACTIVE_VALIDATOR_MAX_EPOCHS ? { color: 'var(--text-primary)' } : undefined}
+                  >
+                    {row.updated === null ? '—' : formatAmount(row.updated, 0)}
+                  </td>
                   <td className="px-3 py-3.5 text-right" style={{ color: 'var(--text-primary)' }}>{formatMetric(row.trust)}</td>
                   <td className="px-3 py-3.5 text-right" style={{ color: 'var(--text-primary)' }}>{formatMetric(row.consensus)}</td>
                   <td className="px-3 py-3.5 text-right" style={{ color: 'var(--text-primary)' }}>{formatMetric(row.incentive)}</td>
                   <td className="px-3 py-3.5 text-right" style={{ color: 'var(--text-primary)' }}>{formatMetric(row.dividends)}</td>
                   <td className="px-3 py-3.5 text-right" style={{ color: 'var(--text-primary)' }}>{formatEmission(row.emission)}</td>
-                  <td className={cn('px-3 py-3.5 text-right font-medium', (row.updated ?? 0) > 1000 ? 'text-amber-warm' : '')} style={(row.updated ?? 0) <= 1000 ? { color: 'var(--text-primary)' } : undefined}>
-                    {row.updated === null ? '—' : formatAmount(row.updated, 0)}
-                  </td>
                   <td className="px-3 py-3.5 font-mono text-[11px]" style={{ color: row.axon ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>{row.axon ?? 'Not serving'}</td>
                   <td className="px-3 py-3.5"><CopyKey value={row.hotkey} label="hotkey" /></td>
                   <td className="px-3 py-3.5"><CopyKey value={row.coldkey} label="coldkey" /></td>

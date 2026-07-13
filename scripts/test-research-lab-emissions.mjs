@@ -28,7 +28,9 @@ try {
 
   const require = createRequire(import.meta.url)
   const {
+    buildFulfillmentRewardRollup,
     buildResearchLabAllocationRollup,
+    committedLabAlphaPercent,
     formatLabAllocationPercent,
     researchLabAllocationEntries,
   } = require(join(outDir, 'research-lab-emissions.js'))
@@ -91,6 +93,30 @@ try {
   assert.equal(formatLabAllocationPercent(miner.paidAlphaPercent), '0.4636%')
   assert.equal(formatLabAllocationPercent(miner.labBucketSharePercent), '4.6357%')
 
+  const fulfillment = buildFulfillmentRewardRollup({
+    epoch: 23874,
+    labCapAlphaPercent: 30,
+    rewards: [
+      { miner_hotkey: '5a', reward_pct: 0.308 },
+      { miner_hotkey: '5b', reward_pct: 1 },
+      { miner_hotkey: '5c', reward_pct: 0.996 },
+    ],
+    leaderboardHotkeys: ['5a', '5b', '5c'],
+  })
+  assert.equal(fulfillment.fulfillmentPoolAlphaPercent, 60.5)
+  assert.ok(Math.abs(fulfillment.directAlphaPercent - 60.5) < 0.00001)
+  assert.equal(fulfillment.leaderboardAlphaPercent, 9.5)
+  assert.ok(Math.abs(fulfillment.totalAlphaPercent - 70) < 0.00001)
+  assert.equal(fulfillment.byHotkey['5a'].leaderboardAlphaPercent, 5)
+  assert.ok(Math.abs(
+    fulfillment.byHotkey['5a'].directAlphaPercent - ((0.308 / 2.304) * 60.5)
+  ) < 0.00001)
+  assert.equal(
+    committedLabAlphaPercent(14.424354, fulfillment.byHotkey['5a'].totalAlphaPercent),
+    1.33668,
+  )
+  assert.equal(committedLabAlphaPercent(3, 5), 0, 'fulfillment subtraction must clamp at zero')
+
   const componentSource = await readFile(resolve('src/components/dashboard/ResearchLab.tsx'), 'utf8')
   assert.match(componentSource, /Total alpha earned/)
   assert.match(componentSource, /Metagraph Emissions for Lab Miners/)
@@ -106,6 +132,9 @@ try {
   assert.match(componentSource, /row\.computeSpendUsd > 0 \|\| row\.hasCurrentReward/)
   assert.doesNotMatch(componentSource, /ActivityPanelStat/)
   assert.doesNotMatch(componentSource, /metagraph\?\.emissions/)
+  assert.doesNotMatch(componentSource, /fulfillmentOwedAlphaPercent/)
+  assert.doesNotMatch(componentSource, /labEmissionAlphaPercent/)
+  assert.doesNotMatch(componentSource, /committedLabAlphaPercent\(/)
   assert.doesNotMatch(componentSource, /labAllocationPaidAlphaPercent/)
   assert.doesNotMatch(componentSource, /spendHotkeys/)
   assert.doesNotMatch(componentSource, /Lab Emissions/)
@@ -114,6 +143,9 @@ try {
 
   const routeSource = await readFile(resolve('src/app/api/research-lab/route.ts'), 'utf8')
   assert.match(routeSource, /\.from\('research_lab_emission_allocation_current'\)/)
+  assert.match(routeSource, /\.from\('fulfillment_score_consensus'\)/)
+  assert.match(routeSource, /\.gt\('reward_expires_epoch', epoch\)/)
+  assert.match(routeSource, /fulfillmentRewards/)
   assert.match(routeSource, /activityLoops: allLoops/)
   assert.match(routeSource, /activeLoopCount: allLoops\.filter/)
   assert.match(routeSource, /scoredLoopCount: allLoops\.filter\(hasScoredResearchLabCandidate\)\.length/)

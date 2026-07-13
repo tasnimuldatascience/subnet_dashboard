@@ -22,8 +22,11 @@ import {
   type ResearchLabTimelineSourceInput,
 } from '@/lib/research-lab-timeline'
 import {
+  buildFulfillmentRewardRollup,
   buildResearchLabAllocationRollup,
   researchLabAllocationEntries,
+  type FulfillmentRewardRollup,
+  type FulfillmentRewardRow,
   type ResearchLabEmissionAllocationDoc,
   type ResearchLabEmissionAllocationRollup,
   type ResearchLabEmissionAllocationSnapshot,
@@ -49,6 +52,8 @@ const LOOP_FETCH_LIMIT = LOOP_LIMIT + 100
 const LAB_MINER_SPEND_BATCH_SIZE = 1_000
 const SUPABASE_IN_FILTER_BATCH_SIZE = 100
 const LAB_MINER_SPEND_WINDOW_MS = 24 * 60 * 60 * 1000
+const FULFILLMENT_LEADERBOARD_WINDOW_MS = 140 * 360 * 12 * 1000
+const FULFILLMENT_LEADERBOARD_SIZE = 3
 const HIDDEN_LOOP_MINER_PREFIXES = [
   '5FEtvB',
   '5FBhsXVWpezSHcpogXo4CjMcgTBctLcZ7VnNoKzn3oEGST44',
@@ -479,6 +484,7 @@ type LabMinerSpendRollup = {
   byHotkey: Record<string, LabMinerSpendEntry>
   allTime: LabMinerAllTimeRollup
   currentAllocation: ResearchLabEmissionAllocationRollup
+  fulfillmentRewards: FulfillmentRewardRollup | null
 }
 
 type LabMinerSpendWindow = {
@@ -654,6 +660,11 @@ type EmissionAllocationSnapshotRow = {
   allocation_doc: ResearchLabEmissionAllocationDoc | null
   created_at: string | null
   lab_cap_alpha_percent?: number | string | null
+}
+
+type FulfillmentLeaderboardRow = {
+  miner_hotkey: string | null
+  reward_pct: number | string | null
 }
 
 let cache: CachedResponse | null = null
@@ -2141,6 +2152,13 @@ async function fetchLabMinerSpend(supabase: ReturnType<typeof getSupabase>): Pro
     latestPublishedWeightEpoch,
     allocationSnapshots,
   )
+  const fulfillmentRewards = await fetchCurrentFulfillmentRewards(
+    supabase,
+    latestPublishedWeightEpoch,
+    currentAllocation.epoch === latestPublishedWeightEpoch
+      ? currentAllocation.labCapAlphaPercent
+      : null,
+  )
 
   if (scheduleResult.error) {
     return {
@@ -2148,6 +2166,7 @@ async function fetchLabMinerSpend(supabase: ReturnType<typeof getSupabase>): Pro
       byHotkey: finalizeLabMinerSpendEntries(byHotkey),
       allTime,
       currentAllocation,
+      fulfillmentRewards,
     }
   }
 
@@ -2159,6 +2178,7 @@ async function fetchLabMinerSpend(supabase: ReturnType<typeof getSupabase>): Pro
       byHotkey: finalizeLabMinerSpendEntries(byHotkey),
       allTime,
       currentAllocation,
+      fulfillmentRewards,
     }
   }
 
@@ -2174,6 +2194,7 @@ async function fetchLabMinerSpend(supabase: ReturnType<typeof getSupabase>): Pro
       byHotkey: finalizeLabMinerSpendEntries(byHotkey),
       allTime,
       currentAllocation,
+      fulfillmentRewards,
     }
   }
 
@@ -2193,6 +2214,7 @@ async function fetchLabMinerSpend(supabase: ReturnType<typeof getSupabase>): Pro
         byHotkey: finalizeLabMinerSpendEntries(byHotkey),
         allTime,
         currentAllocation,
+        fulfillmentRewards,
       }
     }
     awardRows.push(...((awardData ?? []) as ReimbursementAwardRow[]))
@@ -2223,6 +2245,7 @@ async function fetchLabMinerSpend(supabase: ReturnType<typeof getSupabase>): Pro
     byHotkey: finalizeLabMinerSpendEntries(byHotkey),
     allTime,
     currentAllocation,
+    fulfillmentRewards,
   }
 }
 
@@ -2482,6 +2505,98 @@ async function fetchCurrentLabAllocationRow(
 
   const row = data?.[0] as ResearchLabEmissionAllocationSnapshot | undefined
   return row ?? null
+}
+
+async function fetchCurrentFulfillmentRewards(
+  supabase: ReturnType<typeof getSupabase>,
+  epoch: number | null,
+  labCapAlphaPercent: number | null,
+): Promise<FulfillmentRewardRollup | null> {
+  if (epoch === null || labCapAlphaPercent === null) return null
+
+  const rewards: FulfillmentRewardRow[] = []
+  for (let offset = 0; ; offset += LAB_MINER_SPEND_BATCH_SIZE) {
+    const { data, error } = await supabase
+      .from('fulfillment_score_consensus')
+      .select('consensus_id, miner_hotkey, reward_pct, reward_expires_epoch')
+      .not('reward_pct', 'is', null)
+      .gt('reward_expires_epoch', epoch)
+      .order('consensus_id', { ascending: true })
+      .range(offset, offset + LAB_MINER_SPEND_BATCH_SIZE - 1)
+
+    if (error) {
+      console.error('[Research Lab API] active fulfillment reward query failed:', error)
+      return null
+    }
+    const batch = (data ?? []) as FulfillmentRewardRow[]
+    rewards.push(...batch)
+    if (batch.length < LAB_MINER_SPEND_BATCH_SIZE) break
+  }
+
+  const leaderboardRows = await fetchFulfillmentLeaderboardRows(supabase)
+  if (leaderboardRows === null) return null
+
+  const { data: bannedData, error: bannedError } = await supabase
+    .from('banned_hotkeys')
+    .select('hotkey')
+    .limit(20_000)
+  if (bannedError) {
+    console.warn('[Research Lab API] banned hotkeys unavailable for fulfillment leaderboard:', bannedError)
+  }
+  const bannedHotkeys = new Set(
+    ((bannedData ?? []) as Array<{ hotkey?: string | null }>)
+      .map((row) => row.hotkey ? String(row.hotkey) : '')
+      .filter(Boolean),
+  )
+  const leaderboardByHotkey = new Map<string, { wins: number; totalRewardPct: number }>()
+  for (const row of leaderboardRows) {
+    const hotkey = row.miner_hotkey ? String(row.miner_hotkey) : ''
+    if (!hotkey || bannedHotkeys.has(hotkey)) continue
+    const current = leaderboardByHotkey.get(hotkey) ?? { wins: 0, totalRewardPct: 0 }
+    current.wins += 1
+    current.totalRewardPct += numberOr(row.reward_pct, 0)
+    leaderboardByHotkey.set(hotkey, current)
+  }
+  const leaderboardHotkeys = Array.from(leaderboardByHotkey.entries())
+    .sort((a, b) =>
+      b[1].wins - a[1].wins ||
+      b[1].totalRewardPct - a[1].totalRewardPct ||
+      a[0].localeCompare(b[0])
+    )
+    .slice(0, FULFILLMENT_LEADERBOARD_SIZE)
+    .map(([hotkey]) => hotkey)
+
+  return buildFulfillmentRewardRollup({
+    epoch,
+    labCapAlphaPercent,
+    rewards,
+    leaderboardHotkeys,
+  })
+}
+
+async function fetchFulfillmentLeaderboardRows(
+  supabase: ReturnType<typeof getSupabase>,
+): Promise<FulfillmentLeaderboardRow[] | null> {
+  const rows: FulfillmentLeaderboardRow[] = []
+  const windowStartedAt = new Date(Date.now() - FULFILLMENT_LEADERBOARD_WINDOW_MS).toISOString()
+  for (let offset = 0; ; offset += LAB_MINER_SPEND_BATCH_SIZE) {
+    const { data, error } = await supabase
+      .from('fulfillment_score_consensus')
+      .select('consensus_id, miner_hotkey, reward_pct, computed_at')
+      .eq('is_winner', true)
+      .gte('computed_at', windowStartedAt)
+      .order('consensus_id', { ascending: true })
+      .range(offset, offset + LAB_MINER_SPEND_BATCH_SIZE - 1)
+
+    if (error) {
+      console.error('[Research Lab API] fulfillment leaderboard reward query failed:', error)
+      return null
+    }
+    const batch = (data ?? []) as FulfillmentLeaderboardRow[]
+    rows.push(...batch)
+    if (batch.length < LAB_MINER_SPEND_BATCH_SIZE) break
+  }
+  return rows
 }
 
 function buildLabMinerAllTimeRollup(
@@ -3131,6 +3246,7 @@ function emptyLabMinerSpend(): LabMinerSpendRollup {
       byHotkey: {},
     },
     currentAllocation: buildResearchLabAllocationRollup(null, 'none'),
+    fulfillmentRewards: null,
   }
 }
 

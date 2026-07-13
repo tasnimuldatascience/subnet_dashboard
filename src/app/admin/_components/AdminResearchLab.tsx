@@ -16,10 +16,12 @@ import {
   Loader2,
   PauseCircle,
   PlayCircle,
+  Plus,
   Search,
   ShieldCheck,
   ShieldX,
   Siren,
+  Trash2,
 } from 'lucide-react'
 import {
   Bar,
@@ -37,6 +39,7 @@ import {
   DailyBenchmarkTelemetry,
   RunTelemetry,
 } from './AdminResearchLabTelemetry'
+import { AdminMetagraph } from './AdminMetagraph'
 import type {
   AdminLabChampionSummary,
   AdminLabDailyBenchmark,
@@ -59,6 +62,10 @@ type LabTimelineTimestampKind =
 
 type AdminHealthState = 'healthy' | 'degraded' | 'critical' | 'unknown'
 type AdminScoringState = 'active' | 'paused' | 'stalled' | 'blocked' | 'idle' | 'unknown'
+
+const ADMIN_OVERVIEW_REFRESH_MS = 30_000
+const ADMIN_ACTIVE_RUN_REFRESH_MS = 15_000
+const ADMIN_TERMINAL_RUN_REFRESH_MS = 120_000
 
 export type AdminLabLoopSummary = {
   cardId: string
@@ -192,7 +199,7 @@ type AdminLabBenchmarkSummary = {
 
 type AdminLabAlertSummary = {
   state: AdminHealthState
-  source: 'ops_telemetry' | 'public_transparency_log' | 'none'
+  source: 'ops_telemetry' | 'public_transparency_log' | 'canonical_evaluator' | 'combined' | 'none'
   sourceAvailable: boolean
   unavailableReason: string | null
   totalLast24h: number
@@ -205,7 +212,47 @@ type AdminLabAlertSummary = {
   latestObservedAt: string | null
   latestCheckpointAt: string | null
   latestCheckpointUrl: string | null
+  operations: AdminLabAlertOperationsSummary
   recent: AdminLabAlert[]
+}
+
+type AdminLabAlertOperationsSummary = {
+  state: AdminHealthState
+  sourceAvailable: boolean
+  unavailableReason: string | null
+  monitorEnabled: boolean
+  monitorIntervalMs: number
+  monitoredValidatorCount: number
+  validators: AdminLabMonitoredValidator[]
+  emailConfigured: boolean
+  discordConfigured: boolean
+  deliveryReady: boolean
+  configurationBlockers: string[]
+  lastStartedAt: string | null
+  lastCompletedAt: string | null
+  lastErrorAt: string | null
+  lastError: string | null
+  heartbeatAgeMs: number | null
+  leaseActive: boolean
+  pendingDeliveryCount: number
+  overdueDeliveryCount: number
+  succeededDeliveryCount24h: number
+  failedDeliveryCount24h: number
+  latestDeliveryAt: string | null
+  oldestPendingAt: string | null
+  detail: string
+}
+
+type AdminLabMonitoredValidator = {
+  hotkey: string
+  label: string | null
+  source: 'database' | 'environment'
+  enabled: boolean
+  monitorPcr0: boolean
+  monitorOffchainWeights: boolean
+  monitorOnchainWeights: boolean
+  expectedPcr0: string | null
+  updatedAt: string | null
 }
 
 type AdminLabAlert = {
@@ -218,6 +265,13 @@ type AdminLabAlert = {
   count: number
   firstSeenAt: string | null
   lastSeenAt: string | null
+  detail?: string | null
+  signal?: string | null
+  scope?: string | null
+  entityId?: string | null
+  validatorId?: string | null
+  ageBlocks?: number | null
+  sources?: string[]
 }
 
 type AdminLabAttestationSummary = {
@@ -345,6 +399,38 @@ export type AdminResearchLabPayload = {
   fetchedAt: string
 }
 
+type AdminLabLoopRefresh = Pick<
+  AdminLabLoopSummary,
+  | 'ticketId'
+  | 'runId'
+  | 'receiptId'
+  | 'outcomeLabel'
+  | 'outcomeBand'
+  | 'publicStatus'
+  | 'paymentState'
+  | 'executionState'
+  | 'candidateState'
+  | 'resultState'
+  | 'opsReason'
+  | 'statusDetail'
+  | 'opsWarnings'
+  | 'statusKey'
+  | 'statusLabel'
+  | 'statusNote'
+  | 'actionNote'
+  | 'candidateCount'
+  | 'scoredCandidateCount'
+  | 'lastActivityAt'
+>
+
+type AdminResearchLabRefreshPayload = {
+  recentLoops: AdminLabLoopSummary[]
+  loopStates: AdminLabLoopRefresh[]
+  ops: Omit<AdminLabOpsSummary, 'champions'>
+  stats: AdminResearchLabPayload['stats']
+  fetchedAt: string
+}
+
 type LabTimelineEvent = {
   id: string
   phase: LabTimelinePhase
@@ -397,48 +483,124 @@ export function AdminResearchLab({
   const ops = livePayload?.ops ?? null
   const [query, setQuery] = useState('')
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(loops[0]?.ticketId ?? null)
-  const [timelineByTicket, setTimelineByTicket] = useState<Record<string, LabTimelinePayload | null>>({})
-  const [loadingTicketId, setLoadingTicketId] = useState<string | null>(null)
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(loops[0]?.runId ?? null)
+  const [detailBySelection, setDetailBySelection] = useState<Record<string, LabTimelinePayload | null>>({})
+  const [loadingSelectionKey, setLoadingSelectionKey] = useState<string | null>(null)
   const [detailError, setDetailError] = useState<string | null>(null)
   const runInspectorRef = useRef<HTMLElement | null>(null)
+  const runDetailRef = useRef<HTMLDivElement | null>(null)
+  const urlSelectionAppliedRef = useRef(false)
 
-  const selectRunForInspection = (ticketId: string) => {
+  const selectRunForInspection = (ticketId: string, runId?: string | null) => {
+    const loop = loops.find((item) => item.ticketId === ticketId)
+    const nextRunId = runId === undefined ? loop?.runId ?? null : runId
     setSelectedTicketId(ticketId)
+    setSelectedRunId(nextRunId)
+    writeRunSelectionUrl(ticketId, nextRunId)
     window.requestAnimationFrame(() => {
-      runInspectorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      const target = window.matchMedia('(max-width: 1279px)').matches
+        ? runDetailRef.current
+        : runInspectorRef.current
+      target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     })
   }
 
   useEffect(() => setLivePayload(payload), [payload])
 
   useEffect(() => {
+    if (urlSelectionAppliedRef.current || loops.length === 0) return
+    urlSelectionAppliedRef.current = true
+    const params = new URLSearchParams(window.location.search)
+    const ticketId = params.get('ticketId')
+    if (!ticketId) return
+    const loop = loops.find((item) => item.ticketId === ticketId)
+    if (!loop) return
+    setSelectedTicketId(ticketId)
+    setSelectedRunId(params.get('runId') || loop.runId)
+  }, [loops])
+
+  useEffect(() => {
+    const restoreSelection = () => {
+      const params = new URLSearchParams(window.location.search)
+      const ticketId = params.get('ticketId')
+      if (!ticketId) return
+      const loop = loops.find((item) => item.ticketId === ticketId)
+      if (!loop) return
+      setSelectedTicketId(ticketId)
+      setSelectedRunId(params.get('runId') || loop.runId)
+    }
+    window.addEventListener('popstate', restoreSelection)
+    return () => window.removeEventListener('popstate', restoreSelection)
+  }, [loops])
+
+  useEffect(() => {
     let cancelled = false
+    let inFlight = false
+    let timeout: number | null = null
+    let controller: AbortController | null = null
+    const clearScheduled = () => {
+      if (timeout !== null) window.clearTimeout(timeout)
+      timeout = null
+    }
+    const schedule = () => {
+      clearScheduled()
+      if (!cancelled && !document.hidden) {
+        timeout = window.setTimeout(() => void refresh(), ADMIN_OVERVIEW_REFRESH_MS)
+      }
+    }
     const refresh = async () => {
+      if (cancelled || document.hidden || inFlight) return
+      inFlight = true
+      controller = new AbortController()
       setLiveRefreshing(true)
       try {
-        const res = await fetch('/api/admin/research-lab', { cache: 'no-store' })
+        const res = await fetch('/api/admin/research-lab?mode=refresh', {
+          cache: 'no-store',
+          signal: controller.signal,
+        })
         const body = await res.json().catch(() => ({}))
         if (!res.ok) throw new Error(body.error || `Live refresh failed with ${res.status}`)
         if (!cancelled) {
-          setLivePayload(body as AdminResearchLabPayload)
+          setLivePayload((current) => current
+            ? mergeAdminResearchLabRefresh(current, body as AdminResearchLabRefreshPayload)
+            : current)
           setLiveRefreshError(null)
         }
       } catch (e) {
-        if (!cancelled) setLiveRefreshError(e instanceof Error ? e.message : 'Live refresh failed')
+        if (!cancelled && !controller.signal.aborted) {
+          setLiveRefreshError(e instanceof Error ? e.message : 'Live refresh failed')
+        }
       } finally {
+        inFlight = false
+        controller = null
         if (!cancelled) setLiveRefreshing(false)
+        schedule()
       }
     }
-    const interval = window.setInterval(refresh, 15_000)
+    const handleVisibility = () => {
+      if (document.hidden) {
+        clearScheduled()
+        controller?.abort()
+      } else {
+        void refresh()
+      }
+    }
+    schedule()
+    document.addEventListener('visibilitychange', handleVisibility)
+    window.addEventListener('online', handleVisibility)
     return () => {
       cancelled = true
-      window.clearInterval(interval)
+      clearScheduled()
+      controller?.abort()
+      document.removeEventListener('visibilitychange', handleVisibility)
+      window.removeEventListener('online', handleVisibility)
     }
   }, [])
 
   useEffect(() => {
     if (selectedTicketId || loops.length === 0) return
     setSelectedTicketId(loops[0].ticketId)
+    setSelectedRunId(loops[0].runId)
   }, [loops, selectedTicketId])
 
   const filteredLoops = useMemo(() => {
@@ -467,47 +629,92 @@ export function AdminResearchLab({
     filteredLoops[0] ??
     loops[0] ??
     null
-  const selectedTimeline = selectedLoop ? timelineByTicket[selectedLoop.ticketId] ?? null : null
-  const loadingSelected = Boolean(selectedLoop && loadingTicketId === selectedLoop.ticketId)
+  const selectedKey = selectedLoop ? runSelectionKey(selectedLoop.ticketId, selectedRunId) : null
+  const selectedTimeline = selectedKey ? detailBySelection[selectedKey] ?? null : null
+  const loadingSelected = Boolean(selectedKey && loadingSelectionKey === selectedKey)
   const eventCount = selectedTimeline?.timeline.runs.reduce((sum, run) => sum + run.events.length, 0) ?? 0
+  const selectHistoricalRun = (runId: string) => {
+    if (!selectedLoop) return
+    setSelectedRunId(runId)
+    writeRunSelectionUrl(selectedLoop.ticketId, runId)
+  }
 
   useEffect(() => {
     if (!selectedLoop) return
     const ticketId = selectedLoop.ticketId
-    const controller = new AbortController()
+    const selectionKey = runSelectionKey(ticketId, selectedRunId)
     let cancelled = false
+    let inFlight = false
+    let timeout: number | null = null
+    let controller: AbortController | null = null
+    let terminal = ['completed', 'failed'].includes(
+      detailBySelection[selectionKey]?.runDetail.state ?? '',
+    )
+    const clearScheduled = () => {
+      if (timeout !== null) window.clearTimeout(timeout)
+      timeout = null
+    }
+    const schedule = () => {
+      clearScheduled()
+      if (cancelled || document.hidden) return
+      timeout = window.setTimeout(
+        () => void load(true),
+        terminal ? ADMIN_TERMINAL_RUN_REFRESH_MS : ADMIN_ACTIVE_RUN_REFRESH_MS,
+      )
+    }
     const load = async (silent: boolean) => {
-      if (!silent) setLoadingTicketId(ticketId)
+      if (cancelled || document.hidden || inFlight) return
+      inFlight = true
+      controller = new AbortController()
+      if (!silent) setLoadingSelectionKey(selectionKey)
       setDetailError(null)
       try {
-        const res = await fetch(`/api/admin/research-lab?ticketId=${encodeURIComponent(ticketId)}`, {
+        const params = new URLSearchParams({ ticketId })
+        if (selectedRunId) params.set('runId', selectedRunId)
+        const res = await fetch(`/api/admin/research-lab?${params.toString()}`, {
           cache: 'no-store',
           signal: controller.signal,
         })
         const body = await res.json().catch(() => ({}))
         if (!res.ok) throw new Error(body.error || `Timeline request failed with ${res.status}`)
         if (!cancelled) {
-          setTimelineByTicket((prev) => ({ ...prev, [ticketId]: body as LabTimelinePayload }))
+          const payload = body as LabTimelinePayload
+          terminal = payload.runDetail.state === 'completed' || payload.runDetail.state === 'failed'
+          setDetailBySelection((prev) => ({ ...prev, [selectionKey]: payload }))
         }
       } catch (e) {
         if (cancelled || controller.signal.aborted) return
         setDetailError(e instanceof Error ? e.message : 'Could not load Lab timeline')
       } finally {
-        if (!cancelled) setLoadingTicketId(null)
+        inFlight = false
+        controller = null
+        if (!cancelled) setLoadingSelectionKey(null)
+        schedule()
       }
     }
-    void load(Object.prototype.hasOwnProperty.call(timelineByTicket, ticketId))
-    const interval = window.setInterval(() => void load(true), 15_000)
+    void load(Object.prototype.hasOwnProperty.call(detailBySelection, selectionKey))
+    const handleVisibility = () => {
+      if (document.hidden) {
+        clearScheduled()
+        controller?.abort()
+      } else {
+        void load(true)
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+    window.addEventListener('online', handleVisibility)
 
     return () => {
       cancelled = true
-      controller.abort()
-      window.clearInterval(interval)
+      clearScheduled()
+      controller?.abort()
+      document.removeEventListener('visibilitychange', handleVisibility)
+      window.removeEventListener('online', handleVisibility)
     }
     // The selected ticket is the polling scope. Cached payload state is
     // intentionally excluded so a successful refresh does not restart polling.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedLoop?.ticketId])
+  }, [selectedLoop?.ticketId, selectedRunId])
 
   return (
     <div className="space-y-6">
@@ -538,7 +745,7 @@ export function AdminResearchLab({
             >
               <span className="inline-flex items-center gap-2">
                 <span className={cn('h-1.5 w-1.5 rounded-full', liveRefreshError ? 'bg-[var(--accent-negative)]' : 'bg-[var(--accent-positive)]', liveRefreshing ? 'live-pulse' : '')} />
-                {liveRefreshError ? 'Live refresh degraded' : 'Live · 15s'} · {formatDateTime(livePayload.fetchedAt)}
+                {liveRefreshError ? 'Live refresh degraded' : 'Live · 30s overview · 15s active run'} · {formatDateTime(livePayload.fetchedAt)}
               </span>
             </div>
           )}
@@ -568,6 +775,8 @@ export function AdminResearchLab({
         <>
           <OpsHealthStrip ops={ops} />
 
+          <AdminMetagraph />
+
           <DailyBenchmarkTelemetry benchmark={ops.dailyBenchmark} champions={ops.champions} />
 
           <ComputeSpendPanel spend={ops.computeSpend} />
@@ -580,12 +789,13 @@ export function AdminResearchLab({
           <ActiveRunsPanel
             runs={ops.activeRuns}
             selectedTicketId={selectedLoop?.ticketId ?? null}
+            selectedRunId={selectedRunId}
             onSelect={selectRunForInspection}
           />
 
           <section className="grid gap-4 xl:grid-cols-3">
             <BenchmarkPanel benchmark={ops.benchmark} />
-            <AlertsPanel alerts={ops.alerts} />
+            <AlertsPanel alerts={ops.alerts} observedNodes={ops.attestation.nodes} />
             <AttestationPanel attestation={ops.attestation} />
           </section>
         </>
@@ -594,9 +804,9 @@ export function AdminResearchLab({
       <section
         ref={runInspectorRef}
         id="run-inspector"
-        className="grid min-h-[640px] scroll-mt-24 gap-4 xl:grid-cols-[420px_minmax(0,1fr)]"
+        className="grid min-h-[640px] w-full min-w-0 scroll-mt-24 gap-4 xl:grid-cols-[420px_minmax(0,1fr)]"
       >
-        <div className="space-y-3">
+        <div className="min-w-0 space-y-3">
           <div className="relative">
             <Search
               className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2"
@@ -643,6 +853,7 @@ export function AdminResearchLab({
         </div>
 
         <div
+          ref={runDetailRef}
           className="min-w-0 rounded-xl border"
           style={{
             borderColor: 'var(--surface-border)',
@@ -673,7 +884,7 @@ export function AdminResearchLab({
                       ) : null}
                     </div>
                     <h2
-                      className="mt-3 text-lg font-medium leading-snug"
+                      className="mt-3 break-words text-lg font-medium leading-snug [overflow-wrap:anywhere]"
                       style={{ color: 'var(--text-primary)' }}
                     >
                       {selectedLoop.researchFocusSummary || 'No focus summary published'}
@@ -684,7 +895,7 @@ export function AdminResearchLab({
                       ))}
                     </div>
                   </div>
-                  <div className="grid min-w-[280px] grid-cols-2 gap-2">
+                  <div className="grid w-full min-w-0 grid-cols-2 gap-2 lg:w-auto lg:min-w-[280px]">
                     <Meta label="Miner" value={shortHotkey(selectedLoop.minerHotkey)} title={selectedLoop.minerHotkey} />
                     <Meta label="Events" value={loadingSelected ? 'Loading' : String(eventCount)} />
                     <Meta label="Submitted" value={formatDateTime(selectedLoop.submittedAt)} />
@@ -714,9 +925,18 @@ export function AdminResearchLab({
                         Live run refresh error: {detailError}. Showing the most recent successful detail.
                       </div>
                     ) : null}
+                    <RunSelector
+                      runs={selectedTimeline.timeline.runs}
+                      selectedRunId={selectedTimeline.runDetail.runId}
+                      onSelect={selectHistoricalRun}
+                    />
                     <RunTelemetry detail={selectedTimeline.runDetail} />
                     {eventCount > 0 ? (
-                      <TimelineView timeline={selectedTimeline.timeline} />
+                      <TimelineView
+                        timeline={selectedTimeline.timeline}
+                        selectedRunId={selectedTimeline.runDetail.runId}
+                        onSelectRun={selectHistoricalRun}
+                      />
                     ) : (
                       <div className="rounded-lg border p-8 text-center text-sm" style={{ borderColor: 'var(--surface-border)', color: 'var(--text-secondary)' }}>
                         No ticket or run events have been emitted yet.
@@ -766,7 +986,7 @@ function OpsHealthStrip({ ops }: { ops: AdminLabOpsSummary }) {
           <StatePill state={ops.state} label={stateLabel(ops.state)} />
         </div>
       </div>
-      <div className="grid gap-px p-1 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-px p-1 sm:grid-cols-2 lg:grid-cols-5">
         {ops.healthSignals.map((signal) => (
           <HealthSignalCard key={signal.id} signal={signal} />
         ))}
@@ -1305,11 +1525,13 @@ function PipelinePanel({ stages }: { stages: AdminLabPipelineStage[] }) {
 function ActiveRunsPanel({
   runs,
   selectedTicketId,
+  selectedRunId,
   onSelect,
 }: {
   runs: AdminLabActiveRun[]
   selectedTicketId: string | null
-  onSelect: (ticketId: string) => void
+  selectedRunId: string | null
+  onSelect: (ticketId: string, runId: string | null) => void
 }) {
   return (
     <section
@@ -1329,7 +1551,49 @@ function ActiveRunsPanel({
           No active or blocked Lab runs are visible in the current window.
         </div>
       ) : (
-        <div className="overflow-x-auto">
+        <>
+        <div className="space-y-2 p-3 lg:hidden">
+          {runs.map((run) => {
+            const active = selectedTicketId === run.ticketId && selectedRunId === run.runId
+            return (
+              <button
+                key={`mobile:${run.ticketId}:${run.runId ?? 'ticket'}`}
+                type="button"
+                aria-pressed={active}
+                onClick={() => onSelect(run.ticketId, run.runId)}
+                className={cn(
+                  'premium-focus block min-h-11 w-full rounded-lg border p-3 text-left transition-colors',
+                  active ? 'border-gold-soft bg-gold-soft' : 'hover-bg-warm',
+                )}
+                style={active ? undefined : { borderColor: 'var(--surface-border)', background: 'var(--surface-base)' }}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: run.stale ? 'var(--accent-negative)' : 'var(--accent-positive)' }} />
+                      <span className="line-clamp-2 text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{run.researchFocusSummary || 'No focus summary'}</span>
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      <StatusPill label={run.statusLabel || run.statusKey} band={run.stale ? 'failed' : 'running'} compact />
+                      <Tag>{readableTag(run.phase)}</Tag>
+                    </div>
+                  </div>
+                  <ChevronRight className="mt-1 h-4 w-4 shrink-0" style={{ color: 'var(--text-tertiary)' }} />
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  <MiniMeta label="ICPs left" value={run.icpsRemaining === null ? '—' : String(run.icpsRemaining)} />
+                  <MiniMeta label="Candidates" value={`${run.scoredCandidateCount}/${run.candidateCount}`} />
+                  <MiniMeta label="Idle" value={formatDurationMs(run.idleMs)} />
+                </div>
+                {run.blocker ? <p className="mt-2 line-clamp-2 text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{run.blocker}</p> : null}
+                <div className="mt-2 truncate font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+                  {run.runId ? `Run ${run.runId}` : `Ticket ${run.ticketId}`}
+                </div>
+              </button>
+            )
+          })}
+        </div>
+        <div className="hidden overflow-x-auto lg:block">
           <table className="w-full min-w-[1080px] text-left text-xs">
             <thead
               className="border-b"
@@ -1348,11 +1612,11 @@ function ActiveRunsPanel({
             </thead>
             <tbody>
               {runs.map((run) => {
-                const active = selectedTicketId === run.ticketId
+                const active = selectedTicketId === run.ticketId && selectedRunId === run.runId
                 return (
                   <tr
                     key={`${run.ticketId}:${run.runId ?? 'ticket'}`}
-                    onClick={() => onSelect(run.ticketId)}
+                    onClick={() => onSelect(run.ticketId, run.runId)}
                     className={cn('cursor-pointer border-b transition-colors hover-bg-warm', active ? 'bg-gold-soft' : '')}
                     style={{ borderColor: 'var(--surface-border)' }}
                   >
@@ -1411,7 +1675,7 @@ function ActiveRunsPanel({
                         type="button"
                         onClick={(event) => {
                           event.stopPropagation()
-                          onSelect(run.ticketId)
+                          onSelect(run.ticketId, run.runId)
                         }}
                         className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[10px] font-medium uppercase tracking-[0.08em] transition-colors hover-bg-warm"
                         style={{ borderColor: 'var(--surface-border-strong)', color: 'var(--text-primary)' }}
@@ -1426,6 +1690,7 @@ function ActiveRunsPanel({
             </tbody>
           </table>
         </div>
+        </>
       )}
     </section>
   )
@@ -1433,7 +1698,7 @@ function ActiveRunsPanel({
 
 function BenchmarkPanel({ benchmark }: { benchmark: AdminLabBenchmarkSummary }) {
   return (
-    <section className="rounded-xl border" style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)' }}>
+    <section className="min-w-0 rounded-xl border" style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)' }}>
       <PanelHeader
         icon={<Database className={cn('h-4 w-4', stateTextClass(benchmark.state))} />}
         title="Benchmark"
@@ -1467,15 +1732,25 @@ function BenchmarkPanel({ benchmark }: { benchmark: AdminLabBenchmarkSummary }) 
   )
 }
 
-function AlertsPanel({ alerts }: { alerts: AdminLabAlertSummary }) {
+function AlertsPanel({
+  alerts,
+  observedNodes,
+}: {
+  alerts: AdminLabAlertSummary
+  observedNodes: AdminLabAttestationNode[]
+}) {
   const sourceLabel = alerts.source === 'public_transparency_log'
-    ? 'Public signed logs'
+    ? 'Public transparency log'
     : alerts.source === 'ops_telemetry'
       ? 'Ops telemetry'
+      : alerts.source === 'canonical_evaluator'
+        ? 'Canonical evaluator'
+        : alerts.source === 'combined'
+          ? 'Merged telemetry'
       : 'Unavailable'
 
   return (
-    <section className="rounded-xl border" style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)' }}>
+    <section className="min-w-0 rounded-xl border" style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)' }}>
       <PanelHeader
         icon={<Siren className={cn('h-4 w-4', stateTextClass(alerts.state))} />}
         title="Alerts"
@@ -1488,9 +1763,10 @@ function AlertsPanel({ alerts }: { alerts: AdminLabAlertSummary }) {
           <MetricBox label="Active" value={alerts.activeCount} />
         </div>
         <MiniMeta label="Source" value={sourceLabel} />
-        {alerts.source === 'public_transparency_log' ? (
+        <AlertOperationsControlPlane operations={alerts.operations} observedNodes={observedNodes} />
+        {alerts.source === 'public_transparency_log' || alerts.source === 'combined' ? (
           <div className="grid grid-cols-2 gap-2">
-            <MiniMeta label="Signed events" value={String(alerts.verifiedEventCount)} />
+            <MiniMeta label="Envelope matches" value={String(alerts.verifiedEventCount)} />
             <MiniMeta
               label="Arweave checkpoint"
               value={alerts.latestCheckpointAt ? formatRelative(alerts.latestCheckpointAt) : 'Missing'}
@@ -1515,20 +1791,30 @@ function AlertsPanel({ alerts }: { alerts: AdminLabAlertSummary }) {
           </p>
         ) : alerts.recent.length === 0 ? (
           <p className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-            {alerts.source === 'public_transparency_log'
+            {alerts.source === 'public_transparency_log' || alerts.source === 'combined'
               ? `${alerts.weightSubmissionCount} weight submissions and ${alerts.epochAuditCount} matching epoch audits were checked. No derived issues.`
               : 'No recent alerts in the telemetry source.'}
           </p>
         ) : (
           <div className="space-y-2">
-            {alerts.recent.slice(0, 4).map((alert) => (
+            {alerts.recent.slice(0, 6).map((alert) => (
               <div key={alert.id} className="border-t pt-2" style={{ borderColor: 'var(--surface-border)' }}>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="truncate text-xs font-medium" style={{ color: 'var(--text-primary)' }}>{alert.title}</span>
+                <div className="flex items-start justify-between gap-3">
+                  <span className="line-clamp-2 min-w-0 text-xs font-medium leading-relaxed" style={{ color: 'var(--text-primary)' }}>{alert.title}</span>
                   <span className="font-mono text-[10px]" style={{ color: alert.severity === 'critical' ? 'var(--accent-negative)' : 'var(--text-tertiary)' }}>
                     {readableTag(alert.severity)}
                   </span>
                 </div>
+                {alert.detail ? (
+                  <p className="mt-1 break-words text-[11px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{alert.detail}</p>
+                ) : null}
+                {alert.signal || alert.validatorId || alert.ageBlocks !== null && alert.ageBlocks !== undefined ? (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {alert.signal ? <Tag>{readableTag(alert.signal)}</Tag> : null}
+                    {alert.validatorId ? <Tag>{shortHotkey(alert.validatorId)}</Tag> : null}
+                    {alert.ageBlocks !== null && alert.ageBlocks !== undefined ? <Tag>{`${Math.round(alert.ageBlocks)} blocks old`}</Tag> : null}
+                  </div>
+                ) : null}
                 <div className="mt-1 flex items-center justify-between gap-3 text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
                   <span className="truncate">{alert.source}</span>
                   <span suppressHydrationWarning>{alert.lastSeenAt ? formatRelative(alert.lastSeenAt) : '—'}</span>
@@ -1539,6 +1825,264 @@ function AlertsPanel({ alerts }: { alerts: AdminLabAlertSummary }) {
         )}
       </div>
     </section>
+  )
+}
+
+function AlertOperationsControlPlane({
+  operations,
+  observedNodes,
+}: {
+  operations: AdminLabAlertOperationsSummary
+  observedNodes: AdminLabAttestationNode[]
+}) {
+  const [validators, setValidators] = useState(operations.validators)
+  const [hotkeyDraft, setHotkeyDraft] = useState('')
+  const [labelDraft, setLabelDraft] = useState('')
+  const [registryError, setRegistryError] = useState<string | null>(null)
+  const [submittingHotkey, setSubmittingHotkey] = useState<string | null>(null)
+  useEffect(() => setValidators(operations.validators), [operations.validators])
+
+  const activeValidatorCount = validators.filter((validator) => validator.enabled).length
+  const registeredHotkeys = new Set(validators.map((validator) => validator.hotkey))
+  const observedCandidates = observedNodes
+    .filter((node) => Boolean(node.hotkey) && !registeredHotkeys.has(node.hotkey!))
+    .filter((node, index, rows) => rows.findIndex((candidate) => candidate.hotkey === node.hotkey) === index)
+
+  const saveValidator = async (input: {
+    hotkey: string
+    label?: string | null
+    expectedPcr0?: string | null
+  }) => {
+    setSubmittingHotkey(input.hotkey)
+    setRegistryError(null)
+    try {
+      const response = await fetch('/api/admin/research-lab', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'upsert_validator_monitor',
+          hotkey: input.hotkey,
+          label: input.label || null,
+          expectedPcr0: input.expectedPcr0 || null,
+          enabled: true,
+          monitorPcr0: true,
+          monitorOffchainWeights: true,
+          monitorOnchainWeights: true,
+        }),
+      })
+      const body = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(body.error || `Validator update failed with ${response.status}`)
+      const validator = body.validator as AdminLabMonitoredValidator
+      setValidators((current) => [validator, ...current.filter((item) => item.hotkey !== validator.hotkey)])
+      setHotkeyDraft('')
+      setLabelDraft('')
+    } catch (error) {
+      setRegistryError(error instanceof Error ? error.message : 'Could not update validator monitoring.')
+    } finally {
+      setSubmittingHotkey(null)
+    }
+  }
+
+  const removeValidator = async (validator: AdminLabMonitoredValidator) => {
+    if (validator.source === 'environment') return
+    if (!window.confirm(`Stop monitoring validator ${validator.label || shortHotkey(validator.hotkey)}?`)) return
+    setSubmittingHotkey(validator.hotkey)
+    setRegistryError(null)
+    try {
+      const response = await fetch('/api/admin/research-lab', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'remove_validator_monitor', hotkey: validator.hotkey }),
+      })
+      const body = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(body.error || `Validator removal failed with ${response.status}`)
+      setValidators((current) => current.filter((item) => item.hotkey !== validator.hotkey))
+    } catch (error) {
+      setRegistryError(error instanceof Error ? error.message : 'Could not remove validator monitoring.')
+    } finally {
+      setSubmittingHotkey(null)
+    }
+  }
+
+  const channels = [
+    operations.emailConfigured ? 'Email' : null,
+    operations.discordConfigured ? 'Discord' : null,
+  ].filter(Boolean).join(' + ') || 'None'
+  const heartbeatLabel = operations.lastCompletedAt
+    ? formatRelative(operations.lastCompletedAt)
+    : operations.monitorEnabled
+      ? 'Never completed'
+      : 'Disabled'
+
+  return (
+    <div
+      className="rounded-lg border p-3"
+      style={{
+        borderColor: operations.state === 'critical'
+          ? 'rgba(240, 109, 120, 0.38)'
+          : operations.state === 'degraded'
+            ? 'rgba(207, 157, 97, 0.38)'
+            : 'var(--surface-border)',
+        background: 'var(--surface-base)',
+      }}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-[10px] font-medium uppercase tracking-[0.12em]" style={{ color: 'var(--text-tertiary)' }}>
+            Paging control plane
+          </div>
+          <div className="mt-1 text-xs font-medium" style={{ color: 'var(--text-primary)' }}>
+            {operations.monitorEnabled ? 'Monitor enabled' : 'Monitor disabled'}
+          </div>
+        </div>
+        <StatePill state={operations.state} label={stateLabel(operations.state)} />
+      </div>
+
+      <div className="mt-3 grid grid-cols-3 gap-2">
+        <MetricBox label="Validators" value={activeValidatorCount} tone={activeValidatorCount === 0 ? 'critical' : 'neutral'} />
+        <MetricBox label="Pending" value={operations.pendingDeliveryCount} tone={operations.overdueDeliveryCount > 0 ? 'critical' : 'neutral'} />
+        <MetricBox label="Failed 24h" value={operations.failedDeliveryCount24h} tone={operations.failedDeliveryCount24h > 0 ? 'critical' : 'neutral'} />
+      </div>
+
+      <div className="mt-3 space-y-1.5">
+        <MiniMeta label="Channels" value={channels} />
+        <MiniMeta label="Heartbeat" value={heartbeatLabel} title={operations.lastCompletedAt ?? undefined} />
+        <MiniMeta
+          label="Delivery 24h"
+          value={`${operations.succeededDeliveryCount24h} sent · ${operations.failedDeliveryCount24h} failed`}
+        />
+        {operations.leaseActive ? <MiniMeta label="Worker" value="Evaluation in progress" /> : null}
+      </div>
+
+      {operations.configurationBlockers.length > 0 ? (
+        <div className="mt-3 space-y-1 border-t pt-2" style={{ borderColor: 'var(--surface-border)' }}>
+          {operations.configurationBlockers.map((blocker) => (
+            <div key={blocker} className="flex items-start gap-1.5 text-[10px] leading-relaxed" style={{ color: 'var(--accent-pending)' }}>
+              <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+              <span>{blocker}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-3 border-t pt-2 text-[10px] leading-relaxed" style={{ borderColor: 'var(--surface-border)', color: 'var(--text-secondary)' }}>
+          {operations.detail}
+        </p>
+      )}
+
+      {operations.lastError ? (
+        <p className="mt-2 break-words text-[10px] leading-relaxed" style={{ color: 'var(--accent-negative)' }}>
+          Last monitor error: {operations.lastError}
+        </p>
+      ) : null}
+
+      <details className="mt-3 border-t pt-2" style={{ borderColor: 'var(--surface-border)' }}>
+        <summary className="cursor-pointer list-none text-[10px] font-medium uppercase tracking-[0.1em]" style={{ color: 'var(--text-secondary)' }}>
+          Validator registry · {activeValidatorCount} monitored
+        </summary>
+        <div className="mt-3 space-y-3">
+          {validators.length > 0 ? (
+            <div className="space-y-2">
+              {validators.map((validator) => (
+                <div key={validator.hotkey} className="flex min-w-0 items-center justify-between gap-2 rounded-md border px-2.5 py-2" style={{ borderColor: 'var(--surface-border)' }}>
+                  <div className="min-w-0">
+                    <div className="truncate text-[11px] font-medium" style={{ color: 'var(--text-primary)' }}>
+                      {validator.label || shortHotkey(validator.hotkey)}
+                    </div>
+                    <div className="mt-0.5 truncate font-mono text-[9px]" title={validator.hotkey} style={{ color: 'var(--text-tertiary)' }}>
+                      {validator.hotkey}
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {validator.monitorPcr0 ? <Tag>PCR0</Tag> : null}
+                      {validator.monitorOffchainWeights ? <Tag>Bundle</Tag> : null}
+                      {validator.monitorOnchainWeights ? <Tag>On-chain</Tag> : null}
+                      <Tag>{validator.source === 'environment' ? 'Environment' : 'Admin'}</Tag>
+                    </div>
+                  </div>
+                  {validator.source === 'database' ? (
+                    <button
+                      type="button"
+                      aria-label={`Stop monitoring ${validator.label || shortHotkey(validator.hotkey)}`}
+                      disabled={submittingHotkey === validator.hotkey}
+                      onClick={() => void removeValidator(validator)}
+                      className="rounded-md border p-1.5 transition-colors hover-bg-warm disabled:opacity-50"
+                      style={{ borderColor: 'var(--surface-border)', color: 'var(--text-tertiary)' }}
+                    >
+                      {submittingHotkey === validator.hotkey ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                    </button>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-[10px] leading-relaxed" style={{ color: 'var(--text-tertiary)' }}>
+              Register every validator the team owns so a completely missing PCR0 or weight bundle still emits an alert.
+            </p>
+          )}
+
+          {observedCandidates.length > 0 ? (
+            <div className="space-y-1.5">
+              <div className="text-[9px] uppercase tracking-[0.1em]" style={{ color: 'var(--text-tertiary)' }}>Observed, not monitored</div>
+              {observedCandidates.slice(0, 4).map((node) => (
+                <button
+                  key={node.id}
+                  type="button"
+                  disabled={submittingHotkey === node.hotkey}
+                  onClick={() => void saveValidator({
+                    hotkey: node.hotkey!,
+                    label: `Validator ${shortHotkey(node.hotkey!)}`,
+                    expectedPcr0: node.expectedPcr0,
+                  })}
+                  className="flex w-full items-center justify-between gap-2 rounded-md border px-2.5 py-2 text-left transition-colors hover-bg-warm disabled:opacity-50"
+                  style={{ borderColor: 'var(--surface-border)' }}
+                >
+                  <span className="min-w-0 truncate font-mono text-[9px]" title={node.hotkey ?? undefined} style={{ color: 'var(--text-secondary)' }}>
+                    {node.hotkey}
+                  </span>
+                  {submittingHotkey === node.hotkey ? <Loader2 className="h-3 w-3 shrink-0 animate-spin" /> : <span className="inline-flex shrink-0 items-center gap-1 text-[9px]" style={{ color: 'var(--accent-positive)' }}><Plus className="h-3 w-3" /> Monitor</span>}
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          <form
+            className="space-y-2"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void saveValidator({ hotkey: hotkeyDraft.trim(), label: labelDraft.trim() || null })
+            }}
+          >
+            <input
+              value={hotkeyDraft}
+              onChange={(event) => setHotkeyDraft(event.target.value)}
+              placeholder="Validator hotkey"
+              aria-label="Validator hotkey"
+              className="w-full min-w-0 rounded-md border bg-transparent px-2.5 py-2 font-mono text-[10px] outline-none"
+              style={{ borderColor: 'var(--surface-border)', color: 'var(--text-primary)' }}
+            />
+            <div className="flex min-w-0 gap-2">
+              <input
+                value={labelDraft}
+                onChange={(event) => setLabelDraft(event.target.value)}
+                placeholder="Label (optional)"
+                aria-label="Validator label"
+                className="min-w-0 flex-1 rounded-md border bg-transparent px-2.5 py-2 text-[10px] outline-none"
+                style={{ borderColor: 'var(--surface-border)', color: 'var(--text-primary)' }}
+              />
+              <button
+                type="submit"
+                disabled={!hotkeyDraft.trim() || submittingHotkey !== null}
+                className="inline-flex shrink-0 items-center gap-1 rounded-md border px-2.5 py-2 text-[10px] font-medium transition-colors hover-bg-warm disabled:opacity-40"
+                style={{ borderColor: 'var(--surface-border-strong)', color: 'var(--text-primary)' }}
+              >
+                {submittingHotkey === hotkeyDraft.trim() ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+                Add
+              </button>
+            </div>
+          </form>
+          {registryError ? <p role="alert" className="text-[10px] leading-relaxed" style={{ color: 'var(--accent-negative)' }}>{registryError}</p> : null}
+        </div>
+      </details>
+    </div>
   )
 }
 
@@ -1565,7 +2109,7 @@ function AttestationPanel({ attestation }: { attestation: AdminLabAttestationSum
 
   return (
     <section
-      className="rounded-xl border"
+      className="min-w-0 rounded-xl border"
       style={{
         borderColor: hasMismatch ? 'rgba(232, 240, 255, 0.24)' : 'var(--surface-border)',
         background: 'var(--surface)',
@@ -1768,7 +2312,7 @@ function LoopButton({
       type="button"
       onClick={onSelect}
       className={cn(
-        'block w-full rounded-lg border px-4 py-3 text-left transition-colors',
+        'block min-w-0 w-full rounded-lg border px-4 py-3 text-left transition-colors',
         active ? 'border-gold-soft bg-gold-soft' : 'border-transparent hover-bg-warm',
       )}
     >
@@ -1802,7 +2346,73 @@ function LoopButton({
   )
 }
 
-function TimelineView({ timeline }: { timeline: LabTimeline }) {
+function RunSelector({
+  runs,
+  selectedRunId,
+  onSelect,
+}: {
+  runs: LabTimelineRun[]
+  selectedRunId: string | null
+  onSelect: (runId: string) => void
+}) {
+  const selectableRuns = runs.filter((run): run is LabTimelineRun & { runId: string } => Boolean(run.runId))
+  if (selectableRuns.length === 0) return null
+
+  return (
+    <section className="mb-4 overflow-hidden rounded-lg border" style={{ borderColor: 'var(--surface-border)', background: 'var(--surface-base)' }}>
+      <div className="flex items-center justify-between gap-3 border-b px-3 py-2" style={{ borderColor: 'var(--surface-border)' }}>
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-tertiary)' }}>Run scope</div>
+          <div className="mt-0.5 text-xs" style={{ color: 'var(--text-secondary)' }}>Every metric and error below is isolated to the selected run.</div>
+        </div>
+        <span className="shrink-0 font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>{selectableRuns.length} runs</span>
+      </div>
+      <div className="overflow-x-auto p-2">
+        <div className="flex min-w-max gap-2">
+          {selectableRuns.map((run, index) => {
+            const active = run.runId === selectedRunId
+            const latestAt = run.events.at(-1)?.enteredAt
+            return (
+              <button
+                key={run.runId}
+                type="button"
+                aria-pressed={active}
+                onClick={() => onSelect(run.runId)}
+                className={cn(
+                  'premium-focus min-h-11 w-[210px] rounded-lg border px-3 py-2 text-left transition-colors',
+                  active ? 'border-gold-soft bg-gold-soft' : 'hover-bg-warm',
+                )}
+                style={active ? undefined : { borderColor: 'var(--surface-border)', background: 'var(--surface)' }}
+                title={run.runId}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] uppercase tracking-[0.12em]" style={{ color: active ? 'var(--gold)' : 'var(--text-tertiary)' }}>
+                    Run {selectableRuns.length - index}
+                  </span>
+                  {run.isCurrent ? <span className="rounded-full border border-gold-soft px-1.5 py-0.5 text-[9px] uppercase tracking-[0.1em] text-gold">Current</span> : null}
+                </div>
+                <div className="mt-1 truncate font-mono text-[11px]" style={{ color: 'var(--text-primary)' }}>{run.runId}</div>
+                <div suppressHydrationWarning className="mt-1 text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+                  {run.events.length} logs{latestAt ? ` · ${formatRelative(latestAt)}` : ''}
+                </div>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function TimelineView({
+  timeline,
+  selectedRunId,
+  onSelectRun,
+}: {
+  timeline: LabTimeline
+  selectedRunId: string | null
+  onSelectRun: (runId: string) => void
+}) {
   return (
     <div className="space-y-5">
       {timeline.runs.map((run, index) => (
@@ -1814,8 +2424,16 @@ function TimelineView({ timeline }: { timeline: LabTimeline }) {
             background: 'var(--surface-base)',
           }}
         >
-          <div
-            className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3"
+          <button
+            type="button"
+            disabled={!run.runId}
+            aria-pressed={Boolean(run.runId && run.runId === selectedRunId)}
+            onClick={() => run.runId && onSelectRun(run.runId)}
+            className={cn(
+              'premium-focus flex w-full flex-wrap items-center justify-between gap-3 border-b px-4 py-3 text-left',
+              run.runId ? 'cursor-pointer hover-bg-warm' : 'cursor-default',
+              run.runId === selectedRunId ? 'bg-gold-soft' : '',
+            )}
             style={{ borderColor: 'var(--surface-border)' }}
           >
             <div className="min-w-0">
@@ -1841,7 +2459,7 @@ function TimelineView({ timeline }: { timeline: LabTimeline }) {
             <div className="font-mono text-xs" style={{ color: 'var(--text-tertiary)' }}>
               {run.events.length} logs
             </div>
-          </div>
+          </button>
           <div className="border-l px-4 py-2 sm:ml-6" style={{ borderColor: 'var(--surface-border)' }}>
             {run.events.map((event) => (
               <TimelineEvent key={`${event.source ?? 'event'}:${event.id}:${event.enteredAt}`} event={event} />
@@ -2062,6 +2680,7 @@ function stateDotClass(state: AdminHealthState): string {
 function signalIcon(id: string, state: AdminHealthState) {
   if (id === 'pcr0') return state === 'critical' ? ShieldX : ShieldCheck
   if (id === 'alerts') return state === 'critical' || state === 'degraded' ? AlertTriangle : Siren
+  if (id === 'alert_delivery') return state === 'healthy' ? ShieldCheck : Siren
   if (id === 'benchmark') return Database
   if (id === 'freshness') return Clock3
   if (id === 'scoring') return Gauge
@@ -2144,4 +2763,45 @@ function shortId(value: string): string {
   if (!value) return '—'
   if (value.length <= 12) return value
   return `${value.slice(0, 8)}…${value.slice(-4)}`
+}
+
+function mergeAdminResearchLabRefresh(
+  current: AdminResearchLabPayload,
+  refresh: AdminResearchLabRefreshPayload,
+): AdminResearchLabPayload {
+  const loopsByTicket = new Map(current.loops.map((loop) => [loop.ticketId, loop]))
+  for (const loop of refresh.recentLoops) loopsByTicket.set(loop.ticketId, loop)
+  for (const state of refresh.loopStates) {
+    const existing = loopsByTicket.get(state.ticketId)
+    if (existing) loopsByTicket.set(state.ticketId, { ...existing, ...state })
+  }
+  const retainedLoopCount = Math.max(current.loops.length, refresh.recentLoops.length)
+  const loops = Array.from(loopsByTicket.values())
+    .sort((left, right) => Date.parse(right.lastActivityAt) - Date.parse(left.lastActivityAt))
+    .slice(0, retainedLoopCount)
+
+  return {
+    loops,
+    ops: {
+      ...current.ops,
+      ...refresh.ops,
+      champions: current.ops.champions,
+    },
+    stats: refresh.stats,
+    fetchedAt: refresh.fetchedAt,
+  }
+}
+
+function runSelectionKey(ticketId: string, runId: string | null): string {
+  return `${ticketId}:${runId ?? 'current'}`
+}
+
+function writeRunSelectionUrl(ticketId: string, runId: string | null): void {
+  const url = new URL(window.location.href)
+  url.searchParams.set('ticketId', ticketId)
+  if (runId) url.searchParams.set('runId', runId)
+  else url.searchParams.delete('runId')
+  const next = `${url.pathname}${url.search}${url.hash}`
+  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`
+  if (next !== current) window.history.pushState(null, '', next)
 }

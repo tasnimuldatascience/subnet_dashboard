@@ -9,12 +9,11 @@ import {
   AdminResearchLab,
   type AdminResearchLabPayload,
 } from './_components/AdminResearchLab'
-import { AdminMetagraph } from './_components/AdminMetagraph'
 import { cn } from '@/lib/utils'
 
 export const dynamic = 'force-dynamic'
 
-type AdminView = 'lab' | 'metagraph' | 'fulfillment'
+type AdminView = 'lab' | 'fulfillment'
 type FulfillmentTab = 'requests' | 'submitted-leads'
 
 async function fetchChains(): Promise<ChainSummary[]> {
@@ -74,7 +73,6 @@ async function fetchResearchLab(): Promise<AdminResearchLabPayload> {
 function AdminViewTabs({ active }: { active: AdminView }) {
   const tabs: Array<{ key: AdminView; label: string; href: string }> = [
     { key: 'lab', label: 'Lab', href: '/admin' },
-    { key: 'metagraph', label: 'Metagraph', href: '/admin?view=metagraph' },
     { key: 'fulfillment', label: 'Fulfillment', href: '/admin?view=fulfillment' },
   ]
 
@@ -106,7 +104,6 @@ function AdminViewTabs({ active }: { active: AdminView }) {
 
 function getAdminView(value: string | string[] | undefined): AdminView {
   const view = Array.isArray(value) ? value[0] : value
-  if (view === 'metagraph') return 'metagraph'
   if (view === 'fulfillment') return 'fulfillment'
   return 'lab'
 }
@@ -180,8 +177,6 @@ export default async function AdminLandingPage({
       <AdminViewTabs active={activeView} />
       {activeView === 'lab' ? (
         <AdminResearchLab payload={labPayload} error={error} />
-      ) : activeView === 'metagraph' ? (
-        <AdminMetagraph />
       ) : fulfillmentTab === 'submitted-leads' ? (
         <>
           <FulfillmentTabs active={fulfillmentTab} />

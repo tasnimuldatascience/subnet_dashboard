@@ -226,7 +226,32 @@ class Subtensor:
     assert.match(pythonSource, /'currentBlock': current_block/)
   }
 
-  console.log('metagraph-weight-freshness: SCALE, finalized/best block, and Python telemetry passed')
+  const metagraphUiSource = await readFile(resolve('src/app/admin/_components/AdminMetagraph.tsx'), 'utf8')
+  assert.match(metagraphUiSource, /const ACTIVE_VALIDATOR_MAX_EPOCHS = 360/)
+  assert.match(metagraphUiSource, /row\.updated < ACTIVE_VALIDATOR_MAX_EPOCHS/)
+  const tableHead = metagraphUiSource.slice(
+    metagraphUiSource.indexOf('<thead'),
+    metagraphUiSource.indexOf('</thead>'),
+  )
+  const stakeColumn = tableHead.indexOf('column="stake"')
+  const vTrustColumn = tableHead.indexOf('column="validatorTrust"')
+  const updatedColumn = tableHead.indexOf('column="updated"')
+  const trustColumn = tableHead.indexOf('column="trust"')
+  assert.ok(
+    stakeColumn < vTrustColumn && vTrustColumn < updatedColumn && updatedColumn < trustColumn,
+    'Updated should appear immediately after Stake weight and VTrust',
+  )
+
+  const labUiSource = await readFile(resolve('src/app/admin/_components/AdminResearchLab.tsx'), 'utf8')
+  const labOps = labUiSource.indexOf('<OpsHealthStrip ops={ops} />')
+  const metagraph = labUiSource.indexOf('<AdminMetagraph />')
+  const dailyBenchmark = labUiSource.indexOf('<DailyBenchmarkTelemetry')
+  assert.ok(
+    labOps < metagraph && metagraph < dailyBenchmark,
+    'Metagraph should render between Lab Ops and Daily Benchmark',
+  )
+
+  console.log('metagraph-weight-freshness: telemetry, freshness callouts, column order, and Lab placement passed')
 } finally {
   globalThis.fetch = originalFetch
   if (originalPythonPath === undefined) delete process.env.PYTHON_PATH

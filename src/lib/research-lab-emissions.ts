@@ -47,6 +47,29 @@ export type ResearchLabEmissionAllocationRollup = {
   byHotkey: Record<string, ResearchLabMinerAllocationEntry>
 }
 
+export type FulfillmentRewardRow = {
+  miner_hotkey?: string | null
+  reward_pct?: number | string | null
+}
+
+export type FulfillmentRewardEntry = {
+  directAlphaPercent: number
+  leaderboardAlphaPercent: number
+  totalAlphaPercent: number
+  rewardCount: number
+}
+
+export type FulfillmentRewardRollup = {
+  epoch: number
+  fulfillmentPoolAlphaPercent: number
+  directAlphaPercent: number
+  leaderboardAlphaPercent: number
+  totalAlphaPercent: number
+  byHotkey: Record<string, FulfillmentRewardEntry>
+}
+
+const FULFILLMENT_LEADERBOARD_ALPHA_PERCENTS = [5, 3, 1.5] as const
+
 export function researchLabAllocationEntries(
   doc: ResearchLabEmissionAllocationDoc | null | undefined,
 ): ResearchLabEmissionAllocationEntry[] {
@@ -119,6 +142,110 @@ export function formatLabAllocationPercent(value: number): string {
     minimumFractionDigits: 4,
     maximumFractionDigits: 4,
   })}%`
+}
+
+export function buildFulfillmentRewardRollup({
+  epoch,
+  labCapAlphaPercent,
+  rewards,
+  leaderboardHotkeys,
+}: {
+  epoch: number
+  labCapAlphaPercent: number
+  rewards: FulfillmentRewardRow[]
+  leaderboardHotkeys: string[]
+}): FulfillmentRewardRollup {
+  const leaderboardAlphaPercent = FULFILLMENT_LEADERBOARD_ALPHA_PERCENTS.reduce(
+    (sum, value) => sum + value,
+    0,
+  )
+  const fulfillmentPoolAlphaPercent = Math.max(
+    0,
+    100 - Math.max(0, labCapAlphaPercent) - leaderboardAlphaPercent,
+  )
+  const rawByHotkey = new Map<string, { share: number; rewardCount: number }>()
+
+  for (const reward of rewards) {
+    const hotkey = reward.miner_hotkey ? String(reward.miner_hotkey) : ''
+    const share = Math.max(0, numberOrZero(reward.reward_pct))
+    if (!hotkey || share <= 0) continue
+    const current = rawByHotkey.get(hotkey) ?? { share: 0, rewardCount: 0 }
+    current.share += share
+    current.rewardCount += 1
+    rawByHotkey.set(hotkey, current)
+  }
+
+  const rawTotalShare = Array.from(rawByHotkey.values()).reduce(
+    (sum, entry) => sum + entry.share,
+    0,
+  )
+  const fulfillmentPoolShare = fulfillmentPoolAlphaPercent / 100
+  const directScale = rawTotalShare > fulfillmentPoolShare && rawTotalShare > 0
+    ? fulfillmentPoolShare / rawTotalShare
+    : 1
+  const byHotkey: Record<string, FulfillmentRewardEntry> = {}
+
+  for (const [hotkey, entry] of rawByHotkey) {
+    byHotkey[hotkey] = {
+      directAlphaPercent: entry.share * directScale * 100,
+      leaderboardAlphaPercent: 0,
+      totalAlphaPercent: entry.share * directScale * 100,
+      rewardCount: entry.rewardCount,
+    }
+  }
+
+  leaderboardHotkeys.slice(0, FULFILLMENT_LEADERBOARD_ALPHA_PERCENTS.length)
+    .forEach((hotkey, index) => {
+      if (!hotkey) return
+      const current = byHotkey[hotkey] ?? {
+        directAlphaPercent: 0,
+        leaderboardAlphaPercent: 0,
+        totalAlphaPercent: 0,
+        rewardCount: 0,
+      }
+      current.leaderboardAlphaPercent += FULFILLMENT_LEADERBOARD_ALPHA_PERCENTS[index]
+      current.totalAlphaPercent = current.directAlphaPercent + current.leaderboardAlphaPercent
+      byHotkey[hotkey] = current
+    })
+
+  const roundedByHotkey = Object.fromEntries(
+    Object.entries(byHotkey).map(([hotkey, entry]) => [
+      hotkey,
+      {
+        ...entry,
+        directAlphaPercent: roundAllocation(entry.directAlphaPercent),
+        leaderboardAlphaPercent: roundAllocation(entry.leaderboardAlphaPercent),
+        totalAlphaPercent: roundAllocation(entry.totalAlphaPercent),
+      },
+    ]),
+  )
+  const directAlphaPercent = Object.values(roundedByHotkey).reduce(
+    (sum, entry) => sum + entry.directAlphaPercent,
+    0,
+  )
+  const paidLeaderboardAlphaPercent = Object.values(roundedByHotkey).reduce(
+    (sum, entry) => sum + entry.leaderboardAlphaPercent,
+    0,
+  )
+
+  return {
+    epoch,
+    fulfillmentPoolAlphaPercent: roundAllocation(fulfillmentPoolAlphaPercent),
+    directAlphaPercent: roundAllocation(directAlphaPercent),
+    leaderboardAlphaPercent: roundAllocation(paidLeaderboardAlphaPercent),
+    totalAlphaPercent: roundAllocation(directAlphaPercent + paidLeaderboardAlphaPercent),
+    byHotkey: roundedByHotkey,
+  }
+}
+
+export function committedLabAlphaPercent(
+  metagraphIncentiveAlphaPercent: number,
+  fulfillmentOwedAlphaPercent: number,
+): number {
+  return roundAllocation(Math.max(
+    0,
+    numberOrZero(metagraphIncentiveAlphaPercent) - numberOrZero(fulfillmentOwedAlphaPercent),
+  ))
 }
 
 function nullableNumber(value: unknown): number | null {

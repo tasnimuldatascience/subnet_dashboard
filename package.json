@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node scripts/test-research-lab-status.mjs && node scripts/test-research-lab-timeline.mjs && node scripts/test-research-lab-emissions.mjs && node scripts/test-research-lab-compute-spend.mjs && node scripts/test-research-lab-pcr0-readiness.mjs && node scripts/test-admin-research-lab-telemetry.mjs"
+    "test": "node scripts/test-research-lab-status.mjs && node scripts/test-research-lab-timeline.mjs && node scripts/test-research-lab-emissions.mjs && node scripts/test-research-lab-compute-spend.mjs && node scripts/test-research-lab-pcr0-readiness.mjs && node scripts/test-admin-research-lab-telemetry.mjs && node scripts/test-metagraph-weight-freshness.mjs && node scripts/test-research-lab-alerts.mjs && node scripts/test-research-lab-alert-lifecycle.mjs && node scripts/test-admin-research-lab-score-diagnostics.mjs && node scripts/test-research-lab-alert-delivery.mjs && node scripts/test-research-lab-alert-monitor.mjs"
   },
   "dependencies": {
     "@polkadot/api": "^16.5.4",
