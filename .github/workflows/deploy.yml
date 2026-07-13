@@ -14,11 +14,47 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
+      - name: Check out release source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install build dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Build production artifact
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: |
+          set -euo pipefail
+          BUILD_DIR=".deploy-build-${GITHUB_SHA}"
+          NEXT_DIST_DIR="$BUILD_DIR" BUILD_TIME="$GITHUB_SHA" npm run build
+          rm -rf "$BUILD_DIR/cache"
+          tar -czf "deploy-build-${GITHUB_SHA}.tgz" "$BUILD_DIR"
+
+      - name: Copy production artifact to EC2
+        uses: appleboy/scp-action@v1.0.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          timeout: 45s
+          command_timeout: 5m
+          source: deploy-build-${{ github.sha }}.tgz
+          target: /home/ec2-user
+          overwrite: true
+
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.2.0
-        timeout-minutes: 14
+        timeout-minutes: 12
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ec2-user
@@ -31,6 +67,9 @@ jobs:
             APP_ROOT="$HOME/subnet_dashboard"
             RELEASE_ROOT="$HOME/subnet_dashboard_releases"
             ACTIVE_SLOT_FILE="$HOME/.subnet-dashboard-active-slot"
+            DEPLOY_SHA="${{ github.sha }}"
+            ARTIFACT="$HOME/deploy-build-$DEPLOY_SHA.tgz"
+            STAGED_BUILD="$APP_ROOT/.deploy-build-$DEPLOY_SHA"
             CLEANUP_STAMP="$(date -u +%Y%m%d%H%M%S)"
             CLEANUP_LOG="$HOME/subnet-dashboard-disk-cleanup.log"
             REQUIRED_FREE_KB=1250000
@@ -49,11 +88,18 @@ jobs:
             echo "Starting bounded EC2 disk recovery"
             echo "Active build slot: $ACTIVE_SLOT; candidate build slot: $CANDIDATE_SLOT"
 
+            if [ ! -f "$ARTIFACT" ]; then
+              echo "The prebuilt release artifact is missing: $ARTIFACT"
+              exit 1
+            fi
+
             # A canceled SSH action can leave its remote child alive. Stop only
-            # abandoned release builds, candidate servers, and release cleanup;
-            # never match the production `next start` process.
+            # abandoned legacy build commands, candidate servers, and release
+            # cleanup; never match the production `next start` process.
             pkill -f "$RELEASE_ROOT/release-.*/node_modules/.bin/[n]ext build" 2>/dev/null || true
             pkill -f "$RELEASE_ROOT/release-.*/node_modules/next/dist/bin/[n]ext build" 2>/dev/null || true
+            pkill -f "$APP_ROOT/node_modules/.bin/[n]ext build" 2>/dev/null || true
+            pkill -f "$APP_ROOT/node_modules/next/dist/bin/[n]ext build" 2>/dev/null || true
             pkill -f "[r]m -rf .*$RELEASE_ROOT" 2>/dev/null || true
             pm2 delete subnet-dashboard-candidate >/dev/null 2>&1 || true
 
@@ -121,9 +167,14 @@ jobs:
             git merge --ff-only origin/main
             echo "Deploying commit: $(git rev-parse --short HEAD)"
 
-            # Apply the current process policy before starting the resource-heavy
-            # build. This also repairs a worker still cycling under an older,
-            # overly-low PM2 memory threshold.
+            if [ "$(git rev-parse HEAD)" != "$DEPLOY_SHA" ]; then
+              echo "Checked-out commit does not match the prebuilt release artifact"
+              exit 1
+            fi
+
+            # Apply the current process policy before switching releases. This
+            # also repairs a worker still cycling under an older, overly-low PM2
+            # memory threshold.
             NEXT_DIST_DIR="$ACTIVE_SLOT" pm2 startOrReload "$APP_ROOT/ecosystem.config.cjs" --update-env
 
             active_healthy=false
@@ -142,16 +193,19 @@ jobs:
               exit 1
             fi
 
-            # Keep one dependency tree, but build into the inactive slot. This
-            # avoids the duplicated node_modules trees that previously filled EC2
-            # without overwriting the build currently serving production.
+            # Runtime dependencies remain on EC2, but compilation happened on the
+            # GitHub runner so it cannot starve the live production worker.
             npm install --no-audit --no-fund
-            export BUILD_TIME="$(date -u +%Y%m%d%H%M%S)"
-            NEXT_DIST_DIR="$CANDIDATE_SLOT" NODE_OPTIONS='--max-old-space-size=768' nice -n 10 npm run build
+            rm -rf "$STAGED_BUILD"
+            tar -xzf "$ARTIFACT" -C "$APP_ROOT"
+            rm -f "$ARTIFACT"
 
-            # The build cache is not needed at runtime. Removing it keeps the two
-            # deploy slots small enough for the existing EC2 volume.
-            rm -rf "$APP_ROOT/$CANDIDATE_SLOT/cache"
+            if [ ! -f "$STAGED_BUILD/BUILD_ID" ]; then
+              echo "The extracted release artifact does not contain a Next.js BUILD_ID"
+              exit 1
+            fi
+
+            mv "$STAGED_BUILD" "$APP_ROOT/$CANDIDATE_SLOT"
 
             # Old and new workers overlap briefly during a rolling reload. Merge
             # their hashed browser assets so either worker can satisfy requests
