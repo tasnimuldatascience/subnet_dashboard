@@ -365,12 +365,26 @@ type LoopCandidateDiagnostic = {
   intentTypes?: IntentTypeRollup[]
 }
 
+type LoopRunSummary = {
+  loopStatus: string
+  stopReason: string
+  failureReason: string
+  publicLabel: string
+  lastCompletedStage: string
+  stageCounts: Record<string, number>
+  failureClasses: string[]
+  openrouterCallCount?: number
+  iterationsCompleted?: number
+  wallClockSeconds?: number
+}
+
 type LoopTimeline = {
   ticketId: string
   currentRunId?: string
   runs: LoopTimelineRun[]
   sourceNotes?: string[]
   candidateDiagnostics?: LoopCandidateDiagnostic[]
+  runSummary?: LoopRunSummary | null
 }
 
 type LoopStatusNote = {
@@ -2134,6 +2148,12 @@ function LoopTimelineDialog({
             </div>
           ) : timeline ? (
             <div className="space-y-8">
+              {timeline.runSummary &&
+              (timeline.runSummary.loopStatus === 'failed' ||
+                timeline.runSummary.stopReason ||
+                timeline.runSummary.publicLabel) ? (
+                <LoopRunOutcome summary={timeline.runSummary} />
+              ) : null}
               {stageCount === 0 ? (
                 <div className="flex min-h-[160px] items-center justify-center text-center text-[13px] text-[var(--muted-2)]">
                   No public stage timestamps are available for this loop.
@@ -2153,6 +2173,204 @@ function LoopTimelineDialog({
         </div>
       </DialogContent>
     </Dialog>
+  )
+}
+
+/* ============================================================
+ * Run-level outcome ("Why it stopped") for a terminal loop.
+ * The only window into zero-candidate runs, which produce no
+ * per-candidate diagnostics. Public-safe: enum/count fields only,
+ * never free-text reason/error, never the miner's dollar spend.
+ * ============================================================ */
+const RUN_FUNNEL_STAGES: Array<{ keys: string[]; label: string }> = [
+  { keys: ['loop_started'], label: 'Started' },
+  { keys: ['allocator_decision'], label: 'Set the budget' },
+  { keys: ['source_inspection_resolved', 'source_inspection_requested'], label: 'Read the code' },
+  { keys: ['loop_direction_planned'], label: 'Chose an approach' },
+  { keys: ['patch_drafted', 'candidate_generation_fallback_requested'], label: 'Wrote an edit' },
+  { keys: ['candidate_selected'], label: 'Produced a result' },
+]
+
+// Plain-English for the raw pipeline codes. Miners (and we) shouldn't have to
+// decode enum names — show the sentence, keep the raw code small for the
+// technical reader. Unknown codes fall back to Title Case via readableTag.
+const RUN_OUTCOME_PHRASES: Record<string, string> = {
+  // Plain language framed around the MINER's own attempt, not the platform.
+  // A Research Lab run takes the miner's direction and the model writes and
+  // tests a change to improve the entry. Outcomes read as normal competition
+  // results ("the attempt didn't reach a working result") and attribute edits
+  // to "the proposed edit / the plan", never implying the system broke. No
+  // internal jargon (patch, build, source, candidate), does not name any tool, and
+  // no "your" (the dashboard is public — anyone can view any loop).
+  // ---- stop reasons (why the whole run ended) ----
+  loop_direction_no_new_safe_path: 'The run ran out of safe changes to try',
+  loop_direction_plan_parse_failed: "The run's plan came back in an unusable format",
+  binding_plan_unimplementable: 'The planned change turned out not to be possible',
+  dev_score_plateau: 'The results stopped improving, so the run wrapped up',
+  max_iterations: 'The run used all of its attempts',
+  max_seconds: 'The run reached its time limit',
+  no_valid_candidates: 'None of the attempts reached a working result',
+  no_valid_candidates_after_minimum_runtime: 'None of the attempts reached a working result',
+  no_valid_image_build_candidates: 'The proposed version would not run',
+  candidate_limit_reached: 'The run reached its result limit',
+  candidate_limit_reached_after_minimum_runtime: 'The run reached its result limit',
+  maintenance_pause_requested: 'The run was paused for maintenance',
+  loop_completed: 'The run finished successfully',
+  // ---- failure reasons (what the attempt did) ----
+  no_buildable_candidate: "This attempt didn't reach a working improvement",
+  no_viable_patch: "This attempt didn't find a change that improved the entry",
+  no_valid_image_build_finalists: 'The proposed version would not run',
+  candidate_patch_parse_failed: "The proposed edit came back in an unusable format",
+  candidate_patch_parse: "The proposed edit came back in an unusable format",
+  candidate_patch_apply_failed: "The proposed edit did not fit the current code",
+  candidate_patch_apply: "The proposed edit did not fit the current code",
+  candidate_patch_empty: 'The proposed edit was empty',
+  candidate_repair_exhausted: 'The run used all of its tries to refine the edit',
+  code_edit_repair_budget_exhausted: 'The run used all of its tries to refine the edit',
+  binding_plan_source_missing: "The plan referenced files that weren't available",
+  binding_plan_source_gap: 'The plan referenced files that were missing',
+  binding_plan_terminal_without_candidate: 'The plan wrapped up without a result',
+  transient_worker_error_requeued: 'A temporary system issue came up and the run was retried automatically',
+  provider_privacy_verification_failed: 'A privacy check on an outside service did not pass',
+  // ---- what shaped the outcome (failure classes) — short, sits in a tag ----
+  insufficient_source_context: 'The change needed more of the code to be reviewed first',
+  insufficient_reference_provenance: "A referenced item's origin could not be confirmed",
+  insufficient_credit: 'The run needed more credit to continue',
+  insufficient_data: 'The run needed more information to continue',
+  // ---- stage names (the "got as far as" stat; the funnel uses its own labels) ----
+  loop_started: 'Started',
+  allocator_decision: 'Set the budget',
+  source_inspection_requested: 'Reading the code',
+  source_inspection_resolved: 'Read the code',
+  loop_direction_planned: 'Chose an approach',
+  hypothesis_drafted: 'Formed an idea',
+  patch_drafted: 'Wrote an edit',
+  candidate_generation_fallback_requested: 'Tried the edit again',
+  reflection_recorded: 'Reviewed the result',
+  checkpoint_saved: 'Saved progress',
+  candidate_selected: 'Produced a result',
+  loop_failed: 'Stopped without a result',
+}
+
+function humanizeOutcome(code: string): string {
+  const key = code.trim().toLowerCase().replace(/[\s-]+/g, '_')
+  if (RUN_OUTCOME_PHRASES[key]) return RUN_OUTCOME_PHRASES[key]
+  // The compute-budget family has many phase-specific variants; give them all
+  // one clear sentence rather than a mapping entry each.
+  if (key.startsWith('compute_budget_exhausted')) return 'Ran out of compute budget'
+  return readableTag(code)
+}
+
+function LoopRunOutcome({ summary }: { summary: LoopRunSummary }) {
+  const failed = summary.loopStatus === 'failed'
+  const counts = summary.stageCounts ?? {}
+  const stageTotal = (keys: string[]) =>
+    keys.reduce((sum, key) => sum + (counts[key] ?? 0), 0)
+  // "How far it got" is shown visually by the funnel; the terminal stage
+  // marker (loop_failed) would just repeat the headline, so it is not a stat.
+  const stats: Array<{ label: string; value: string }> = []
+  if (typeof summary.openrouterCallCount === 'number')
+    stats.push({ label: 'Model calls', value: summary.openrouterCallCount.toLocaleString() })
+  if (typeof summary.iterationsCompleted === 'number')
+    stats.push({ label: 'Iterations', value: summary.iterationsCompleted.toLocaleString() })
+  if (typeof summary.wallClockSeconds === 'number')
+    stats.push({ label: 'Duration', value: `${Math.round(summary.wallClockSeconds)}s` })
+
+  // One clear outcome + one explanation, never two stacked jargon sentences.
+  const headlineText = summary.publicLabel
+    ? humanizeOutcome(summary.publicLabel)
+    : summary.stopReason
+      ? humanizeOutcome(summary.stopReason)
+      : failed
+        ? 'The run stopped without a result'
+        : 'The run finished'
+  const reasonCode = summary.failureReason || summary.stopReason || ''
+  const reasonText = reasonCode ? humanizeOutcome(reasonCode) : ''
+  const showReason = Boolean(reasonText) && reasonText !== headlineText
+
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-4 sm:p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-[var(--muted-2)]">
+          What happened
+        </div>
+        <span
+          className={`inline-flex items-center rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] ${
+            failed
+              ? 'bg-[color-mix(in_oklab,var(--danger)_16%,transparent)] text-[var(--danger)]'
+              : 'bg-[color-mix(in_oklab,var(--accent)_18%,transparent)] text-[var(--accent)]'
+          }`}
+        >
+          {failed ? "Didn't produce a result" : 'Produced a result'}
+        </span>
+      </div>
+
+      <div className="mt-2 text-[15px] font-semibold text-[var(--fg)]">
+        {headlineText}
+      </div>
+      {showReason ? (
+        <div className="mt-1.5 text-[13px] leading-relaxed text-[var(--muted)]">
+          {reasonText}.
+        </div>
+      ) : null}
+      {reasonCode ? (
+        <div className="mt-1.5 font-mono text-[10px] tracking-[0.02em] text-[var(--muted-2)]">
+          {reasonCode}
+        </div>
+      ) : null}
+
+      {/* Stage funnel: how far the loop got before it stopped. */}
+      <div className="mt-4 flex flex-wrap items-center gap-1.5">
+        {RUN_FUNNEL_STAGES.map((stage, index) => {
+          const reached = stageTotal(stage.keys) > 0
+          const count = stageTotal(stage.keys)
+          return (
+            <div key={stage.label} className="flex items-center gap-1.5">
+              <span
+                className={`inline-flex items-center gap-1 rounded-md px-2 py-1 font-mono text-[10px] tracking-[0.04em] ${
+                  reached
+                    ? 'bg-[color-mix(in_oklab,var(--accent)_15%,transparent)] text-[var(--accent)]'
+                    : 'bg-[var(--surface)] text-[var(--muted-2)] opacity-55'
+                }`}
+              >
+                {stage.label}
+                {reached && count > 1 ? <span className="opacity-70">×{count}</span> : null}
+              </span>
+              {index < RUN_FUNNEL_STAGES.length - 1 ? (
+                <span className="text-[10px] text-[var(--muted-2)] opacity-50">→</span>
+              ) : null}
+            </div>
+          )
+        })}
+      </div>
+
+      {stats.length > 0 ? (
+        <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          {stats.map((stat) => (
+            <TimelineMeta key={stat.label} label={stat.label} value={stat.value} />
+          ))}
+        </div>
+      ) : null}
+
+      {summary.failureClasses.length > 0 ? (
+        <div className="mt-4">
+          <div className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-[var(--muted-2)]">
+            What held it back
+          </div>
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            {summary.failureClasses.map((cls) => (
+              <span
+                key={cls}
+                title={cls}
+                className="inline-flex items-center rounded-full border border-[var(--border)] px-2.5 py-1 text-[11px] text-[var(--muted)]"
+              >
+                {humanizeOutcome(cls)}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
   )
 }
 

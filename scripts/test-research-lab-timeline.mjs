@@ -191,6 +191,80 @@ try {
   }
   assert.match(routeSource, /isCurrentPublicLoopFinal/)
 
+
+  // Run-summary extraction: the gateway-projected summary on the public card
+  // event wins; raw loop events are only a fallback for pre-projection cards.
+  const { extractRunSummary } = require(join(outDir, 'research-lab-timeline.js'))
+  const projectedSummary = extractRunSummary([
+    {
+      source: 'research_lab_public_loop_card_events',
+      phase: 'public_projection',
+      rows: [
+        {
+          event_doc: {
+            run_summary: {
+              run_id: 'run-x',
+              loop_status: 'failed',
+              stop_reason: 'loop_direction_no_new_safe_path',
+              failure_reason: 'no_viable_patch',
+              public_label: 'No buildable candidate',
+              last_completed_stage: 'loop_failed',
+              stage_counts: { loop_failed: 1 },
+              failure_classes: ['insufficient_source_context'],
+              openrouter_call_count: 6,
+              iterations_completed: 1,
+              wall_clock_seconds: 92,
+            },
+          },
+          last_activity_at: '2026-07-12T11:16:30.000Z',
+        },
+      ],
+    },
+    {
+      source: 'research_lab_auto_research_loop_events',
+      phase: 'auto_research',
+      rows: [
+        {
+          event_type: 'loop_failed',
+          loop_status: 'failed',
+          seq: 9,
+          event_doc: { stop_reason: 'should_not_win_over_projection' },
+        },
+      ],
+    },
+  ])
+  assert.equal(projectedSummary.stopReason, 'loop_direction_no_new_safe_path')
+  assert.equal(projectedSummary.failureReason, 'no_viable_patch')
+  assert.equal(projectedSummary.lastCompletedStage, 'loop_failed')
+  assert.equal(projectedSummary.openrouterCallCount, 6)
+  assert.deepEqual(projectedSummary.failureClasses, ['insufficient_source_context'])
+
+  const fallbackSummary = extractRunSummary([
+    {
+      source: 'research_lab_public_loop_card_events',
+      phase: 'public_projection',
+      rows: [{ event_doc: { queue_status: 'failed' } }],
+    },
+    {
+      source: 'research_lab_auto_research_loop_events',
+      phase: 'auto_research',
+      rows: [
+        {
+          event_type: 'loop_failed',
+          loop_status: 'failed',
+          seq: 9,
+          event_doc: {
+            stop_reason: 'max_iterations',
+            run_summary: { openrouter_call_count: 12 },
+            candidate_generation_failure: { latest_stage: 'patch_drafted', stage_counts: {} },
+          },
+        },
+      ],
+    },
+  ])
+  assert.equal(fallbackSummary.stopReason, 'max_iterations')
+  assert.equal(fallbackSummary.openrouterCallCount, 12)
+
   console.log('research-lab-timeline: adapter and UI wiring fixtures passed')
 } finally {
   await rm(outDir, { recursive: true, force: true })

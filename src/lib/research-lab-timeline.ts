@@ -105,12 +105,29 @@ export type ResearchLabIntentTypeRollup = {
   avg_score: number
 }
 
+export type ResearchLabRunSummary = {
+  loopStatus: string
+  stopReason: string
+  failureReason: string
+  publicLabel: string
+  lastCompletedStage: string
+  stageCounts: Record<string, number>
+  failureClasses: string[]
+  openrouterCallCount?: number
+  iterationsCompleted?: number
+  wallClockSeconds?: number
+  // NOTE: the per-miner dollar spend (actual_openrouter_cost_usd) is
+  // deliberately NOT projected here — it is the owner's private figure and
+  // the public dashboard must not expose what another miner paid.
+}
+
 export type ResearchLabLoopTimeline = {
   ticketId: string
   currentRunId?: string
   runs: ResearchLabTimelineRun[]
   sourceNotes?: string[]
   candidateDiagnostics?: ResearchLabCandidateDiagnostic[]
+  runSummary?: ResearchLabRunSummary | null
 }
 
 export type ResearchLabTimelineRawRow = Record<string, unknown>
@@ -590,4 +607,125 @@ function numberOr(value: unknown): number | undefined {
 function timeValue(value: string | undefined): number {
   const time = new Date(value ?? '').getTime()
   return Number.isFinite(time) ? time : 0
+}
+
+function recordOr(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
+// Gateway-sanitized run summary carried on the public loop card event. The
+// gateway projects it server-side (spend-free, enum/count fields only), so
+// when present it is authoritative and no client-side event parsing runs.
+function runSummaryFromPublicProjection(
+  sources: ResearchLabTimelineSourceInput[],
+): ResearchLabRunSummary | null {
+  let latest: Record<string, unknown> | null = null
+  let latestAt = -1
+  for (const source of sources) {
+    if (source.source !== 'research_lab_public_loop_card_events') continue
+    for (const row of source.rows) {
+      const doc = recordOr(row.event_doc)
+      const summary = objectOr(doc.run_summary)
+      if (!summary) continue
+      const at = timeValue(
+        isoStringOr(row.last_activity_at) ?? isoStringOr(row.created_at),
+      )
+      if (at >= latestAt) {
+        latestAt = at
+        latest = summary
+      }
+    }
+  }
+  if (!latest) return null
+
+  const stageCountsRaw = recordOr(latest.stage_counts)
+  const stageCounts: Record<string, number> = {}
+  for (const [key, value] of Object.entries(stageCountsRaw)) {
+    if (typeof value === 'number' && Number.isFinite(value)) stageCounts[key] = value
+  }
+  const failureClasses = Array.isArray(latest.failure_classes)
+    ? latest.failure_classes.filter(
+        (item): item is string => typeof item === 'string' && item.trim() !== '',
+      )
+    : []
+
+  return {
+    loopStatus: stringOr(latest.loop_status) ?? '',
+    stopReason: stringOr(latest.stop_reason) ?? '',
+    failureReason: stringOr(latest.failure_reason) ?? '',
+    publicLabel: stringOr(latest.public_label) ?? '',
+    lastCompletedStage: stringOr(latest.last_completed_stage) ?? '',
+    stageCounts,
+    failureClasses,
+    openrouterCallCount: numberOr(latest.openrouter_call_count),
+    iterationsCompleted: numberOr(latest.iterations_completed),
+    wallClockSeconds: numberOr(latest.wall_clock_seconds),
+  }
+}
+
+// Sanitized, owner-safe run-level outcome for a terminal loop run. Prefers
+// the gateway-projected summary on the public card event; falls back to
+// deriving the same projection from raw loop events for tickets whose cards
+// predate the server-side summary. Both paths surface ONLY enum/count fields
+// — never the free-text reason/error strings, which quote the model's
+// analysis of the private source tree. Zero-candidate runs produce no
+// candidate diagnostics, so this is the only window a viewer has into WHY a
+// paid loop stopped.
+export function extractRunSummary(
+  sources: ResearchLabTimelineSourceInput[],
+): ResearchLabRunSummary | null {
+  const projected = runSummaryFromPublicProjection(sources)
+  if (projected) return projected
+
+  const rows: ResearchLabTimelineRawRow[] = []
+  for (const source of sources) {
+    if (source.source === 'research_lab_auto_research_loop_events') {
+      rows.push(...source.rows)
+    }
+  }
+  if (rows.length === 0) return null
+
+  const failureClasses: string[] = []
+  let terminal: ResearchLabTimelineRawRow | null = null
+  let terminalSeq = -1
+  for (const row of rows) {
+    const doc = recordOr(row.event_doc)
+    const failureClass = stringOr(doc.failure_class)
+    if (failureClass && !failureClasses.includes(failureClass)) {
+      failureClasses.push(failureClass)
+    }
+    const eventType = stringOr(row.event_type)
+    if (eventType === 'loop_completed' || eventType === 'loop_failed') {
+      const seq = numberOr(row.seq) ?? 0
+      if (seq >= terminalSeq) {
+        terminalSeq = seq
+        terminal = row
+      }
+    }
+  }
+  if (!terminal) return null
+
+  const doc = recordOr(terminal.event_doc)
+  const runSummary = recordOr(doc.run_summary)
+  const generationFailure = recordOr(doc.candidate_generation_failure)
+  const stageCountsRaw = recordOr(generationFailure.stage_counts)
+  const stageCounts: Record<string, number> = {}
+  for (const [key, value] of Object.entries(stageCountsRaw)) {
+    if (typeof value === 'number' && Number.isFinite(value)) stageCounts[key] = value
+  }
+
+  return {
+    loopStatus: stringOr(terminal.loop_status) ?? '',
+    stopReason: stringOr(doc.stop_reason) ?? stringOr(runSummary.stop_reason) ?? '',
+    failureReason: stringOr(doc.failure_reason) ?? '',
+    publicLabel: stringOr(generationFailure.public_label) ?? '',
+    lastCompletedStage: stringOr(generationFailure.latest_stage) ?? '',
+    stageCounts,
+    failureClasses,
+    openrouterCallCount: numberOr(runSummary.openrouter_call_count),
+    iterationsCompleted: numberOr(runSummary.iterations_completed),
+    wallClockSeconds: numberOr(runSummary.wall_clock_seconds),
+  }
 }

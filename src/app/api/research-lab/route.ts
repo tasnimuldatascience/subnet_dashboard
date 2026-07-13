@@ -11,6 +11,7 @@ import {
 } from '@/lib/research-lab-status'
 import {
   buildResearchLabLoopTimeline,
+  extractRunSummary,
   type ResearchLabCandidateDiagnostic,
   type ResearchLabIcpDeltaBreakdown,
   type ResearchLabIcpDeltaRow,
@@ -1152,7 +1153,8 @@ async function fetchLoopTimeline(
   })
 
   const summarized = summarizePublicLoopTimeline(detailedTimeline, currentRow)
-  return { ...summarized, candidateDiagnostics }
+  const runSummary = extractRunSummary(sources)
+  return { ...summarized, candidateDiagnostics, runSummary }
 }
 
 type PublicTimelineStageId =
