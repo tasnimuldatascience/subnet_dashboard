@@ -5,16 +5,21 @@
 
 import { supabase } from './supabase'
 import { fetchWithCache } from './cache'
+import { runSingleFlight, type SingleFlightState } from './single-flight'
 import type { MetagraphData } from './types'
 
 // Global cache for TRANSFORMED dashboard data (the final result)
 // This is the key optimization - transform once, serve instantly to all users
 const globalForDashboard = globalThis as unknown as {
   transformedDashboardCache: { data: AllDashboardData; timestamp: number } | null
+  dashboardRefreshFlight: SingleFlightState<AllDashboardData>
 }
 
 if (!globalForDashboard.transformedDashboardCache) {
   globalForDashboard.transformedDashboardCache = null
+}
+if (!globalForDashboard.dashboardRefreshFlight) {
+  globalForDashboard.dashboardRefreshFlight = { current: null }
 }
 
 export type DashboardCacheHealth = {
@@ -345,8 +350,6 @@ async function fetchMinerStatsRows(activeHotkeys: string[]): Promise<Record<stri
 
 // Fetch pre-calculated dashboard data (with caching for high traffic)
 export async function fetchAllDashboardData(_hours: number, metagraph: MetagraphData | null, forceRefresh: boolean = false): Promise<AllDashboardData> {
-  const startTime = Date.now()
-
   // OPTIMIZATION: Return cached transformed data instantly (saves ~1.7s per request)
   // Only transform during background refresh or when cache is empty
   if (!forceRefresh && globalForDashboard.transformedDashboardCache) {
@@ -354,8 +357,21 @@ export async function fetchAllDashboardData(_hours: number, metagraph: Metagraph
     return globalForDashboard.transformedDashboardCache.data
   }
 
+  if (globalForDashboard.dashboardRefreshFlight.current) {
+    console.log('[Precalc] Waiting for in-flight dashboard transform')
+  }
+  return runSingleFlight(
+    globalForDashboard.dashboardRefreshFlight,
+    () => refreshDashboardData(metagraph),
+  )
+}
+
+async function refreshDashboardData(metagraph: MetagraphData | null): Promise<AllDashboardData> {
+  const startTime = Date.now()
+
   // Use cache to handle 1000s of concurrent requests
-  // Only 1 request hits DB, others get cached data
+  // Only 1 request hits DB, while the outer single-flight also prevents
+  // duplicate miner-stat reads and duplicate in-memory transformations.
   const precalc = await fetchWithCache('dashboard_precalc', fetchPrecalcFromDB)
 
   console.log(`[Precalc] Data ready in ${Date.now() - startTime}ms`)
