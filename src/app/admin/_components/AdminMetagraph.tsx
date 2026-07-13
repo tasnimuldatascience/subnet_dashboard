@@ -7,7 +7,6 @@ import {
   ArrowUpDown,
   Check,
   Copy,
-  Pickaxe,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -51,7 +50,7 @@ interface ValidatorRow {
   updated: number | null
   axon: string | null
   rank: number
-  isDual: boolean
+  isMiner: boolean
 }
 
 function validatorRows(data: MetagraphPayload | null): ValidatorRow[] {
@@ -83,9 +82,10 @@ function validatorRows(data: MetagraphPayload | null): ValidatorRow[] {
         updated,
         axon: data.axons[hotkey] ?? null,
         rank: data.ranks[hotkey] ?? 0,
-        isDual: trust > 0 || consensus > 0 || incentive > 0,
+        isMiner: trust > 0 || consensus > 0 || incentive > 0,
       }
     })
+    .filter((row) => !row.isMiner)
 }
 
 function numericValue(row: ValidatorRow, key: SortKey): number | string {
@@ -305,7 +305,7 @@ export function AdminMetagraph() {
         />
         <SummaryCard
           label="Active validators"
-          value={loading || !freshnessAvailable ? '—' : formatAmount(activeRows.length, 0)}
+          value={loading || !freshnessAvailable ? '—' : `${formatAmount(activeRows.length, 0)}/${formatAmount(rows.length, 0)}`}
           detail={`Weight updated < ${ACTIVE_VALIDATOR_MAX_EPOCHS} epochs ago`}
         />
       </div>
@@ -360,9 +360,8 @@ export function AdminMetagraph() {
                 <tr key={row.hotkey} className="border-b transition-colors hover-bg-warm" style={{ borderColor: 'var(--surface-border)' }}>
                   <td className="px-4 py-3.5 font-medium" style={{ color: 'var(--text-secondary)' }}>{index + 1}</td>
                   <td className="px-3 py-3.5">
-                    <span className="inline-flex items-center gap-1.5" title={row.isDual ? 'Validator and miner' : 'Validator'}>
+                    <span className="inline-flex items-center gap-1.5" title="Validator">
                       <ShieldCheck className="h-4 w-4 text-gold" />
-                      {row.isDual && <Pickaxe className="h-3.5 w-3.5 text-amber-warm" />}
                     </span>
                   </td>
                   <td className="px-3 py-3.5 font-mono text-gold">{row.uid}</td>
