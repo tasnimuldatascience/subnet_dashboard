@@ -53,6 +53,18 @@ jobs:
             DEPLOY_SHA="$(git rev-parse HEAD)"
             RELEASE_DIR="$RELEASE_ROOT/release-${DEPLOY_SHA}-$(date -u +%Y%m%d%H%M%S)"
 
+            # The EC2 volume is intentionally small. Keep one dependency tree
+            # shared by the live and candidate releases instead of installing a
+            # second full copy for every build. Refresh it only when the lockfile
+            # changes so ordinary application deploys remain fast and compact.
+            LOCK_HASH="$(sha256sum package-lock.json | cut -d ' ' -f 1)"
+            INSTALLED_LOCK_FILE="$RELEASE_ROOT/installed-package-lock.sha256"
+            if [ ! -d "$APP_ROOT/node_modules" ] || [ "$(cat "$INSTALLED_LOCK_FILE" 2>/dev/null || true)" != "$LOCK_HASH" ]; then
+              npm ci --no-audit --no-fund
+              printf '%s\n' "$LOCK_HASH" > "$INSTALLED_LOCK_FILE"
+            fi
+            npm cache clean --force >/dev/null 2>&1 || true
+
             echo "Preparing commit: ${DEPLOY_SHA:0:7}"
             mkdir -p "$RELEASE_DIR"
             git archive "$DEPLOY_SHA" | tar -x -C "$RELEASE_DIR"
@@ -66,7 +78,7 @@ jobs:
             done
 
             cd "$RELEASE_DIR"
-            npm ci --no-audit --no-fund
+            ln -s "$APP_ROOT/node_modules" "$RELEASE_DIR/node_modules"
             export BUILD_TIME="$(date -u +%Y%m%d%H%M%S)"
             NODE_OPTIONS='--max-old-space-size=768' npm run build
 
