@@ -12,7 +12,10 @@ module.exports = {
       exec_mode: "cluster",
       instances: 1,
       autorestart: true,
-      max_memory_restart: "700M",
+      // The Next.js worker normally holds roughly 1 GB RSS after warming the
+      // dashboard caches. The old 700 MB limit monitored only an `npm` wrapper;
+      // after migrating PM2 to the real Next.js process it caused a restart loop.
+      max_memory_restart: "1400M",
       listen_timeout: 30000,
       kill_timeout: 10000,
       merge_logs: true,

@@ -121,12 +121,33 @@ jobs:
             git merge --ff-only origin/main
             echo "Deploying commit: $(git rev-parse --short HEAD)"
 
+            # Apply the current process policy before starting the resource-heavy
+            # build. This also repairs a worker still cycling under an older,
+            # overly-low PM2 memory threshold.
+            NEXT_DIST_DIR="$ACTIVE_SLOT" pm2 startOrReload "$APP_ROOT/ecosystem.config.cjs" --update-env
+
+            active_healthy=false
+            for attempt in $(seq 1 15); do
+              if curl --fail --silent --show-error http://127.0.0.1:3000/icon-64.png > /dev/null; then
+                active_healthy=true
+                break
+              fi
+              sleep 2
+            done
+
+            if [ "$active_healthy" != true ]; then
+              echo "Existing production slot failed to stabilize before build"
+              pm2 status
+              pm2 logs subnet-dashboard --lines 100 --nostream
+              exit 1
+            fi
+
             # Keep one dependency tree, but build into the inactive slot. This
             # avoids the duplicated node_modules trees that previously filled EC2
             # without overwriting the build currently serving production.
             npm install --no-audit --no-fund
             export BUILD_TIME="$(date -u +%Y%m%d%H%M%S)"
-            NEXT_DIST_DIR="$CANDIDATE_SLOT" NODE_OPTIONS='--max-old-space-size=768' npm run build
+            NEXT_DIST_DIR="$CANDIDATE_SLOT" NODE_OPTIONS='--max-old-space-size=768' nice -n 10 npm run build
 
             # The build cache is not needed at runtime. Removing it keeps the two
             # deploy slots small enough for the existing EC2 volume.
@@ -182,6 +203,29 @@ jobs:
 
             if [ "$production_healthy" != true ]; then
               echo "Production health check failed after PM2 reload; restoring $ACTIVE_SLOT"
+              pm2 status
+              pm2 logs subnet-dashboard --lines 100 --nostream
+              NEXT_DIST_DIR="$ACTIVE_SLOT" pm2 startOrReload "$APP_ROOT/ecosystem.config.cjs" --update-env || true
+              exit 1
+            fi
+
+            # A single successful request is not enough: the previous 700 MB
+            # watchdog failure appeared about 30 seconds after boot. Require the
+            # same production PID to remain healthy beyond that interval.
+            production_pid="$(pm2 pid subnet-dashboard)"
+            production_stable=true
+            for attempt in $(seq 1 15); do
+              sleep 3
+              current_pid="$(pm2 pid subnet-dashboard)"
+              if [ -z "$current_pid" ] || [ "$current_pid" != "$production_pid" ] || \
+                ! curl --fail --silent --show-error http://127.0.0.1:3000/icon-64.png > /dev/null; then
+                production_stable=false
+                break
+              fi
+            done
+
+            if [ "$production_stable" != true ]; then
+              echo "Production worker restarted or became unhealthy during the stability window"
               pm2 status
               pm2 logs subnet-dashboard --lines 100 --nostream
               NEXT_DIST_DIR="$ACTIVE_SLOT" pm2 startOrReload "$APP_ROOT/ecosystem.config.cjs" --update-env || true
