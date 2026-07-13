@@ -23,6 +23,7 @@ const SUBNET_NETUID = 71
 const SUBNET_TEMPO_BLOCKS = 360
 const EPOCH_INTERVAL_BLOCKS = SUBNET_TEMPO_BLOCKS + 1
 const BLOCK_TIME_SECONDS = 12
+const EPOCH_DURATION_MINUTES = 72
 
 type MetagraphPayload = MetagraphData & { cachedAt?: number }
 type SortKey =
@@ -122,11 +123,10 @@ function blocksUntilNextEpoch(currentBlock: number): number {
   return epochPosition === 0 ? 0 : EPOCH_INTERVAL_BLOCKS - epochPosition
 }
 
-function formatEpochCountdown(totalSeconds: number): string {
+function formatEpochMinutes(totalSeconds: number): string {
   const seconds = Math.max(0, Math.floor(totalSeconds))
-  const hours = Math.floor(seconds / 3600)
-  const minutes = Math.floor((seconds % 3600) / 60)
-  return `${hours}h ${minutes}m ${seconds % 60}s`
+  const minutes = Math.ceil(seconds / 60)
+  return `${minutes}m / ${EPOCH_DURATION_MINUTES}m`
 }
 
 function SummaryCard({
@@ -151,8 +151,23 @@ function SummaryCard({
       </div>
       <div className="mt-1.5 text-2xl font-medium tabular-nums" style={{ color: 'var(--text-primary)' }}>{value}</div>
       {progressPercent !== null && (
-        <div className="mt-3 h-1.5 overflow-hidden rounded-full" style={{ background: 'var(--surface-border-strong)' }}>
-          <div className="h-full rounded-full bg-gold transition-[width] duration-300" style={{ width: `${progressPercent}%` }} />
+        <div
+          role="progressbar"
+          aria-label={`${label}: ${value}`}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(progressPercent)}
+          className="mt-3 h-2 overflow-hidden rounded-full"
+          style={{ background: 'var(--surface-border-strong)' }}
+        >
+          <div
+            className="h-full rounded-full transition-[width] duration-300"
+            style={{
+              width: `${progressPercent}%`,
+              background: 'var(--accent-positive)',
+              boxShadow: '0 0 10px rgba(232, 240, 255, 0.2)',
+            }}
+          />
         </div>
       )}
       {detail && <div className="mt-1 text-[11px]" style={{ color: 'var(--text-secondary)' }}>{detail}</div>}
@@ -289,9 +304,12 @@ export function AdminMetagraph() {
   const nextEpochSeconds = nextEpochBlocks === null
     ? null
     : Math.max(0, (nextEpochBlocks * BLOCK_TIME_SECONDS) - (countdownTick % BLOCK_TIME_SECONDS))
-  const epochRemainingPercent = nextEpochBlocks === null
+  const blockRemainingPercent = nextEpochBlocks === null
     ? undefined
     : (nextEpochBlocks / SUBNET_TEMPO_BLOCKS) * 100
+  const timeRemainingPercent = nextEpochSeconds === null
+    ? undefined
+    : (nextEpochSeconds / (EPOCH_DURATION_MINUTES * 60)) * 100
 
   const handleSort = (column: SortKey) => {
     if (column === sortKey) {
@@ -348,13 +366,13 @@ export function AdminMetagraph() {
       <div className="grid gap-2 p-3 md:grid-cols-3">
         <SummaryCard
           label="Blocks Until Next Epoch"
-          value={loading || nextEpochBlocks === null ? '—' : formatAmount(nextEpochBlocks, 0)}
-          progress={epochRemainingPercent}
+          value={loading || nextEpochBlocks === null ? '—' : `${formatAmount(nextEpochBlocks, 0)} / ${SUBNET_TEMPO_BLOCKS}`}
+          progress={blockRemainingPercent}
         />
         <SummaryCard
           label="Time Until Next Epoch"
-          value={loading || nextEpochSeconds === null ? '—' : formatEpochCountdown(nextEpochSeconds)}
-          progress={epochRemainingPercent}
+          value={loading || nextEpochSeconds === null ? '—' : formatEpochMinutes(nextEpochSeconds)}
+          progress={timeRemainingPercent}
         />
         <SummaryCard
           label="Active validators"
