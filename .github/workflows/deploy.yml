@@ -22,11 +22,31 @@ jobs:
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
+            set -euo pipefail
             cd subnet_dashboard
-            git pull origin main
+            git fetch origin main
+            git checkout main
+            git merge --ff-only origin/main
+            echo "Deploying commit: $(git rev-parse --short HEAD)"
             export BUILD_TIME="$(date -u +%Y%m%d%H%M%S)"
             NODE_OPTIONS='--max-old-space-size=768' npm run build
-            NODE_OPTIONS='--max-old-space-size=512' pm2 restart subnet-dashboard --update-env || NODE_OPTIONS='--max-old-space-size=512' pm2 start npm --name subnet-dashboard --max-memory-restart 700M -- start
+            pm2 delete subnet-dashboard || true
+            NODE_OPTIONS='--max-old-space-size=512' pm2 start npm --name subnet-dashboard --cwd "$PWD" --max-memory-restart 700M -- start
+
+            for attempt in $(seq 1 30); do
+              if curl --fail --silent --show-error http://127.0.0.1:3000/icon-64.png > /dev/null; then
+                echo "Application health check passed"
+                break
+              fi
+              if [ "$attempt" -eq 30 ]; then
+                echo "Application failed to become healthy"
+                pm2 status
+                pm2 logs subnet-dashboard --lines 100 --nostream
+                exit 1
+              fi
+              sleep 2
+            done
+
             pm2 save
             echo "Deploy complete: $(date)"
           script_stop: true
