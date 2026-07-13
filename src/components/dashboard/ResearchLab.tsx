@@ -2295,15 +2295,25 @@ function LoopRunOutcome({ summary }: { summary: LoopRunSummary }) {
     stats.push({ label: 'Duration', value: `${Math.round(summary.wallClockSeconds)}s` })
 
   // One clear outcome + one explanation, never two stacked jargon sentences.
-  const headlineText = summary.publicLabel
+  // A successful run leads with the success; the stop reason (for example
+  // "ran out of compute budget") is only the explanation of why it stopped
+  // iterating, and reading it as the headline made good runs look broken.
+  const stopText = summary.publicLabel
     ? humanizeOutcome(summary.publicLabel)
     : summary.stopReason
       ? humanizeOutcome(summary.stopReason)
-      : failed
-        ? 'The run stopped without a result'
-        : 'The run finished'
+      : ''
+  const headlineText = failed
+    ? stopText || 'The run stopped without a result'
+    : 'Finished with a working result'
   const reasonCode = summary.failureReason || summary.stopReason || ''
-  const reasonText = reasonCode ? humanizeOutcome(reasonCode) : ''
+  const reasonText = failed
+    ? reasonCode
+      ? humanizeOutcome(reasonCode)
+      : ''
+    : stopText
+      ? `It stopped iterating because: ${stopText.charAt(0).toLowerCase()}${stopText.slice(1)}.`
+      : ''
   const showReason = Boolean(reasonText) && reasonText !== headlineText
 
   return (
