@@ -33,7 +33,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import {
   Select,
   SelectContent,
@@ -1190,38 +1190,29 @@ function WorkflowControlPill({
   )
 }
 
-const HOVER_POPOVER_CLOSE_DELAY_MS = 180
-
 function useHoverPopover() {
   const [open, setOpenState] = useState(false)
-  const closeTimer = useRef<number | null>(null)
+  const [pinned, setPinned] = useState(false)
 
-  const cancelScheduledClose = () => {
-    if (closeTimer.current === null) return
-    window.clearTimeout(closeTimer.current)
-    closeTimer.current = null
+  const openPreview = () => {
+    if (!pinned) setOpenState(true)
   }
-  const openNow = () => {
-    cancelScheduledClose()
-    setOpenState(true)
-  }
-  const scheduleClose = () => {
-    cancelScheduledClose()
-    closeTimer.current = window.setTimeout(() => {
-      setOpenState(false)
-      closeTimer.current = null
-    }, HOVER_POPOVER_CLOSE_DELAY_MS)
+  const closePreview = () => {
+    if (!pinned) setOpenState(false)
   }
   const setOpen = (nextOpen: boolean) => {
-    cancelScheduledClose()
     setOpenState(nextOpen)
+    if (!nextOpen) setPinned(false)
+  }
+  const togglePinned = () => {
+    setPinned((current) => {
+      const nextPinned = !current
+      setOpenState(nextPinned)
+      return nextPinned
+    })
   }
 
-  useEffect(() => () => {
-    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current)
-  }, [])
-
-  return { open, setOpen, openNow, scheduleClose }
+  return { open, setOpen, openPreview, closePreview, togglePinned }
 }
 
 function SourcingModelPopover({ model }: { model: AdminLabSourcingModelSummary }) {
@@ -1251,19 +1242,18 @@ function SourcingModelPopover({ model }: { model: AdminLabSourcingModelSummary }
 
   return (
     <Popover open={hoverPopover.open} onOpenChange={hoverPopover.setOpen}>
-      <PopoverTrigger asChild>
+      <PopoverAnchor asChild>
         <button
           type="button"
           aria-label={triggerLabel}
+          aria-expanded={hoverPopover.open}
+          aria-haspopup="dialog"
           title={triggerLabel}
-          onMouseEnter={hoverPopover.openNow}
-          onMouseLeave={hoverPopover.scheduleClose}
-          onFocus={hoverPopover.openNow}
-          onBlur={hoverPopover.scheduleClose}
-          onClick={(event) => {
-            event.preventDefault()
-            hoverPopover.openNow()
-          }}
+          onMouseEnter={hoverPopover.openPreview}
+          onMouseLeave={hoverPopover.closePreview}
+          onFocus={hoverPopover.openPreview}
+          onBlur={hoverPopover.closePreview}
+          onClick={hoverPopover.togglePinned}
           className="premium-focus inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition-colors hover-bg-warm"
           style={{
             borderColor: alignmentTone.borderColor,
@@ -1273,14 +1263,11 @@ function SourcingModelPopover({ model }: { model: AdminLabSourcingModelSummary }
         >
           <Container className="h-3.5 w-3.5" aria-hidden />
         </button>
-      </PopoverTrigger>
+      </PopoverAnchor>
       <PopoverContent
         align="start"
         sideOffset={8}
-        onMouseEnter={hoverPopover.openNow}
-        onMouseLeave={hoverPopover.scheduleClose}
-        onFocusCapture={hoverPopover.openNow}
-        onBlurCapture={hoverPopover.scheduleClose}
+        onOpenAutoFocus={(event) => event.preventDefault()}
         className="w-[min(calc(100vw-2rem),30rem)] rounded-xl p-0 shadow-2xl shadow-black/50"
         style={{
           borderColor: 'var(--surface-border)',
@@ -1419,19 +1406,18 @@ function LeadpoetRepositoryPopover({
 
   return (
     <Popover open={hoverPopover.open} onOpenChange={hoverPopover.setOpen}>
-      <PopoverTrigger asChild>
+      <PopoverAnchor asChild>
         <button
           type="button"
           aria-label={triggerLabel}
+          aria-expanded={hoverPopover.open}
+          aria-haspopup="dialog"
           title={triggerLabel}
-          onMouseEnter={hoverPopover.openNow}
-          onMouseLeave={hoverPopover.scheduleClose}
-          onFocus={hoverPopover.openNow}
-          onBlur={hoverPopover.scheduleClose}
-          onClick={(event) => {
-            event.preventDefault()
-            hoverPopover.openNow()
-          }}
+          onMouseEnter={hoverPopover.openPreview}
+          onMouseLeave={hoverPopover.closePreview}
+          onFocus={hoverPopover.openPreview}
+          onBlur={hoverPopover.closePreview}
+          onClick={hoverPopover.togglePinned}
           className="premium-focus inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition-colors hover-bg-warm"
           style={{
             borderColor: tone.borderColor,
@@ -1441,14 +1427,11 @@ function LeadpoetRepositoryPopover({
         >
           <Github className="h-3.5 w-3.5" aria-hidden />
         </button>
-      </PopoverTrigger>
+      </PopoverAnchor>
       <PopoverContent
         align="start"
         sideOffset={8}
-        onMouseEnter={hoverPopover.openNow}
-        onMouseLeave={hoverPopover.scheduleClose}
-        onFocusCapture={hoverPopover.openNow}
-        onBlurCapture={hoverPopover.scheduleClose}
+        onOpenAutoFocus={(event) => event.preventDefault()}
         className="w-[min(calc(100vw-2rem),30rem)] rounded-xl p-0 shadow-2xl shadow-black/50"
         style={{
           borderColor: 'var(--surface-border)',
