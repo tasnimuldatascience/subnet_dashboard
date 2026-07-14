@@ -24,6 +24,7 @@ export function parseGatewayPcr0Readiness(value: unknown): GatewayPcr0Acceptance
   const staticAllowed = booleanOrNull(staticAllowlist?.allowed)
   const dynamicAllowed = booleanOrNull(dynamicCache?.valid)
   const cacheSize = finiteNumberOrNull(cacheStatus?.cache_size)
+  const buildInProgress = booleanOrNull(cacheStatus?.build_in_progress) === true
   const checkedAt = isoStringOr(document?.generated_at_utc)
   const gatewayMessage = stringOr(verification?.message)
 
@@ -33,6 +34,19 @@ export function parseGatewayPcr0Readiness(value: unknown): GatewayPcr0Acceptance
       accepted,
       checkedAt,
       detail: 'Production gateway accepts this validator PCR0.',
+      staticAllowed,
+      dynamicAllowed,
+      cacheSize,
+    }
+  }
+
+  if (accepted === false && buildInProgress) {
+    return {
+      checked: true,
+      accepted: null,
+      checkedAt,
+      detail:
+        'Gateway is rebuilding its PCR0 verification cache after a deploy; acceptance is re-checked automatically.',
       staticAllowed,
       dynamicAllowed,
       cacheSize,
@@ -73,7 +87,7 @@ export async function fetchGatewayPcr0Acceptance({
   pcr0,
   commit,
   fetchImpl = fetch,
-  timeoutMs = 5_000,
+  timeoutMs = 15_000,
 }: {
   gatewayUrl: string
   pcr0: string | null
