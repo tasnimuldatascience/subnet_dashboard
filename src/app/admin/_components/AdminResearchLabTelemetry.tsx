@@ -77,7 +77,6 @@ export function DailyBenchmarkTelemetry({
           </div>
           <div className="mt-2 flex flex-wrap gap-2 text-[10px]">
             <TelemetryState state={benchmark.publicationStatus === 'published' ? 'completed' : 'unknown'} label={`Publication ${benchmark.publicationStatus}`} />
-            <TelemetryState state={benchmark.state} label={`Execution ${benchmark.executionStatus ?? 'unavailable'}`} />
             <TelemetryState
               state={benchmark.telemetryDegraded ? 'unknown' : 'completed'}
               label={`${benchmark.telemetryMode} telemetry${benchmark.telemetryDegraded ? ' · degraded' : ''}`}

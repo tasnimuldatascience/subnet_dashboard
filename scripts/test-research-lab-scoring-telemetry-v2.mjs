@@ -182,6 +182,7 @@ try {
   assert.match(adminComponent, /function HistoricalBenchmarkRuns\(\{ runs \}/)
   assert.match(adminComponent, /function ChampionHistory\(\{ champions \}/)
   assert.doesNotMatch(adminComponent, /function HistoricalBenchmarkRuns\(\{ champions \}/)
+  assert.doesNotMatch(adminComponent, /label=\{`Execution \$\{benchmark\.executionStatus/)
   assert.match(publicRoute, /sanitizeResearchLabPublicBenchmarkTelemetry/)
   assert.doesNotMatch(publicRoute, /gatewayScoringStatus\s*\?\?/)
   assert.match(publicComponent, /isBenchmarkExecutionInProgress\(telemetry\.executionStatus\)/)
