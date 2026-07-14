@@ -10,13 +10,17 @@ import {
 } from '@/lib/research-lab-timeline'
 import {
   deriveResearchLabLoopStatus,
+  filterResearchLabActivityLoops,
   isActiveResearchLabLoopStatus,
   isCompletedResearchLabLoopStatus,
   isNoGainOrFailedResearchLabLoopStatus,
   isPendingOrBlockingResearchLabLoopStatus,
   isPromisingResearchLabLoopStatus,
   isScoredResearchLabLoopStatus,
+  RESEARCH_LAB_STATUS_FILTER_OPTIONS,
+  researchLabStatusFilterOptionsWithCounts,
   type ResearchLabLoopStatusNote,
+  type ResearchLabStatusFilterOption,
 } from '@/lib/research-lab-status'
 import {
   buildResearchLabDailyComputeSpend,
@@ -69,8 +73,7 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 const LOOP_LIMIT = 50
-const LOOP_PAGE_LIMIT_MAX = 100
-const ALL_TIME_STATS_BATCH_SIZE = 1_000
+const LOOP_INDEX_BATCH_SIZE = 1_000
 const ACTIVE_RUN_LIMIT = 40
 const COMPUTE_SPEND_DAYS = 30
 const COMPUTE_SPEND_BATCH_SIZE = 1_000
@@ -140,6 +143,7 @@ const ADMIN_LAB_ACTIVE_DETAIL_CACHE_MS = 5_000
 const ADMIN_LAB_TERMINAL_DETAIL_CACHE_MS = 30_000
 const ADMIN_LAB_DETAIL_CACHE_LIMIT = 200
 const ADMIN_LAB_REFRESH_RECENT_LOOP_LIMIT = 25
+const ADMIN_LAB_LOOP_INDEX_CACHE_MS = 10_000
 
 type AdminHealthState = 'healthy' | 'degraded' | 'critical' | 'unknown'
 type AdminScoringState = 'active' | 'paused' | 'stalled' | 'blocked' | 'idle' | 'unknown'
@@ -522,7 +526,8 @@ export type AdminLabOpsSummary = {
 
 export type AdminResearchLabPayload = {
   loops: AdminLabLoopSummary[]
-  hasMoreLoops: boolean
+  loopPagination: AdminLabLoopPagination
+  loopStatusOptions: ResearchLabStatusFilterOption[]
   ops: AdminLabOpsSummary
   stats: {
     totalLoops: number
@@ -533,6 +538,15 @@ export type AdminResearchLabPayload = {
     modelImprovementLoops: number
   }
   fetchedAt: string
+}
+
+export type AdminLabLoopPagination = {
+  page: number
+  pageSize: number
+  total: number
+  totalPages: number
+  status: string
+  query: string
 }
 
 export type AdminLabLoopRefresh = Pick<
@@ -562,6 +576,8 @@ export type AdminLabLoopRefresh = Pick<
 export type AdminResearchLabRefreshPayload = {
   recentLoops: AdminLabLoopSummary[]
   loopStates: AdminLabLoopRefresh[]
+  loopPagination: AdminLabLoopPagination
+  loopStatusOptions: ResearchLabStatusFilterOption[]
   ops: Omit<AdminLabOpsSummary, 'champions' | 'benchmarkRuns' | 'evaluatedAlerts'>
   stats: AdminResearchLabPayload['stats']
   fetchedAt: string
@@ -582,6 +598,11 @@ let adminLabOverviewCache: {
   staleUntil: number
 } | null = null
 let adminLabOverviewInFlight: Promise<AdminResearchLabPayload> | null = null
+let adminLabLoopIndexCache: {
+  loops: AdminLabLoopSummary[]
+  expiresAt: number
+} | null = null
+let adminLabLoopIndexInFlight: Promise<AdminLabLoopSummary[]> | null = null
 const adminLabTimelineCache = new Map<string, {
   payload: AdminResearchLabTimelinePayload | null
   expiresAt: number
@@ -599,16 +620,18 @@ export async function GET(request: NextRequest) {
 
   const mode = request.nextUrl.searchParams.get('mode')
   if (mode === 'loops') {
-    const requestedOffset = Number(request.nextUrl.searchParams.get('offset') ?? 0)
-    const requestedLimit = Number(request.nextUrl.searchParams.get('limit') ?? LOOP_LIMIT)
-    const offset = Number.isSafeInteger(requestedOffset) ? Math.max(0, requestedOffset) : 0
-    const limit = Number.isSafeInteger(requestedLimit)
-      ? Math.min(LOOP_PAGE_LIMIT_MAX, Math.max(1, requestedLimit))
-      : LOOP_LIMIT
+    const requestedPage = Number(request.nextUrl.searchParams.get('page') ?? 1)
+    const page = Number.isSafeInteger(requestedPage) ? Math.max(1, requestedPage) : 1
+    const query = request.nextUrl.searchParams.get('query')?.trim() ?? ''
+    const requestedStatus = request.nextUrl.searchParams.get('status')?.trim() ?? 'all'
+    const status = RESEARCH_LAB_STATUS_FILTER_OPTIONS.some(
+      (option) => option.value === requestedStatus,
+    ) ? requestedStatus : 'all'
     try {
-      const page = await fetchAdminLabLoopPage(supabase, { offset, limit })
+      const loops = await getCachedAdminLabLoopIndex(supabase)
+      const result = buildAdminLabLoopPage(loops, { page, query, status })
       return NextResponse.json(
-        { ...page, offset, limit, fetchedAt: new Date().toISOString() },
+        { ...result, fetchedAt: new Date().toISOString() },
         { headers: { 'Cache-Control': 'private, no-store' } },
       )
     } catch (e) {
@@ -695,6 +718,8 @@ function buildAdminLabRefreshPayload(
       scoredCandidateCount: loop.scoredCandidateCount,
       lastActivityAt: loop.lastActivityAt,
     })),
+    loopPagination: overview.loopPagination,
+    loopStatusOptions: overview.loopStatusOptions,
     ops: ops as AdminResearchLabRefreshPayload['ops'],
     stats: overview.stats,
     fetchedAt: overview.fetchedAt,
@@ -750,17 +775,16 @@ async function getCachedAdminLabOverview(
 async function buildAdminLabOverview(
   supabase: ReturnType<typeof getAdminSupabase>,
 ): Promise<AdminResearchLabPayload> {
-  const [loopPage, stats] = await Promise.all([
-    fetchAdminLabLoopPage(supabase, { offset: 0, limit: LOOP_LIMIT }),
-    fetchAdminLabAllTimeStats(supabase),
-  ])
+  const allLoops = await getCachedAdminLabLoopIndex(supabase)
+  const loopPage = buildAdminLabLoopPage(allLoops, { page: 1, query: '', status: 'all' })
   const loops = loopPage.loops
   const ops = await fetchAdminLabOps(supabase, loops)
   return {
     loops,
-    hasMoreLoops: loopPage.hasMore,
+    loopPagination: loopPage.loopPagination,
+    loopStatusOptions: loopPage.loopStatusOptions,
     ops,
-    stats,
+    stats: buildAdminLabAllTimeStats(allLoops),
     fetchedAt: new Date().toISOString(),
   }
 }
@@ -813,6 +837,7 @@ function pruneAdminLabTimelineCache(): void {
 
 function invalidateAdminLabOverviewCache(): void {
   adminLabOverviewCache = null
+  adminLabLoopIndexCache = null
 }
 
 export async function POST(request: NextRequest) {
@@ -909,31 +934,111 @@ function isValidValidatorHotkey(value: string): boolean {
   }
 }
 
-async function fetchAdminLabLoopPage(
+async function getCachedAdminLabLoopIndex(
   supabase: ReturnType<typeof getAdminSupabase>,
-  { offset, limit }: { offset: number; limit: number },
-): Promise<{ loops: AdminLabLoopSummary[]; hasMore: boolean }> {
-  const { data, error } = await supabase
-    .from('research_lab_public_loop_card_current')
-    .select('*')
-    .order('current_last_activity_at', { ascending: false, nullsFirst: false })
-    .order('created_at', { ascending: false })
-    .range(offset, offset + limit)
-
-  if (error) {
-    throw new Error(`Supabase error: ${error.message}`)
+): Promise<AdminLabLoopSummary[]> {
+  const now = Date.now()
+  if (adminLabLoopIndexCache && adminLabLoopIndexCache.expiresAt > now) {
+    return adminLabLoopIndexCache.loops
   }
+  if (adminLabLoopIndexInFlight) return adminLabLoopIndexInFlight
 
-  const rows = (data ?? []) as AdminLabLoopRow[]
-  return {
-    loops: rows.slice(0, limit).map(normalizeLoopRow),
-    hasMore: rows.length > limit,
+  adminLabLoopIndexInFlight = fetchAdminLabLoopIndex(supabase)
+  try {
+    const loops = await adminLabLoopIndexInFlight
+    adminLabLoopIndexCache = {
+      loops,
+      expiresAt: Date.now() + ADMIN_LAB_LOOP_INDEX_CACHE_MS,
+    }
+    return loops
+  } finally {
+    adminLabLoopIndexInFlight = null
   }
 }
 
-async function fetchAdminLabAllTimeStats(
+async function fetchAdminLabLoopIndex(
   supabase: ReturnType<typeof getAdminSupabase>,
-): Promise<AdminResearchLabPayload['stats']> {
+): Promise<AdminLabLoopSummary[]> {
+  const loops: AdminLabLoopSummary[] = []
+  let offset = 0
+
+  while (true) {
+    const { data, error } = await supabase
+      .from('research_lab_public_loop_card_current')
+      .select('*')
+      .order('current_last_activity_at', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
+      .order('card_id', { ascending: false })
+      .range(offset, offset + LOOP_INDEX_BATCH_SIZE - 1)
+
+    if (error) {
+      throw new Error(`Supabase error fetching the Lab ticket index: ${error.message}`)
+    }
+
+    const rows = (data ?? []) as AdminLabLoopRow[]
+    loops.push(...rows.map(normalizeLoopRow))
+    if (rows.length < LOOP_INDEX_BATCH_SIZE) break
+    offset += LOOP_INDEX_BATCH_SIZE
+  }
+
+  return loops
+}
+
+function buildAdminLabLoopPage(
+  loops: AdminLabLoopSummary[],
+  { page, query, status }: { page: number; query: string; status: string },
+): {
+  loops: AdminLabLoopSummary[]
+  loopPagination: AdminLabLoopPagination
+  loopStatusOptions: ResearchLabStatusFilterOption[]
+} {
+  const normalizedQuery = query.trim().toLowerCase()
+  const searchMatchedLoops = normalizedQuery
+    ? loops.filter((loop) => adminLabLoopSearchValues(loop).some(
+      (value) => value.toLowerCase().includes(normalizedQuery),
+    ))
+    : loops
+  const loopStatusOptions = researchLabStatusFilterOptionsWithCounts(searchMatchedLoops)
+  const filteredLoops = filterResearchLabActivityLoops(searchMatchedLoops, { status })
+  const total = filteredLoops.length
+  const totalPages = Math.max(1, Math.ceil(total / LOOP_LIMIT))
+  const resolvedPage = Math.min(page, totalPages)
+  const offset = (resolvedPage - 1) * LOOP_LIMIT
+
+  return {
+    loops: filteredLoops.slice(offset, offset + LOOP_LIMIT),
+    loopPagination: {
+      page: resolvedPage,
+      pageSize: LOOP_LIMIT,
+      total,
+      totalPages,
+      status,
+      query: query.trim(),
+    },
+    loopStatusOptions,
+  }
+}
+
+function adminLabLoopSearchValues(loop: AdminLabLoopSummary): string[] {
+  return [
+    loop.ticketId,
+    loop.runId ?? '',
+    loop.receiptId ?? '',
+    loop.minerHotkey,
+    loop.researchArea,
+    loop.researchFocusSummary,
+    loop.outcomeLabel,
+    loop.statusKey,
+    loop.statusLabel,
+    loop.opsReason ?? '',
+    loop.statusDetail ?? '',
+    ...loop.topicTags,
+  ]
+}
+
+function buildAdminLabAllTimeStats(
+  loops: AdminLabLoopSummary[],
+): AdminResearchLabPayload['stats'] {
   const stats: AdminResearchLabPayload['stats'] = {
     totalLoops: 0,
     runningLoops: 0,
@@ -943,36 +1048,17 @@ async function fetchAdminLabAllTimeStats(
     modelImprovementLoops: 0,
   }
   const miners = new Set<string>()
-  let offset = 0
 
-  while (true) {
-    const { data, error } = await supabase
-      .from('research_lab_public_loop_card_current')
-      .select('*')
-      .order('created_at', { ascending: true })
-      .order('card_id', { ascending: true })
-      .range(offset, offset + ALL_TIME_STATS_BATCH_SIZE - 1)
-
-    if (error) {
-      throw new Error(`Supabase error fetching all-time Lab stats: ${error.message}`)
-    }
-
-    const rows = (data ?? []) as AdminLabLoopRow[]
-    for (const row of rows) {
-      const loop = normalizeLoopRow(row)
-      stats.totalLoops += 1
-      if (isActiveResearchLabLoopStatus(loop.statusKey)) stats.runningLoops += 1
-      if (isScoredResearchLabLoopStatus(loop.statusKey)) stats.scoredLoops += 1
-      if (
-        isNoGainOrFailedResearchLabLoopStatus(loop.statusKey) ||
-        isFailedOutcome(loop.outcomeLabel, loop.outcomeBand)
-      ) stats.failedLoops += 1
-      if (loop.statusKey === 'promoted') stats.modelImprovementLoops += 1
-      if (loop.minerHotkey) miners.add(loop.minerHotkey)
-    }
-
-    if (rows.length < ALL_TIME_STATS_BATCH_SIZE) break
-    offset += ALL_TIME_STATS_BATCH_SIZE
+  for (const loop of loops) {
+    stats.totalLoops += 1
+    if (isActiveResearchLabLoopStatus(loop.statusKey)) stats.runningLoops += 1
+    if (isScoredResearchLabLoopStatus(loop.statusKey)) stats.scoredLoops += 1
+    if (
+      isNoGainOrFailedResearchLabLoopStatus(loop.statusKey) ||
+      isFailedOutcome(loop.outcomeLabel, loop.outcomeBand)
+    ) stats.failedLoops += 1
+    if (loop.statusKey === 'promoted') stats.modelImprovementLoops += 1
+    if (loop.minerHotkey) miners.add(loop.minerHotkey)
   }
 
   stats.uniqueMiners = miners.size

@@ -8,6 +8,7 @@ import {
   BarChart3,
   Clock3,
   CircleDollarSign,
+  ChevronLeft,
   ChevronRight,
   Container,
   Database,
@@ -43,10 +44,7 @@ import {
 } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import { formatDateTime, formatRelative, shortHotkey } from '@/lib/admin-format'
-import {
-  filterResearchLabActivityLoops,
-  researchLabStatusFilterOptionsWithCounts,
-} from '@/lib/research-lab-status'
+import type { ResearchLabStatusFilterOption } from '@/lib/research-lab-status'
 import {
   DailyBenchmarkTelemetry,
   RunTelemetry,
@@ -419,7 +417,8 @@ type AdminLabOpsSummary = {
 
 export type AdminResearchLabPayload = {
   loops: AdminLabLoopSummary[]
-  hasMoreLoops: boolean
+  loopPagination: AdminLabLoopPagination
+  loopStatusOptions: ResearchLabStatusFilterOption[]
   ops: AdminLabOpsSummary
   stats: {
     totalLoops: number
@@ -430,6 +429,15 @@ export type AdminResearchLabPayload = {
     modelImprovementLoops: number
   }
   fetchedAt: string
+}
+
+type AdminLabLoopPagination = {
+  page: number
+  pageSize: number
+  total: number
+  totalPages: number
+  status: string
+  query: string
 }
 
 type AdminLabLoopRefresh = Pick<
@@ -459,6 +467,8 @@ type AdminLabLoopRefresh = Pick<
 type AdminResearchLabRefreshPayload = {
   recentLoops: AdminLabLoopSummary[]
   loopStates: AdminLabLoopRefresh[]
+  loopPagination: AdminLabLoopPagination
+  loopStatusOptions: ResearchLabStatusFilterOption[]
   ops: Omit<AdminLabOpsSummary, 'champions'>
   stats: AdminResearchLabPayload['stats']
   fetchedAt: string
@@ -513,11 +523,13 @@ export function AdminResearchLab({
   const [initialLoading, setInitialLoading] = useState(!payload)
   const [liveRefreshError, setLiveRefreshError] = useState<string | null>(null)
   const [liveRefreshing, setLiveRefreshing] = useState(false)
-  const [loadingMoreLoops, setLoadingMoreLoops] = useState(false)
+  const [loopPageLoading, setLoopPageLoading] = useState(false)
   const loops = useMemo(() => livePayload?.loops ?? [], [livePayload?.loops])
   const ops = livePayload?.ops ?? null
   const [query, setQuery] = useState('')
+  const [debouncedQuery, setDebouncedQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
+  const [loopPage, setLoopPage] = useState(1)
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(loops[0]?.ticketId ?? null)
   const [selectedRunId, setSelectedRunId] = useState<string | null>(loops[0]?.runId ?? null)
   const [detailBySelection, setDetailBySelection] = useState<Record<string, LabTimelinePayload | null>>({})
@@ -542,6 +554,11 @@ export function AdminResearchLab({
   }
 
   useEffect(() => setLivePayload(payload), [payload])
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebouncedQuery(query.trim()), 250)
+    return () => window.clearTimeout(timeout)
+  }, [query])
 
   // Render the admin shell immediately. The large operational snapshot is
   // loaded client-side so a cold cache can no longer delay the first byte of
@@ -671,36 +688,19 @@ export function AdminResearchLab({
     setSelectedRunId(loops[0].runId)
   }, [loops, selectedTicketId])
 
-  const searchMatchedLoops = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return loops
-    return loops.filter((loop) =>
-      [
-        loop.ticketId,
-        loop.runId ?? '',
-        loop.receiptId ?? '',
-        loop.minerHotkey,
-        loop.researchArea,
-        loop.researchFocusSummary,
-        loop.outcomeLabel,
-        loop.statusKey,
-        loop.statusLabel,
-        loop.opsReason ?? '',
-        loop.statusDetail ?? '',
-        ...loop.topicTags,
-      ].some((value) => value.toLowerCase().includes(q)),
-    )
-  }, [loops, query])
-
   const statusOptions = useMemo(
-    () => researchLabStatusFilterOptionsWithCounts(searchMatchedLoops),
-    [searchMatchedLoops],
+    () => livePayload?.loopStatusOptions ?? [{ value: 'all', label: 'All', count: 0 }],
+    [livePayload?.loopStatusOptions],
   )
-
-  const filteredLoops = useMemo(
-    () => filterResearchLabActivityLoops(searchMatchedLoops, { status: statusFilter }),
-    [searchMatchedLoops, statusFilter],
-  )
+  const filteredLoops = loops
+  const pagination = livePayload?.loopPagination ?? {
+    page: 1,
+    pageSize: 50,
+    total: loops.length,
+    totalPages: 1,
+    status: 'all',
+    query: '',
+  }
 
   useEffect(() => {
     if (statusFilter === 'all') return
@@ -715,38 +715,58 @@ export function AdminResearchLab({
     setSelectedRunId(filteredLoops[0].runId)
   }, [filteredLoops, selectedTicketId])
 
-  const loadMoreLoops = async () => {
-    if (!livePayload?.hasMoreLoops || loadingMoreLoops) return
-    setLoadingMoreLoops(true)
-    try {
-      const params = new URLSearchParams({
-        mode: 'loops',
-        offset: String(loops.length),
-        limit: '50',
-      })
-      const res = await fetch(`/api/admin/research-lab?${params.toString()}`, { cache: 'no-store' })
-      const body = await res.json().catch(() => ({})) as {
-        loops?: AdminLabLoopSummary[]
-        hasMore?: boolean
-        error?: string
-      }
-      if (!res.ok) throw new Error(body.error || `Loop page failed with ${res.status}`)
-      setLivePayload((current) => {
-        if (!current) return current
-        const merged = new Map(current.loops.map((loop) => [loop.ticketId, loop]))
-        for (const loop of body.loops ?? []) merged.set(loop.ticketId, loop)
-        return {
-          ...current,
-          loops: Array.from(merged.values()),
-          hasMoreLoops: Boolean(body.hasMore),
+  useEffect(() => {
+    if (!livePayload) return
+    const currentPage = livePayload.loopPagination
+    if (
+      currentPage.page === loopPage &&
+      currentPage.status === statusFilter &&
+      currentPage.query === debouncedQuery
+    ) return
+
+    const controller = new AbortController()
+    const loadLoopPage = async () => {
+      setLoopPageLoading(true)
+      try {
+        const params = new URLSearchParams({
+          mode: 'loops',
+          page: String(loopPage),
+          status: statusFilter,
+        })
+        if (debouncedQuery) params.set('query', debouncedQuery)
+        const res = await fetch(`/api/admin/research-lab?${params.toString()}`, {
+          cache: 'no-store',
+          signal: controller.signal,
+        })
+        const body = await res.json().catch(() => ({})) as {
+          loops?: AdminLabLoopSummary[]
+          loopPagination?: AdminLabLoopPagination
+          loopStatusOptions?: ResearchLabStatusFilterOption[]
+          error?: string
         }
-      })
-    } catch (e) {
-      setLiveRefreshError(e instanceof Error ? e.message : 'Could not load more loops')
-    } finally {
-      setLoadingMoreLoops(false)
+        if (!res.ok) throw new Error(body.error || `Loop page failed with ${res.status}`)
+        if (!body.loopPagination || !body.loopStatusOptions) {
+          throw new Error('Loop page response was incomplete')
+        }
+        setLivePayload((current) => current ? {
+          ...current,
+          loops: body.loops ?? [],
+          loopPagination: body.loopPagination!,
+          loopStatusOptions: body.loopStatusOptions!,
+        } : current)
+        setLoopPage(body.loopPagination.page)
+        setLiveRefreshError(null)
+      } catch (e) {
+        if (!controller.signal.aborted) {
+          setLiveRefreshError(e instanceof Error ? e.message : 'Could not load the ticket page')
+        }
+      } finally {
+        if (!controller.signal.aborted) setLoopPageLoading(false)
+      }
     }
-  }
+    void loadLoopPage()
+    return () => controller.abort()
+  }, [debouncedQuery, livePayload, loopPage, statusFilter])
 
   const selectedLoop =
     loops.find((loop) => loop.ticketId === selectedTicketId) ??
@@ -946,7 +966,10 @@ export function AdminResearchLab({
               <input
                 type="text"
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                onChange={(e) => {
+                  setQuery(e.target.value)
+                  setLoopPage(1)
+                }}
                 placeholder="Search ticket, run, hotkey, topic..."
                 className="premium-focus w-full rounded-lg border px-9 py-2 text-sm placeholder:text-white/30 bg-transparent"
                 style={{
@@ -957,7 +980,13 @@ export function AdminResearchLab({
               />
             </div>
 
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <Select
+              value={statusFilter}
+              onValueChange={(value) => {
+                setStatusFilter(value)
+                setLoopPage(1)
+              }}
+            >
               <SelectTrigger
                 className="h-10 w-full border-[var(--surface-border)] bg-[var(--surface)] font-mono text-xs text-[var(--text-secondary)] shadow-none sm:w-[210px]"
                 aria-label="Filter Lab loops by status"
@@ -1007,17 +1036,46 @@ export function AdminResearchLab({
               </div>
             )}
           </div>
-          {livePayload?.hasMoreLoops && !query.trim() ? (
-            <button
-              type="button"
-              onClick={() => void loadMoreLoops()}
-              disabled={loadingMoreLoops}
-              className="premium-focus flex w-full items-center justify-center gap-2 rounded-lg border px-3 py-2 text-xs disabled:opacity-50"
+          {livePayload ? (
+            <div
+              className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-xs"
               style={{ borderColor: 'var(--surface-border)', color: 'var(--text-secondary)' }}
             >
-              {loadingMoreLoops ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-              {loadingMoreLoops ? 'Loading more loops...' : 'Load 50 more loops'}
-            </button>
+              <span className="min-w-0 truncate font-mono">
+                {pagination.total === 0
+                  ? '0 tickets'
+                  : `${(pagination.page - 1) * pagination.pageSize + 1}–${Math.min(
+                    pagination.page * pagination.pageSize,
+                    pagination.total,
+                  )} of ${pagination.total}`}
+              </span>
+              <div className="flex shrink-0 items-center gap-2">
+                {loopPageLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                <button
+                  type="button"
+                  onClick={() => setLoopPage((page) => Math.max(1, page - 1))}
+                  disabled={loopPageLoading || pagination.page <= 1}
+                  className="premium-focus rounded-md border p-1.5 disabled:opacity-35"
+                  style={{ borderColor: 'var(--surface-border)' }}
+                  aria-label="Previous ticket page"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </button>
+                <span className="min-w-[74px] text-center font-mono">
+                  Page {pagination.page} of {pagination.totalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setLoopPage((page) => Math.min(pagination.totalPages, page + 1))}
+                  disabled={loopPageLoading || pagination.page >= pagination.totalPages}
+                  className="premium-focus rounded-md border p-1.5 disabled:opacity-35"
+                  style={{ borderColor: 'var(--surface-border)' }}
+                  aria-label="Next ticket page"
+                >
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
           ) : null}
         </div>
 
@@ -3152,19 +3210,29 @@ function mergeAdminResearchLabRefresh(
   refresh: AdminResearchLabRefreshPayload,
 ): AdminResearchLabPayload {
   const loopsByTicket = new Map(current.loops.map((loop) => [loop.ticketId, loop]))
-  for (const loop of refresh.recentLoops) loopsByTicket.set(loop.ticketId, loop)
+  const isDefaultFirstPage = (
+    current.loopPagination.page === 1 &&
+    current.loopPagination.status === 'all' &&
+    current.loopPagination.query === ''
+  )
+  if (isDefaultFirstPage) {
+    for (const loop of refresh.recentLoops) loopsByTicket.set(loop.ticketId, loop)
+  }
   for (const state of refresh.loopStates) {
     const existing = loopsByTicket.get(state.ticketId)
     if (existing) loopsByTicket.set(state.ticketId, { ...existing, ...state })
   }
-  const retainedLoopCount = Math.max(current.loops.length, refresh.recentLoops.length)
+  const retainedLoopCount = isDefaultFirstPage
+    ? current.loopPagination.pageSize
+    : current.loops.length
   const loops = Array.from(loopsByTicket.values())
     .sort((left, right) => Date.parse(right.lastActivityAt) - Date.parse(left.lastActivityAt))
     .slice(0, retainedLoopCount)
 
   return {
     loops,
-    hasMoreLoops: current.hasMoreLoops,
+    loopPagination: isDefaultFirstPage ? refresh.loopPagination : current.loopPagination,
+    loopStatusOptions: isDefaultFirstPage ? refresh.loopStatusOptions : current.loopStatusOptions,
     ops: {
       ...current.ops,
       ...refresh.ops,
