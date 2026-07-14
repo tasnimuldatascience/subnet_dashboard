@@ -1190,7 +1190,42 @@ function WorkflowControlPill({
   )
 }
 
+const HOVER_POPOVER_CLOSE_DELAY_MS = 180
+
+function useHoverPopover() {
+  const [open, setOpenState] = useState(false)
+  const closeTimer = useRef<number | null>(null)
+
+  const cancelScheduledClose = () => {
+    if (closeTimer.current === null) return
+    window.clearTimeout(closeTimer.current)
+    closeTimer.current = null
+  }
+  const openNow = () => {
+    cancelScheduledClose()
+    setOpenState(true)
+  }
+  const scheduleClose = () => {
+    cancelScheduledClose()
+    closeTimer.current = window.setTimeout(() => {
+      setOpenState(false)
+      closeTimer.current = null
+    }, HOVER_POPOVER_CLOSE_DELAY_MS)
+  }
+  const setOpen = (nextOpen: boolean) => {
+    cancelScheduledClose()
+    setOpenState(nextOpen)
+  }
+
+  useEffect(() => () => {
+    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current)
+  }, [])
+
+  return { open, setOpen, openNow, scheduleClose }
+}
+
 function SourcingModelPopover({ model }: { model: AdminLabSourcingModelSummary }) {
+  const hoverPopover = useHoverPopover()
   const active = model.status?.toLowerCase() === 'active'
   const inLine = active && model.commitFreshness === 'latest'
   const outOfLine = model.sourceAvailable && (
@@ -1215,12 +1250,20 @@ function SourcingModelPopover({ model }: { model: AdminLabSourcingModelSummary }
   const activeCommitUrl = githubCommitUrl(model.repositoryUrl, model.gitCommitSha)
 
   return (
-    <Popover>
+    <Popover open={hoverPopover.open} onOpenChange={hoverPopover.setOpen}>
       <PopoverTrigger asChild>
         <button
           type="button"
           aria-label={triggerLabel}
           title={triggerLabel}
+          onMouseEnter={hoverPopover.openNow}
+          onMouseLeave={hoverPopover.scheduleClose}
+          onFocus={hoverPopover.openNow}
+          onBlur={hoverPopover.scheduleClose}
+          onClick={(event) => {
+            event.preventDefault()
+            hoverPopover.openNow()
+          }}
           className="premium-focus inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition-colors hover-bg-warm"
           style={{
             borderColor: alignmentTone.borderColor,
@@ -1234,6 +1277,10 @@ function SourcingModelPopover({ model }: { model: AdminLabSourcingModelSummary }
       <PopoverContent
         align="start"
         sideOffset={8}
+        onMouseEnter={hoverPopover.openNow}
+        onMouseLeave={hoverPopover.scheduleClose}
+        onFocusCapture={hoverPopover.openNow}
+        onBlurCapture={hoverPopover.scheduleClose}
         className="w-[min(calc(100vw-2rem),30rem)] rounded-xl p-0 shadow-2xl shadow-black/50"
         style={{
           borderColor: 'var(--surface-border)',
@@ -1363,6 +1410,7 @@ function LeadpoetRepositoryPopover({
 }: {
   repository: AdminLabRepositorySummary
 }) {
+  const hoverPopover = useHoverPopover()
   const tone = sourcingModelAlignmentTone(repository.sourceAvailable, false)
   const commitUrl = githubCommitUrl(repository.repositoryUrl, repository.commitSha)
   const triggerLabel = repository.commitSha
@@ -1370,12 +1418,20 @@ function LeadpoetRepositoryPopover({
     : 'View LeadPoet repository details'
 
   return (
-    <Popover>
+    <Popover open={hoverPopover.open} onOpenChange={hoverPopover.setOpen}>
       <PopoverTrigger asChild>
         <button
           type="button"
           aria-label={triggerLabel}
           title={triggerLabel}
+          onMouseEnter={hoverPopover.openNow}
+          onMouseLeave={hoverPopover.scheduleClose}
+          onFocus={hoverPopover.openNow}
+          onBlur={hoverPopover.scheduleClose}
+          onClick={(event) => {
+            event.preventDefault()
+            hoverPopover.openNow()
+          }}
           className="premium-focus inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition-colors hover-bg-warm"
           style={{
             borderColor: tone.borderColor,
@@ -1389,6 +1445,10 @@ function LeadpoetRepositoryPopover({
       <PopoverContent
         align="start"
         sideOffset={8}
+        onMouseEnter={hoverPopover.openNow}
+        onMouseLeave={hoverPopover.scheduleClose}
+        onFocusCapture={hoverPopover.openNow}
+        onBlurCapture={hoverPopover.scheduleClose}
         className="w-[min(calc(100vw-2rem),30rem)] rounded-xl p-0 shadow-2xl shadow-black/50"
         style={{
           borderColor: 'var(--surface-border)',
