@@ -175,6 +175,7 @@ try {
   const adminRoute = await readFile(resolve('src/app/api/admin/research-lab/route.ts'), 'utf8')
   const adminComponent = await readFile(resolve('src/app/admin/_components/AdminResearchLabTelemetry.tsx'), 'utf8')
   const publicRoute = await readFile(resolve('src/app/api/research-lab/route.ts'), 'utf8')
+  const publicComponent = await readFile(resolve('src/components/dashboard/ResearchLab.tsx'), 'utf8')
   assert.match(adminRoute, /research_lab_scoring_run_current/)
   assert.match(adminRoute, /research_lab_private_benchmark_dashboard_telemetry/)
   assert.match(adminRoute, /fetchHistoricalBenchmarkRuns|buildHistoricalBenchmarkRuns/)
@@ -183,8 +184,12 @@ try {
   assert.doesNotMatch(adminComponent, /function HistoricalBenchmarkRuns\(\{ champions \}/)
   assert.match(publicRoute, /sanitizeResearchLabPublicBenchmarkTelemetry/)
   assert.doesNotMatch(publicRoute, /gatewayScoringStatus\s*\?\?/)
+  assert.match(publicComponent, /isBenchmarkExecutionInProgress\(telemetry\.executionStatus\)/)
+  assert.match(publicComponent, /function ScoringHero\(/)
+  assert.doesNotMatch(publicComponent, /function BenchmarkExecutionSummary\(/)
+  assert.doesNotMatch(publicComponent, /Publication \{telemetry\.publicationStatus\}/)
 
-  console.log('research-lab-scoring-telemetry-v2: progress, correlation, retry dedupe, degradation, public safety, and history semantics passed')
+  console.log('research-lab-scoring-telemetry-v2: progress, correlation, retry dedupe, degradation, public safety, history, and active hero semantics passed')
 } finally {
   await rm(outDir, { recursive: true, force: true })
 }
