@@ -176,14 +176,13 @@ export interface ChainView {
 }
 
 export function buildChainViews(rows: AdminFulfillmentRequest[]): ChainView[] {
-  const byId = new Map(rows.map((r) => [r.request_id, r]))
-  // Reverse index: predecessor_id -> successor row. We persist the
-  // pointer as `successor_request_id` on the predecessor row, so the
-  // edge "A -> B" means A.successor_request_id === B.request_id.
-  const successorOf = new Map<string, AdminFulfillmentRequest>()
+  // Reverse index: successor_id -> predecessor row. Building it once keeps
+  // chain folding O(n); the old rows.find() walk became O(n²) once recycle
+  // history grew into thousands of request rows.
+  const predecessorOf = new Map<string, AdminFulfillmentRequest>()
   for (const r of rows) {
     if (r.successor_request_id) {
-      successorOf.set(r.request_id, byId.get(r.successor_request_id) ?? r)
+      predecessorOf.set(r.successor_request_id, r)
     }
   }
   // A row is a "leaf" if nothing in the set points its successor at us
@@ -198,10 +197,7 @@ export function buildChainViews(rows: AdminFulfillmentRequest[]): ChainView[] {
     const path: AdminFulfillmentRequest[] = [r]
     let cur = r
     while (true) {
-      // Find a row whose successor_request_id === cur.request_id.
-      const predecessor = rows.find(
-        (cand) => cand.successor_request_id === cur.request_id,
-      )
+      const predecessor = predecessorOf.get(cur.request_id)
       if (!predecessor) break
       if (seen.has(predecessor.request_id)) break // safety against cycle
       path.unshift(predecessor)

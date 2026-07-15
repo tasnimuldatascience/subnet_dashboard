@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import {
   Search,
@@ -42,6 +42,22 @@ export interface ChainSummary {
 }
 
 type FilterKey = 'all' | 'open' | 'fulfilled' | 'partial' | 'recycled'
+
+export interface AdminRequestsPayload {
+  chains: ChainSummary[]
+  pagination: {
+    page: number
+    pageSize: number
+    total: number
+    totalPages: number
+  }
+  counts: Record<FilterKey, number>
+  totals: {
+    requests: number
+    quota: number
+    inFlight: number
+  }
+}
 
 const FILTERS: { key: FilterKey; label: string }[] = [
   { key: 'all', label: 'All' },
@@ -144,15 +160,60 @@ function ApprovalProgress({
 }
 
 export function AdminRequestList({
-  chains,
+  payload,
   error,
 }: {
-  chains: ChainSummary[]
+  payload: AdminRequestsPayload | null
   error: string | null
 }) {
+  const [data, setData] = useState<AdminRequestsPayload | null>(payload)
   const [filter, setFilter] = useState<FilterKey>('all')
   const [query, setQuery] = useState('')
+  const [page, setPage] = useState(1)
+  const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(error)
   const searchRef = useRef<HTMLInputElement>(null)
+  const initialRequest = useRef(true)
+
+  useEffect(() => {
+    if (initialRequest.current) {
+      initialRequest.current = false
+      return
+    }
+
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => {
+      setLoading(true)
+      setLoadError(null)
+      const params = new URLSearchParams({
+        page: String(page),
+        pageSize: '20',
+        status: filter,
+        q: query,
+      })
+      fetch(`/api/admin/requests?${params.toString()}`, {
+        cache: 'no-store',
+        signal: controller.signal,
+      })
+        .then(async (response) => {
+          const body = await response.json().catch(() => ({}))
+          if (!response.ok) throw new Error(body.error || `Request failed: ${response.status}`)
+          setData(body as AdminRequestsPayload)
+        })
+        .catch((fetchError) => {
+          if (fetchError instanceof DOMException && fetchError.name === 'AbortError') return
+          setLoadError(fetchError instanceof Error ? fetchError.message : 'Failed to load requests')
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setLoading(false)
+        })
+    }, 250)
+
+    return () => {
+      window.clearTimeout(timeout)
+      controller.abort()
+    }
+  }, [filter, page, query])
 
   // "/" keyboard shortcut: focus search (matches public dashboard pattern).
   useEffect(() => {
@@ -172,54 +233,10 @@ export function AdminRequestList({
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    return chains.filter((c) => {
-      if (filter !== 'all' && statusTone(c.status) !== filter) return false
-      if (q) {
-        const hay = [
-          c.internal_label,
-          c.company,
-          c.request_id,
-          c.root_request_id,
-        ]
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase()
-        if (!hay.includes(q)) return false
-      }
-      return true
-    })
-  }, [chains, filter, query])
-
-  const counts = useMemo(() => {
-    const c: Record<FilterKey, number> = {
-      all: chains.length,
-      open: 0,
-      fulfilled: 0,
-      partial: 0,
-      recycled: 0,
-    }
-    for (const r of chains) {
-      const t = statusTone(r.status)
-      if (t === 'open' || t === 'pending') c.open += 1
-      else if (t === 'fulfilled') c.fulfilled += 1
-      else if (t === 'partial') c.partial += 1
-      else if (t === 'recycled') c.recycled += 1
-    }
-    return c
-  }, [chains])
-
-  // Roll up topline metrics for the masthead card.
-  const totals = useMemo(() => {
-    let delivered = 0
-    let target = 0
-    for (const c of chains) {
-      delivered += c.delivered_count
-      target += c.target_num_leads
-    }
-    return { delivered, target, chains: chains.length }
-  }, [chains])
+  const chains = data?.chains ?? []
+  const counts = data?.counts ?? { all: 0, open: 0, fulfilled: 0, partial: 0, recycled: 0 }
+  const totals = data?.totals ?? { requests: 0, quota: 0, inFlight: 0 }
+  const approvedOnPage = chains.reduce((sum, chain) => sum + chain.delivered_count, 0)
 
   return (
     <div className="space-y-6">
@@ -241,20 +258,20 @@ export function AdminRequestList({
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <Tile label="Total requests" value={totals.chains} />
+          <Tile label="Total requests" value={totals.requests} />
           <Tile
-            label="Leads delivered"
-            value={totals.delivered}
+            label="Approved on page"
+            value={approvedOnPage}
             accent="gold"
           />
           <Tile
             label="Total quota"
-            value={totals.target}
-            secondary={`${totals.target > 0 ? Math.round((totals.delivered / totals.target) * 100) : 0}% approved`}
+            value={totals.quota}
+            secondary={`${counts.fulfilled} fulfilled requests`}
           />
           <Tile
             label="In flight"
-            value={counts.open + counts.partial}
+            value={totals.inFlight}
             secondary={`${counts.open} open · ${counts.partial} partial`}
           />
         </div>
@@ -266,7 +283,10 @@ export function AdminRequestList({
           {FILTERS.map((f) => (
             <button
               key={f.key}
-              onClick={() => setFilter(f.key)}
+              onClick={() => {
+                setFilter(f.key)
+                setPage(1)
+              }}
               className={cn(
                 'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all whitespace-nowrap border',
                 filter === f.key
@@ -290,7 +310,10 @@ export function AdminRequestList({
             ref={searchRef}
             type="text"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value)
+              setPage(1)
+            }}
             placeholder="Search by label, company, or request id…"
             className="premium-focus w-full rounded-lg border px-9 py-2 text-sm placeholder:text-white/30 bg-transparent"
             style={{
@@ -313,7 +336,7 @@ export function AdminRequestList({
       </section>
 
       {/* Body */}
-      {error ? (
+      {loadError ? (
         <div
           className="rounded-xl border p-6 flex items-start gap-3"
           style={{
@@ -330,11 +353,11 @@ export function AdminRequestList({
               className="text-xs mt-1 font-mono"
               style={{ color: 'var(--text-secondary)' }}
             >
-              {error}
+              {loadError}
             </div>
           </div>
         </div>
-      ) : filtered.length === 0 ? (
+      ) : chains.length === 0 ? (
         <div
           className="rounded-xl border p-12 text-center"
           style={{
@@ -351,11 +374,49 @@ export function AdminRequestList({
         </div>
       ) : (
         <div className="space-y-px">
-          {filtered.map((c) => (
+          {chains.map((c) => (
             <ChainRow key={c.request_id} chain={c} />
           ))}
         </div>
       )}
+
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
+          Page {data?.pagination.page ?? page} of {data?.pagination.totalPages ?? 1} ·{' '}
+          {(data?.pagination.total ?? 0).toLocaleString()} matching requests
+          {loading ? ' · loading...' : ''}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setPage((current) => Math.max(1, current - 1))}
+            disabled={loading || page <= 1}
+            className="rounded-md border px-3 py-1.5 text-xs disabled:opacity-40"
+            style={{
+              borderColor: 'var(--surface-border)',
+              color: 'var(--text-secondary)',
+              background: 'var(--surface)',
+            }}
+          >
+            Previous
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              setPage((current) => Math.min(data?.pagination.totalPages ?? current + 1, current + 1))
+            }
+            disabled={loading || page >= (data?.pagination.totalPages ?? 1)}
+            className="rounded-md border px-3 py-1.5 text-xs disabled:opacity-40"
+            style={{
+              borderColor: 'var(--surface-border)',
+              color: 'var(--text-secondary)',
+              background: 'var(--surface)',
+            }}
+          >
+            Next
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

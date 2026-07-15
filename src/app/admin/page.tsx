@@ -1,6 +1,9 @@
 import { headers } from 'next/headers'
 import Link from 'next/link'
-import { AdminRequestList, ChainSummary } from './_components/AdminRequestList'
+import {
+  AdminRequestList,
+  type AdminRequestsPayload,
+} from './_components/AdminRequestList'
 import {
   AdminSubmittedLeads,
   type AdminSubmittedLeadsPayload,
@@ -18,7 +21,7 @@ export const dynamic = 'force-dynamic'
 type AdminView = 'lab' | 'economics' | 'fulfillment'
 type FulfillmentTab = 'requests' | 'submitted-leads'
 
-async function fetchChains(): Promise<ChainSummary[]> {
+async function fetchChains(): Promise<AdminRequestsPayload> {
   // Build the absolute URL so this works on Vercel, on EC2 behind
   // nginx, or in dev. Next 15 makes headers() async, so we await it.
   const h = await headers()
@@ -36,8 +39,7 @@ async function fetchChains(): Promise<ChainSummary[]> {
   if (!res.ok) {
     throw new Error(`API returned ${res.status}: ${await res.text()}`)
   }
-  const body = await res.json()
-  return body.chains ?? []
+  return (await res.json()) as AdminRequestsPayload
 }
 
 async function fetchSubmittedLeads(): Promise<AdminSubmittedLeadsPayload> {
@@ -46,7 +48,14 @@ async function fetchSubmittedLeads(): Promise<AdminSubmittedLeadsPayload> {
   const proto = h.get('x-forwarded-proto') ?? 'https'
   const base = host ? `${proto}://${host}` : ''
   const auth = h.get('authorization')
-  const res = await fetch(`${base}/api/admin/fulfillment-submissions`, {
+  const end = new Date()
+  const start = new Date(end)
+  start.setUTCDate(end.getUTCDate() - 6)
+  const params = new URLSearchParams({
+    from: start.toISOString().slice(0, 10),
+    to: end.toISOString().slice(0, 10),
+  })
+  const res = await fetch(`${base}/api/admin/fulfillment-submissions?${params.toString()}`, {
     cache: 'no-store',
     headers: auth ? { authorization: auth } : undefined,
   })
@@ -156,7 +165,7 @@ export default async function AdminLandingPage({
   const params = await searchParams
   const activeView = getAdminView(params.view)
   const fulfillmentTab = getFulfillmentTab(params.tab)
-  let chains: ChainSummary[] = []
+  let requestsPayload: AdminRequestsPayload | null = null
   const labPayload: AdminResearchLabPayload | null = null
   let economicsPayload: ResearchLabEconomicsPayload | null = null
   let submittedLeadsPayload: AdminSubmittedLeadsPayload | null = null
@@ -169,7 +178,7 @@ export default async function AdminLandingPage({
     } else if (activeView === 'fulfillment' && fulfillmentTab === 'submitted-leads') {
       submittedLeadsPayload = await fetchSubmittedLeads()
     } else if (activeView === 'fulfillment') {
-      chains = await fetchChains()
+      requestsPayload = await fetchChains()
     }
   } catch (e) {
     error =
@@ -197,7 +206,7 @@ export default async function AdminLandingPage({
       ) : (
         <>
           <FulfillmentTabs active={fulfillmentTab} />
-          <AdminRequestList chains={chains} error={error} />
+          <AdminRequestList payload={requestsPayload} error={error} />
         </>
       )}
     </div>

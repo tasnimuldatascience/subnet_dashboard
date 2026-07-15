@@ -87,6 +87,7 @@ export interface RejectionDailyBucket {
 
 export interface AdminSubmittedLeadsPayload {
   leads: AdminSubmittedLead[]
+  requestIcpById: Record<string, Record<string, unknown> | null>
   daily: SubmittedLeadDailyBucket[]
   rejectionDaily: RejectionDailyBucket[]
   rejectTypes: Array<{ reason: string; count: number }>
@@ -1234,7 +1235,12 @@ export function AdminSubmittedLeads({
               {leads.map((lead) => (
                 <tr
                   key={`${lead.submissionId}:${lead.leadId}`}
-                  onClick={() => setSelectedLead(lead)}
+                  onClick={() =>
+                    setSelectedLead({
+                      ...lead,
+                      requestIcp: data?.requestIcpById?.[lead.requestId] ?? null,
+                    })
+                  }
                   className="hover-bg-warm cursor-pointer transition-colors"
                 >
                   <td className="px-2 py-2 border-b align-top" style={{ borderColor: 'var(--surface-border)' }}>

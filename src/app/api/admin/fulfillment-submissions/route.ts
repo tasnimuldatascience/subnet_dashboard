@@ -5,7 +5,7 @@ import { buildXlsxArrayBuffer, type XlsxCell } from '@/lib/xlsx-export'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-const SUBMISSION_BATCH_SIZE = 100
+const SUBMISSION_BATCH_SIZE = 1000
 const MAX_SUBMISSIONS = 4000
 const CONSENSUS_BATCH_SIZE = 1000
 const SCORE_BATCH_SIZE = 1000
@@ -19,6 +19,7 @@ type FulfillmentSubmissionRow = {
   request_id: string
   miner_hotkey: string | null
   num_leads: number | null
+  submitted_at: string | null
   revealed: boolean | null
   revealed_at: string | null
   lead_hashes: Array<{ lead_id?: string }> | null
@@ -70,7 +71,9 @@ type MinerDailyRow = {
 
 type ChartConsensusRow = {
   request_id: string
+  submission_id: string
   lead_id: string
+  miner_hotkey: string | null
   consensus_final_score: number | null
   is_winner: boolean
   is_chain_held: boolean
@@ -92,15 +95,6 @@ type RequestOption = {
   company: string | null
 }
 
-type TransparencyCommitRow = {
-  ts: string
-  payload: {
-    submission_id?: string
-    request_id?: string
-    submission_timestamp?: string
-  } | null
-}
-
 type SubmittedLeadStatus = 'committed' | 'pending' | 'approved' | 'denied'
 
 type CumulativeStats = {
@@ -113,18 +107,19 @@ type CumulativeStats = {
 
 type FulfillmentAnalyticsDataset = {
   submissions: FulfillmentSubmissionRow[]
-  commitAtBySubmission: Map<string, string>
   consensusByLead: Map<string, ConsensusRow>
   requestById: Map<string, RequestRow>
   requestOptions: RequestOption[]
   chartConsensusRows: ChartConsensusRow[]
   scoreByLead: Map<string, ScoreRow>
   cumulativeStats: CumulativeStats
+  cacheKey: string
   loadedAt: number
 }
 
 let cachedDataset: FulfillmentAnalyticsDataset | null = null
 let pendingDatasetLoad: Promise<FulfillmentAnalyticsDataset> | null = null
+let pendingDatasetKey: string | null = null
 
 function dateKey(value: string | null | undefined): string {
   if (!value) return 'Unknown'
@@ -224,18 +219,23 @@ function chunks<T>(items: T[], size: number): T[][] {
 
 async function fetchSubmissions(
   supabase: ReturnType<typeof getAdminSupabase>,
+  dateFrom: string | null,
+  dateTo: string | null,
 ): Promise<{
   data: FulfillmentSubmissionRow[]
   error: ({ message: string } & Record<string, unknown>) | null
 }> {
   const all: FulfillmentSubmissionRow[] = []
   for (let offset = 0; offset < MAX_SUBMISSIONS; offset += SUBMISSION_BATCH_SIZE) {
-    const { data, error } = await supabase
+    let query = supabase
       .from('fulfillment_submissions')
       .select(
-        'submission_id, request_id, miner_hotkey, revealed, revealed_at, lead_hashes, lead_data',
+        'submission_id, request_id, miner_hotkey, num_leads, submitted_at, revealed, revealed_at, lead_hashes, lead_data',
       )
-      .order('revealed_at', { ascending: false })
+    if (dateFrom) query = query.gte('submitted_at', dateFrom)
+    if (dateTo) query = query.lte('submitted_at', dateTo)
+    const { data, error } = await query
+      .order('submitted_at', { ascending: false })
       .range(offset, offset + SUBMISSION_BATCH_SIZE - 1)
 
     if (error) {
@@ -252,12 +252,34 @@ async function fetchSubmissions(
   return { data: all, error: null }
 }
 
+async function fetchSubmissionsByIds(
+  supabase: ReturnType<typeof getAdminSupabase>,
+  submissionIds: string[],
+): Promise<{ data: FulfillmentSubmissionRow[]; error: { message: string } | null }> {
+  const results = await Promise.all(
+    chunks(submissionIds, 100).map((group) =>
+      supabase
+        .from('fulfillment_submissions')
+        .select(
+          'submission_id, request_id, miner_hotkey, num_leads, submitted_at, revealed, revealed_at, lead_hashes, lead_data',
+        )
+        .in('submission_id', group),
+    ),
+  )
+  const all: FulfillmentSubmissionRow[] = []
+  for (const { data, error } of results) {
+    if (error) return { data: all, error: { message: error.message || 'submission lookup failed' } }
+    all.push(...((data ?? []) as FulfillmentSubmissionRow[]))
+  }
+  return { data: all, error: null }
+}
+
 async function fetchConsensusRows(
   supabase: ReturnType<typeof getAdminSupabase>,
   submissionIds: string[],
 ): Promise<{ data: ConsensusRow[]; error: { message: string } | null }> {
-  const all: ConsensusRow[] = []
-  for (const group of chunks(submissionIds, 100)) {
+  const results = await Promise.all(chunks(submissionIds, 100).map(async (group) => {
+    const rows: ConsensusRow[] = []
     let offset = 0
     while (true) {
       const { data, error } = await supabase
@@ -271,13 +293,19 @@ async function fetchConsensusRows(
         .range(offset, offset + CONSENSUS_BATCH_SIZE - 1)
 
       if (error) {
-        return { data: all, error: { message: error.message || 'consensus batch failed' } }
+        return { data: rows, error: { message: error.message || 'consensus batch failed' } }
       }
       const batch = (data ?? []) as unknown as ConsensusRow[]
-      all.push(...batch)
+      rows.push(...batch)
       if (batch.length < CONSENSUS_BATCH_SIZE) break
       offset += CONSENSUS_BATCH_SIZE
     }
+    return { data: rows, error: null }
+  }))
+  const all: ConsensusRow[] = []
+  for (const result of results) {
+    if (result.error) return { data: all, error: result.error }
+    all.push(...result.data)
   }
   return { data: all, error: null }
 }
@@ -286,13 +314,16 @@ async function fetchRequestRows(
   supabase: ReturnType<typeof getAdminSupabase>,
   requestIds: string[],
 ): Promise<{ data: RequestRow[]; error: { message: string } | null }> {
+  const results = await Promise.all(
+    chunks(requestIds, 100).map((group) =>
+      supabase
+        .from('fulfillment_requests')
+        .select('request_id, internal_label, company, created_at, icp_details, required_attributes')
+        .in('request_id', group),
+    ),
+  )
   const all: RequestRow[] = []
-  for (const group of chunks(requestIds, 100)) {
-    const { data, error } = await supabase
-      .from('fulfillment_requests')
-      .select('request_id, internal_label, company, created_at, icp_details, required_attributes')
-      .in('request_id', group)
-
+  for (const { data, error } of results) {
     if (error) {
       return { data: all, error: { message: error.message || 'request batch failed' } }
     }
@@ -304,6 +335,8 @@ async function fetchRequestRows(
 async function fetchScoreRows(
   supabase: ReturnType<typeof getAdminSupabase>,
   requestIds: string[],
+  dateFrom: string | null,
+  dateTo: string | null,
 ): Promise<{ data: ScoreRow[]; error: { message: string } | null }> {
   const all: ScoreRow[] = []
   for (const group of chunks(requestIds, 100)) {
@@ -314,10 +347,13 @@ async function fetchScoreRows(
     ) {
       const remaining = MAX_SCORE_ROWS - all.length
       const batchSize = Math.min(SCORE_BATCH_SIZE, remaining)
-      const { data, error } = await supabase
+      let query = supabase
         .from('fulfillment_scores')
         .select('request_id, lead_id, miner_hotkey, failure_reason, failure_detail, final_score, scored_at')
         .in('request_id', group)
+      if (dateFrom) query = query.gte('scored_at', dateFrom)
+      if (dateTo) query = query.lte('scored_at', dateTo)
+      const { data, error } = await query
         .order('scored_at', { ascending: false })
         .range(offset, offset + batchSize - 1)
 
@@ -336,13 +372,18 @@ async function fetchScoreRows(
 
 async function fetchChartConsensusRows(
   supabase: ReturnType<typeof getAdminSupabase>,
+  dateFrom: string | null,
+  dateTo: string | null,
 ): Promise<{ data: ChartConsensusRow[]; error: { message: string } | null }> {
   const all: ChartConsensusRow[] = []
   for (let offset = 0; ; offset += CONSENSUS_BATCH_SIZE) {
-    const { data, error } = await supabase
+    let query = supabase
       .from('fulfillment_score_consensus')
-      .select('request_id, lead_id, consensus_final_score, is_winner, is_chain_held, computed_at')
+      .select('request_id, submission_id, lead_id, miner_hotkey, consensus_final_score, is_winner, is_chain_held, computed_at')
       .not('computed_at', 'is', null)
+    if (dateFrom) query = query.gte('computed_at', dateFrom)
+    if (dateTo) query = query.lte('computed_at', dateTo)
+    const { data, error } = await query
       .order('computed_at', { ascending: false })
       .range(offset, offset + CONSENSUS_BATCH_SIZE - 1)
 
@@ -359,38 +400,81 @@ async function fetchChartConsensusRows(
 
 async function loadAnalyticsDataset(
   supabase: ReturnType<typeof getAdminSupabase>,
-  forceRefresh = false,
+  {
+    forceRefresh = false,
+    dateFrom,
+    dateTo,
+  }: {
+    forceRefresh?: boolean
+    dateFrom: string | null
+    dateTo: string | null
+  },
 ): Promise<FulfillmentAnalyticsDataset> {
   const now = Date.now()
+  const cacheKey = `${dateFrom ?? ''}|${dateTo ?? ''}`
   if (
     !forceRefresh &&
     cachedDataset &&
+    cachedDataset.cacheKey === cacheKey &&
     now - cachedDataset.loadedAt < DATASET_CACHE_TTL_MS
   ) {
     return cachedDataset
   }
-  if (!forceRefresh && pendingDatasetLoad) return pendingDatasetLoad
+  if (!forceRefresh && pendingDatasetLoad && pendingDatasetKey === cacheKey) {
+    return pendingDatasetLoad
+  }
 
-  pendingDatasetLoad = (async () => {
-    const { data: submissionsData, error: submissionsErr } = await fetchSubmissions(supabase)
-    if (submissionsErr) {
-      throw new Error(`Supabase submissions error: ${submissionsErr.message}`)
+  const datasetLoad = (async () => {
+    // Date filters are applied before moving JSON lead payloads over the Data
+    // API. The previous implementation loaded 4,000 submissions plus every
+    // consensus row even though the UI opens on a seven-day window.
+    const [submissionResult, chartConsensusResult, totalConsensusResult, totalApprovedResult, totalWinnersResult] = await Promise.all([
+      fetchSubmissions(supabase, dateFrom, dateTo),
+      fetchChartConsensusRows(supabase, dateFrom, dateTo),
+      supabase.from('fulfillment_score_consensus')
+        .select('*', { count: 'exact', head: true }),
+      supabase.from('fulfillment_score_consensus')
+        .select('*', { count: 'exact', head: true })
+        .or('is_winner.eq.true,is_chain_held.eq.true'),
+      supabase.from('fulfillment_score_consensus')
+        .select('*', { count: 'exact', head: true })
+        .eq('is_winner', true),
+    ])
+    if (submissionResult.error) {
+      throw new Error(`Supabase submissions error: ${submissionResult.error.message}`)
+    }
+    if (chartConsensusResult.error) {
+      throw new Error(`Supabase chart consensus error: ${chartConsensusResult.error.message}`)
     }
 
-    const submissions = (submissionsData ?? []) as FulfillmentSubmissionRow[]
-    const submissionIds = submissions.map((s) => s.submission_id)
-    const requestIds = Array.from(new Set(submissions.map((s) => s.request_id)))
+    const submissionById = new Map(
+      submissionResult.data.map((submission) => [submission.submission_id, submission]),
+    )
+    // A lead submitted before the selected window can be validated inside it.
+    // Pull those submission payloads by id so table and chart activity agree.
+    if (dateFrom || dateTo) {
+      const missingSubmissionIds = Array.from(
+        new Set(
+          chartConsensusResult.data
+            .map((row) => row.submission_id)
+            .filter((submissionId) => !submissionById.has(submissionId)),
+        ),
+      )
+      if (missingSubmissionIds.length > 0) {
+        const missingResult = await fetchSubmissionsByIds(supabase, missingSubmissionIds)
+        if (missingResult.error) {
+          throw new Error(`Supabase submission lookup error: ${missingResult.error.message}`)
+        }
+        for (const submission of missingResult.data) {
+          submissionById.set(submission.submission_id, submission)
+        }
+      }
+    }
 
-    // Run independent queries in parallel for faster load
-    const [commitResult, consensusResult, requestResult] = await Promise.all([
-      submissionIds.length > 0
-        ? supabase
-            .from('transparency_log')
-            .select('ts, payload')
-            .eq('event_type', 'FULFILLMENT_COMMIT')
-            .order('ts', { ascending: false })
-            .limit(MAX_SUBMISSIONS * 2)
-        : Promise.resolve({ data: [] }),
+    const submissions = Array.from(submissionById.values())
+    const submissionIds = submissions.map((submission) => submission.submission_id)
+    const requestIds = Array.from(new Set(submissions.map((submission) => submission.request_id)))
+    const [consensusResult, requestResult] = await Promise.all([
       submissionIds.length > 0
         ? fetchConsensusRows(supabase, submissionIds)
         : Promise.resolve({ data: [] as ConsensusRow[], error: null }),
@@ -399,19 +483,8 @@ async function loadAnalyticsDataset(
         : Promise.resolve({ data: [] as RequestRow[], error: null }),
     ])
 
-    const commitAtBySubmission = new Map<string, string>()
-    const submissionIdSet = new Set(submissionIds)
-    for (const row of ((commitResult as { data: TransparencyCommitRow[] }).data ?? []) as TransparencyCommitRow[]) {
-      const submissionId = row.payload?.submission_id
-      if (!submissionId || !submissionIdSet.has(submissionId)) continue
-      commitAtBySubmission.set(
-        submissionId,
-        row.payload?.submission_timestamp ?? row.ts,
-      )
-    }
-
     const consensusByLead = new Map<string, ConsensusRow>()
-    if ('error' in consensusResult && consensusResult.error) {
+    if (consensusResult.error) {
       throw new Error(`Supabase consensus error: ${consensusResult.error.message}`)
     }
     for (const row of consensusResult.data) {
@@ -419,7 +492,7 @@ async function loadAnalyticsDataset(
     }
 
     const requestById = new Map<string, RequestRow>()
-    if ('error' in requestResult && requestResult.error) {
+    if (requestResult.error) {
       throw new Error(`Supabase request error: ${requestResult.error.message}`)
     }
     for (const row of requestResult.data) {
@@ -433,21 +506,6 @@ async function loadAnalyticsDataset(
       }))
       .sort((a, b) => a.label.localeCompare(b.label))
 
-    // Run chart consensus + cumulative stats in parallel
-    const [chartConsensusResult, totalConsensusResult, totalApprovedResult, totalWinnersResult] = await Promise.all([
-      fetchChartConsensusRows(supabase),
-      supabase.from('fulfillment_score_consensus')
-        .select('*', { count: 'exact', head: true }),
-      supabase.from('fulfillment_score_consensus')
-        .select('*', { count: 'exact', head: true })
-        .or('is_winner.eq.true,is_chain_held.eq.true'),
-      supabase.from('fulfillment_score_consensus')
-        .select('*', { count: 'exact', head: true })
-        .eq('is_winner', true),
-    ])
-    if (chartConsensusResult.error) {
-      throw new Error(`Supabase chart consensus error: ${chartConsensusResult.error.message}`)
-    }
     const chartConsensusRows = chartConsensusResult.data
     const totalConsensus = totalConsensusResult.count ?? 0
     const totalApproved = totalApprovedResult.count ?? 0
@@ -459,7 +517,12 @@ async function loadAnalyticsDataset(
       new Set([...requestIds, ...chartConsensusRows.map((row) => row.request_id)]),
     )
     if (scoreRequestIds.length > 0) {
-      const { data: scoreData, error: scoreErr } = await fetchScoreRows(supabase, scoreRequestIds)
+      const { data: scoreData, error: scoreErr } = await fetchScoreRows(
+        supabase,
+        scoreRequestIds,
+        dateFrom,
+        dateTo,
+      )
       if (scoreErr) {
         throw new Error(`Supabase score error: ${scoreErr.message}`)
       }
@@ -486,23 +549,28 @@ async function loadAnalyticsDataset(
 
     const dataset: FulfillmentAnalyticsDataset = {
       submissions,
-      commitAtBySubmission,
       consensusByLead,
       requestById,
       requestOptions,
       chartConsensusRows,
       scoreByLead,
       cumulativeStats,
+      cacheKey,
       loadedAt: Date.now(),
     }
     cachedDataset = dataset
     return dataset
   })()
+  pendingDatasetLoad = datasetLoad
+  pendingDatasetKey = cacheKey
 
   try {
-    return await pendingDatasetLoad
+    return await datasetLoad
   } finally {
-    pendingDatasetLoad = null
+    if (pendingDatasetLoad === datasetLoad) {
+      pendingDatasetLoad = null
+      pendingDatasetKey = null
+    }
   }
 }
 
@@ -531,7 +599,11 @@ export async function GET(request: NextRequest) {
 
   let dataset: FulfillmentAnalyticsDataset
   try {
-    dataset = await loadAnalyticsDataset(supabase, searchParams.get('refresh') === '1')
+    dataset = await loadAnalyticsDataset(supabase, {
+      forceRefresh: searchParams.get('refresh') === '1',
+      dateFrom,
+      dateTo,
+    })
   } catch (e) {
     const message = e instanceof Error ? e.message : 'Failed to load fulfillment analytics dataset'
     return NextResponse.json(
@@ -542,7 +614,6 @@ export async function GET(request: NextRequest) {
 
   const {
     submissions,
-    commitAtBySubmission,
     consensusByLead,
     requestById,
     requestOptions,
@@ -586,7 +657,7 @@ export async function GET(request: NextRequest) {
           : null
         const submittedAt =
           submission.revealed_at ??
-          commitAtBySubmission.get(submission.submission_id) ??
+          submission.submitted_at ??
           request?.created_at ??
           null
         const status = classifyLead(submission, consensus)
@@ -653,10 +724,7 @@ export async function GET(request: NextRequest) {
 
   const baseFilteredConsensus = chartConsensusRows.filter((row) => {
     if (requestFilter !== 'all' && row.request_id !== requestFilter) return false
-    if (minerFilter !== 'all') {
-      const scoreRow = scoreByLead.get(`${row.request_id}:${row.lead_id}`)
-      if (scoreRow?.miner_hotkey !== minerFilter) return false
-    }
+    if (minerFilter !== 'all' && row.miner_hotkey !== minerFilter) return false
     return inDateRange(row.computed_at, dateFrom, dateTo)
   })
 
@@ -927,9 +995,21 @@ export async function GET(request: NextRequest) {
     return xlsxResponse('submitted-leads.xlsx', headers, rows)
   }
 
+  const requestIcpById = Object.fromEntries(
+    pageLeads.map((lead) => [lead.requestId, lead.requestIcp] as const),
+  )
+  const compactPageLeads = pageLeads.map((lead) => ({
+    ...lead,
+    // Request ICP documents can be tens of KB and repeat for every lead in
+    // the same request. Send each once and hydrate it when the detail panel
+    // opens on the client.
+    requestIcp: null,
+  }))
+
   return NextResponse.json(
     {
-      leads: pageLeads,
+      leads: compactPageLeads,
+      requestIcpById,
       daily,
       rejectionDaily,
       rejectTypes,

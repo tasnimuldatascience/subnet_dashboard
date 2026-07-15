@@ -3,7 +3,7 @@
  *
  * Lists every fulfillment request the operator can see, folded into
  * one row per CLIENT REQUEST (i.e. one row per chain, leaf-rooted).
- * Returns up to LIST_LIMIT chains, ordered by most-recent activity.
+ * Returns a bounded page of chains, newest leaf first.
  *
  * For each chain we surface:
  *   - leaf row (current status, current num_leads target after recycles)
@@ -17,20 +17,33 @@
  * read every page load.
  */
 
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import {
   getAdminSupabase,
   AdminFulfillmentRequest,
   IcpDetails,
 } from '@/lib/admin-supabase'
-import { buildChainViews } from '@/lib/admin-format'
+import { buildChainViews, statusTone } from '@/lib/admin-format'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-const LIST_LIMIT = 500
 const REQUESTS_PAGE_SIZE = 1000
 const COUNT_CHUNK_SIZE = 100
+const DEFAULT_PAGE_SIZE = 20
+const MAX_PAGE_SIZE = 50
+
+type FilterKey = 'all' | 'open' | 'fulfilled' | 'partial' | 'recycled'
+
+type RequestMetadataRow = {
+  request_id: string
+  internal_label: string | null
+  company: string | null
+  status: string
+  num_leads: number
+  created_at: string
+  successor_request_id: string | null
+}
 
 interface ChainSummary {
   // Stable identifier for the chain. Always equals the LEAF request_id
@@ -109,9 +122,7 @@ function chunks<T>(items: T[], size: number): T[][] {
 
 type SubmissionLeadCountRow = {
   request_id: string
-  submission_id: string
   lead_hashes: Array<{ lead_id?: string | null }> | null
-  lead_data: Array<{ lead_id?: string | null }> | null
 }
 
 function submittedLeadCount(row: SubmissionLeadCountRow): number {
@@ -119,13 +130,40 @@ function submittedLeadCount(row: SubmissionLeadCountRow): number {
   for (const entry of row.lead_hashes ?? []) {
     if (entry.lead_id) leadIds.add(entry.lead_id)
   }
-  for (const entry of row.lead_data ?? []) {
-    if (entry.lead_id) leadIds.add(entry.lead_id)
-  }
   return leadIds.size
 }
 
-export async function GET() {
+function numberParam(value: string | null, fallback: number, max: number): number {
+  const parsed = Number.parseInt(value ?? '', 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback
+  return Math.min(parsed, max)
+}
+
+function filterKey(value: string | null): FilterKey {
+  return value === 'open' ||
+    value === 'fulfilled' ||
+    value === 'partial' ||
+    value === 'recycled'
+    ? value
+    : 'all'
+}
+
+function matchesFilter(status: string, filter: FilterKey): boolean {
+  if (filter === 'all') return true
+  const tone = statusTone(status)
+  return filter === 'open' ? tone === 'open' || tone === 'pending' : tone === filter
+}
+
+export async function GET(request: NextRequest) {
+  const requestedPage = numberParam(request.nextUrl.searchParams.get('page'), 1, 10_000)
+  const pageSize = numberParam(
+    request.nextUrl.searchParams.get('pageSize'),
+    DEFAULT_PAGE_SIZE,
+    MAX_PAGE_SIZE,
+  )
+  const filter = filterKey(request.nextUrl.searchParams.get('status'))
+  const query = (request.nextUrl.searchParams.get('q') ?? '').trim().toLowerCase()
+
   let supabase
   try {
     supabase = getAdminSupabase()
@@ -134,41 +172,55 @@ export async function GET() {
     return NextResponse.json({ error: msg }, { status: 503 })
   }
 
-  // Pull EVERY request row, paginated past PostgREST's per-query cap.
+  // Pull the lightweight chain graph for every request, paginated past
+  // PostgREST's per-query cap. Heavy ICP JSON is fetched only for the rows on
+  // the requested chain page below.
   // Recycle chains run dozens of cycles deep, so a fixed "newest N
   // rows" window silently drops whole chains whose leaf falls outside
   // it (the operator then can't find requests they know exist). Row
   // shape is small and the table is bounded by real client demand, so
   // a full scan is fine here.
-  const requestsData: Array<{
-    request_id: string
-    internal_label: string | null
-    company: string | null
-    status: string
-    num_leads: number
-    icp_details: IcpDetails | null
-    created_at: string
-    window_start: string | null
-    window_end: string | null
-    successor_request_id: string | null
-  }> = []
-  for (let offset = 0; ; offset += REQUESTS_PAGE_SIZE) {
-    const { data, error } = await supabase
+  const selectRequestPage = (from: number, to: number, withCount = false) =>
+    supabase
       .from('fulfillment_requests')
       .select(
-        'request_id, internal_label, company, status, num_leads, icp_details, created_at, window_start, window_end, successor_request_id',
+        'request_id, internal_label, company, status, num_leads, created_at, successor_request_id',
+        withCount ? { count: 'exact' } : undefined,
       )
       .order('created_at', { ascending: false })
-      .range(offset, offset + REQUESTS_PAGE_SIZE - 1)
-    if (error) {
-      return NextResponse.json(
-        { error: `Supabase error: ${error.message}` },
-        { status: 502 },
-      )
-    }
-    requestsData.push(...((data ?? []) as typeof requestsData))
-    if (!data || data.length < REQUESTS_PAGE_SIZE) break
+      .order('request_id', { ascending: false })
+      .range(from, to)
+
+  const firstPage = await selectRequestPage(0, REQUESTS_PAGE_SIZE - 1, true)
+  if (firstPage.error) {
+    return NextResponse.json(
+      { error: `Supabase error: ${firstPage.error.message}` },
+      { status: 502 },
+    )
   }
+
+  const requestRowCount = firstPage.count ?? firstPage.data?.length ?? 0
+  const remainingOffsets: number[] = []
+  for (let offset = REQUESTS_PAGE_SIZE; offset < requestRowCount; offset += REQUESTS_PAGE_SIZE) {
+    remainingOffsets.push(offset)
+  }
+  const remainingPages = await Promise.all(
+    remainingOffsets.map((offset) =>
+      selectRequestPage(offset, offset + REQUESTS_PAGE_SIZE - 1),
+    ),
+  )
+  const failedPage = remainingPages.find((result) => result.error)
+  if (failedPage?.error) {
+    return NextResponse.json(
+      { error: `Supabase error: ${failedPage.error.message}` },
+      { status: 502 },
+    )
+  }
+
+  const requestsData = [
+    ...((firstPage.data ?? []) as RequestMetadataRow[]),
+    ...remainingPages.flatMap((result) => (result.data ?? []) as RequestMetadataRow[]),
+  ]
 
   const rows: AdminFulfillmentRequest[] = (requestsData || []).map((r) => ({
     request_id: r.request_id,
@@ -176,20 +228,67 @@ export async function GET() {
     company: r.company,
     status: r.status,
     num_leads: r.num_leads,
-    icp_details: r.icp_details,
+    icp_details: null,
     created_at: r.created_at,
-    window_start: r.window_start,
-    window_end: r.window_end,
+    window_start: null,
+    window_end: null,
     successor_request_id: r.successor_request_id,
   }))
 
-  const chains = buildChainViews(rows)
+  const allChains = buildChainViews(rows)
+  const counts: Record<FilterKey, number> = {
+    all: allChains.length,
+    open: 0,
+    fulfilled: 0,
+    partial: 0,
+    recycled: 0,
+  }
+  let totalQuota = 0
+  for (const chain of allChains) {
+    const root = chain.predecessors[0] ?? chain.leaf
+    totalQuota += root.num_leads ?? chain.leaf.num_leads
+    const tone = statusTone(chain.leaf.status)
+    if (tone === 'open' || tone === 'pending') counts.open += 1
+    else if (tone === 'fulfilled') counts.fulfilled += 1
+    else if (tone === 'partial') counts.partial += 1
+    else if (tone === 'recycled') counts.recycled += 1
+  }
 
-  // Pull approved counts per chain in batches. Final fulfilled chains mark
-  // winners with is_winner=true, while in-flight/partial chains can already
-  // have accepted candidates via is_chain_held or a positive consensus score.
-  // The admin list calls this "Approved", so include all three states.
-  const allChainRequestIds = chains.flatMap((c) => [
+  const filteredChains = allChains
+    .filter((chain) => {
+      const root = chain.predecessors[0] ?? chain.leaf
+      if (!matchesFilter(chain.leaf.status, filter)) return false
+      if (!query) return true
+      return [
+        chain.leaf.internal_label,
+        root.internal_label,
+        chain.leaf.company,
+        root.company,
+        chain.leaf.request_id,
+        chain.rootId,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(query)
+    })
+    // A new recycle creates a new leaf, so leaf creation time is a stable,
+    // cheap proxy for recent chain activity before page-level metrics load.
+    .sort((a, b) => {
+      const byCreated = b.leaf.created_at.localeCompare(a.leaf.created_at)
+      return byCreated || b.leaf.request_id.localeCompare(a.leaf.request_id)
+    })
+
+  const totalFiltered = filteredChains.length
+  const totalPages = Math.max(1, Math.ceil(totalFiltered / pageSize))
+  const page = Math.min(requestedPage, totalPages)
+  const from = (page - 1) * pageSize
+  const chains = filteredChains.slice(from, from + pageSize)
+
+  // Pull approved counts only for the visible chain page. Final fulfilled
+  // chains mark winners with is_winner=true, while in-flight/partial chains
+  // can already have accepted candidates via is_chain_held.
+  const pageChainRequestIds = chains.flatMap((c) => [
     ...c.predecessors.map((p) => p.request_id),
     c.leaf.request_id,
   ])
@@ -201,12 +300,11 @@ export async function GET() {
 
   let winnerCounts: Map<string, number> = new Map()
   const latestWinnerAt: Map<string, string> = new Map()
-  if (allChainRequestIds.length > 0) {
+  if (pageChainRequestIds.length > 0) {
     type WinnerRow = {
       request_id: string
       lead_id: string
       computed_at: string
-      consensus_final_score: number | null
       is_winner: boolean
       is_chain_held: boolean
     }
@@ -216,12 +314,12 @@ export async function GET() {
     // rows), so the chunked .in() queries run concurrently instead of
     // serially — otherwise this loop alone would add tens of seconds.
     const winnerResults = await Promise.all(
-      chunks(allChainRequestIds, COUNT_CHUNK_SIZE).map((group) =>
+      chunks(pageChainRequestIds, COUNT_CHUNK_SIZE).map((group) =>
         supabase
           .from('fulfillment_score_consensus')
-          .select('request_id, lead_id, computed_at, consensus_final_score, is_winner, is_chain_held')
+          .select('request_id, lead_id, computed_at, is_winner, is_chain_held')
           .in('request_id', group)
-          .or('is_winner.eq.true,is_chain_held.eq.true,consensus_final_score.gt.0'),
+          .or('is_winner.eq.true,is_chain_held.eq.true'),
       ),
     )
     for (const { data, error } of winnerResults) {
@@ -261,13 +359,13 @@ export async function GET() {
   }
 
   const submittedLeadCounts = new Map<string, number>()
-  if (allChainRequestIds.length > 0) {
+  if (pageChainRequestIds.length > 0) {
     let submissionsErr: { message: string } | null = null
     const submissionResults = await Promise.all(
-      chunks(allChainRequestIds, COUNT_CHUNK_SIZE).map((group) =>
+      chunks(pageChainRequestIds, COUNT_CHUNK_SIZE).map((group) =>
         supabase
           .from('fulfillment_submissions')
-          .select('request_id, submission_id, lead_hashes, lead_data')
+          .select('request_id, lead_hashes')
           .in('request_id', group),
       ),
     )
@@ -289,6 +387,24 @@ export async function GET() {
       console.error('[admin] submitted lead count query failed', submissionsErr)
     }
   }
+
+  const detailRequestIds = Array.from(
+    new Set(chains.flatMap((chain) => [chain.rootId, chain.leaf.request_id])),
+  )
+  const { data: detailRows, error: detailError } = detailRequestIds.length
+    ? await supabase
+        .from('fulfillment_requests')
+        .select('request_id, icp_details')
+        .in('request_id', detailRequestIds)
+    : { data: [], error: null }
+  if (detailError) {
+    console.error('[admin] request ICP summary query failed', detailError)
+  }
+  const icpByRequestId = new Map(
+    ((detailRows ?? []) as Array<{ request_id: string; icp_details: IcpDetails | null }>).map(
+      (row) => [row.request_id, row.icp_details] as const,
+    ),
+  )
 
   const summaries: ChainSummary[] = chains.map((c) => {
     const root = c.predecessors[0] ?? c.leaf
@@ -313,17 +429,25 @@ export async function GET() {
       delivered_count: Math.min(delivered, target),
       submitted_leads_count: submittedLeadCounts.get(c.rootId) ?? 0,
       cycle_count: c.predecessors.length + 1,
-      icp_summary: summarizeIcp(leaf.icp_details ?? root.icp_details ?? null),
+      icp_summary: summarizeIcp(
+        icpByRequestId.get(leaf.request_id) ?? icpByRequestId.get(root.request_id) ?? null,
+      ),
       created_at: root.created_at,
       last_activity_at,
     }
   })
 
-  summaries.sort((a, b) => (a.last_activity_at < b.last_activity_at ? 1 : -1))
-  const trimmed = summaries.slice(0, LIST_LIMIT)
-
   return NextResponse.json(
-    { chains: trimmed, total: summaries.length },
+    {
+      chains: summaries,
+      pagination: { page, pageSize, total: totalFiltered, totalPages },
+      counts,
+      totals: {
+        requests: allChains.length,
+        quota: totalQuota,
+        inFlight: counts.open + counts.partial,
+      },
+    },
     {
       headers: {
         'Cache-Control': 'no-store',
