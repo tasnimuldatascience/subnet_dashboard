@@ -706,6 +706,49 @@ export async function fetchMetagraphFresh(): Promise<MetagraphData> {
   return fetchMetagraphFromBittensor()
 }
 
+// The block/epoch clock must never be served from the cached snapshot: the
+// validator submits weights against the live best head
+// (self.subtensor.block in neurons/validator.py), and the snapshot lagged it
+// by 30+ blocks, which misled an operator about the remaining submission
+// window. Fetch the best head (NOT the finalized head, to match the
+// validator's view) with a short timeout on every cached read; on failure
+// the caller keeps the snapshot's block, so a slow RPC still never holds a
+// request hostage.
+const LIVE_BLOCK_TIMEOUT_MS = 4000
+
+async function fetchLiveBlockNumber(): Promise<number | null> {
+  try {
+    const response = await fetch(SUBTENSOR_RPC, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'chain_getHeader',
+        params: [],
+        id: 90,
+      }),
+      signal: AbortSignal.timeout(LIVE_BLOCK_TIMEOUT_MS),
+    })
+    if (!response.ok) return null
+    const json = await response.json() as RpcResponse<{ number?: unknown }>
+    if (json.error || !json.result) return null
+    return parseBlockNumber(json.result.number)
+  } catch {
+    return null
+  }
+}
+
+async function withLiveBlock(data: MetagraphData): Promise<MetagraphData> {
+  const liveBlock = await fetchLiveBlockNumber()
+  if (liveBlock === null) return data
+  if (data.currentBlock !== null && liveBlock < data.currentBlock) {
+    // Never move the clock backwards (an RPC replica briefly behind the
+    // snapshot's head).
+    return data
+  }
+  return { ...data, currentBlock: liveBlock }
+}
+
 // Cached metagraph fetch (handles 1000s of concurrent requests)
 export async function fetchMetagraph(): Promise<MetagraphData> {
   const now = Date.now()
@@ -721,7 +764,7 @@ export async function fetchMetagraph(): Promise<MetagraphData> {
     console.log('[Metagraph] Cache HIT')
     const data = withFreshnessDefaults(cached.data)
     cached.data = data
-    return data
+    return withLiveBlock(data)
   }
 
   // Once a successful snapshot exists, return it immediately and refresh in
@@ -745,7 +788,7 @@ export async function fetchMetagraph(): Promise<MetagraphData> {
       })
     }
     console.log('[Metagraph] Cache STALE - serving snapshot while refreshing')
-    return withFreshnessDefaults(cached.data)
+    return withLiveBlock(withFreshnessDefaults(cached.data))
   }
 
   // If a request is already in flight, wait for it (deduplication)
