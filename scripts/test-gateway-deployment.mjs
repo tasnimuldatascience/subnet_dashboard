@@ -31,6 +31,7 @@ try {
   const {
     fetchGatewayDeployment,
     gatewayCommitFreshness,
+    parseGatewayCommitComparison,
     parseGatewayDeployment,
   } = require(join(outDir, 'gateway-deployment.js'))
 
@@ -71,6 +72,37 @@ try {
   )
   assert.equal(gatewayCommitFreshness(null, '63ced9eb46a2d51c7141164bfbfefe83af15511e1'), 'unknown')
 
+  const sixBehind = parseGatewayCommitComparison(
+    { status: 'ahead', ahead_by: 6 },
+    'c2d33853d6325fa666041134e8b027526adf3716',
+    '63ced9eb46a2d51c7141164bfbfefe83af15511e1',
+  )
+  assert.deepEqual(sixBehind, { freshness: 'behind', commitsBehind: 6 })
+  assert.deepEqual(
+    parseGatewayCommitComparison(
+      { status: 'identical', ahead_by: 0 },
+      'c2d33853d6325fa666041134e8b027526adf3716',
+      'c2d33853d6325fa666041134e8b027526adf3716',
+    ),
+    { freshness: 'latest', commitsBehind: 0 },
+  )
+  assert.deepEqual(
+    parseGatewayCommitComparison(
+      { status: 'behind', ahead_by: 0 },
+      'c2d33853d6325fa666041134e8b027526adf3716',
+      '63ced9eb46a2d51c7141164bfbfefe83af15511e1',
+    ),
+    { freshness: 'ahead', commitsBehind: null },
+  )
+  assert.deepEqual(
+    parseGatewayCommitComparison(
+      { status: 'diverged', ahead_by: 3 },
+      'c2d33853d6325fa666041134e8b027526adf3716',
+      '63ced9eb46a2d51c7141164bfbfefe83af15511e1',
+    ),
+    { freshness: 'diverged', commitsBehind: null },
+  )
+
   let requestedUrl = null
   const fetched = await fetchGatewayDeployment({
     gatewayUrl: 'http://gateway.example:8000/base',
@@ -93,16 +125,19 @@ try {
 
   const routeSource = await readFile(resolve('src/app/api/admin/research-lab/route.ts'), 'utf8')
   assert.match(routeSource, /fetchGatewayDeployment\(\{ gatewayUrl: LEADPOET_GATEWAY_URL \}\)/)
-  assert.match(routeSource, /commitFreshness: gatewayCommitFreshness\(gateway\.commitSha, repository\.commitSha\)/)
+  assert.match(routeSource, /fetchLeadpoetCommitComparison/)
+  assert.match(routeSource, /commitsBehind: comparison\.commitsBehind/)
+  assert.match(routeSource, /LEADPOET_REPOSITORY_COMPARE_API_URL/)
 
   const componentSource = await readFile(resolve('src/app/admin/_components/AdminResearchLab.tsx'), 'utf8')
   assert.match(componentSource, /const isLatest = repository\.commitFreshness === 'latest'/)
   assert.match(componentSource, /const isBehind = repository\.commitFreshness === 'behind'/)
-  assert.match(componentSource, /isBehind \? 'degraded' : 'unknown'/)
-  assert.match(componentSource, /Gateway is behind latest/)
+  assert.match(componentSource, /repository\.commitsBehind === 1 \? 'commit' : 'commits'/)
+  assert.match(componentSource, /commitsBehindCopy \?\? 'Behind'/)
+  assert.match(componentSource, /Gateway is \$\{commitsBehindCopy \?\? 'behind'\} latest/)
   assert.match(componentSource, /label="Gateway commit"/)
 
-  console.log('gateway-deployment: deployed commit parsing, comparison, and status UI wiring passed')
+  console.log('gateway-deployment: deployed commit distance, comparison states, and status UI wiring passed')
 } finally {
   await rm(outDir, { recursive: true, force: true })
 }

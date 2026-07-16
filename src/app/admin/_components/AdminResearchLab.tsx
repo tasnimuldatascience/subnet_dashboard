@@ -370,7 +370,8 @@ type AdminLabRepositorySummary = {
   gatewayLoadedAt: string | null
   gatewayCommitSource: string | null
   gatewayCheckedAt: string | null
-  commitFreshness: 'latest' | 'behind' | 'unknown'
+  commitFreshness: 'latest' | 'behind' | 'ahead' | 'diverged' | 'unknown'
+  commitsBehind: number | null
 }
 
 type AdminLabDataFreshness = {
@@ -1468,21 +1469,35 @@ function LeadpoetRepositoryPopover({
   const hoverPopover = useHoverPopover()
   const isLatest = repository.commitFreshness === 'latest'
   const isBehind = repository.commitFreshness === 'behind'
-  const tone = sourcingModelAlignmentTone(isLatest, isBehind)
+  const isAhead = repository.commitFreshness === 'ahead'
+  const isDiverged = repository.commitFreshness === 'diverged'
+  const isOutOfLine = isBehind || isAhead || isDiverged
+  const tone = sourcingModelAlignmentTone(isLatest, isOutOfLine)
   const gatewayCommitUrl = githubCommitUrl(repository.repositoryUrl, repository.gatewayCommitSha)
   const latestCommitUrl = githubCommitUrl(repository.repositoryUrl, repository.commitSha)
-  const state: AdminHealthState = isLatest ? 'healthy' : isBehind ? 'degraded' : 'unknown'
+  const state: AdminHealthState = isLatest ? 'healthy' : isOutOfLine ? 'degraded' : 'unknown'
+  const commitsBehindCopy = repository.commitsBehind === null
+    ? null
+    : `${repository.commitsBehind} ${repository.commitsBehind === 1 ? 'commit' : 'commits'} behind`
   const stateLabel = isLatest
     ? 'Current'
     : isBehind
-      ? 'Behind'
+      ? commitsBehindCopy ?? 'Behind'
+      : isAhead
+        ? 'Ahead'
+        : isDiverged
+          ? 'Diverged'
       : repository.gatewaySourceAvailable
         ? 'Unknown'
         : 'Unavailable'
   const comparisonCopy = isLatest
     ? `Gateway is on the latest ${repository.branch} commit`
     : isBehind
-      ? `Gateway is behind latest ${repository.branch} commit${repository.commitSha ? ` ${compactHash(repository.commitSha)}` : ''}`
+      ? `Gateway is ${commitsBehindCopy ?? 'behind'} latest ${repository.branch} commit${repository.commitSha ? ` ${compactHash(repository.commitSha)}` : ''}`
+      : isAhead
+        ? `Gateway commit is ahead of current ${repository.branch} commit${repository.commitSha ? ` ${compactHash(repository.commitSha)}` : ''}`
+        : isDiverged
+          ? `Gateway commit has diverged from current ${repository.branch} commit${repository.commitSha ? ` ${compactHash(repository.commitSha)}` : ''}`
       : !repository.gatewaySourceAvailable
         ? 'Gateway commit is unavailable'
         : 'Latest-commit comparison is unavailable'

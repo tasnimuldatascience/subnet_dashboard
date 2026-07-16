@@ -33,7 +33,8 @@ import {
 import { fetchGatewayPcr0Acceptance } from '@/lib/research-lab-pcr0-readiness'
 import {
   fetchGatewayDeployment,
-  gatewayCommitFreshness,
+  parseGatewayCommitComparison,
+  type GatewayCommitComparison,
   type GatewayCommitFreshness,
 } from '@/lib/gateway-deployment'
 import { fetchMetagraph } from '@/lib/metagraph'
@@ -93,6 +94,8 @@ const LEADPOET_REPOSITORY_URL =
   `https://github.com/${LEADPOET_REPOSITORY_OWNER}/${LEADPOET_REPOSITORY_NAME}`
 const LEADPOET_REPOSITORY_API_URL =
   `https://api.github.com/repos/${LEADPOET_REPOSITORY_OWNER}/${LEADPOET_REPOSITORY_NAME}/commits/${LEADPOET_REPOSITORY_BRANCH}`
+const LEADPOET_REPOSITORY_COMPARE_API_URL =
+  `https://api.github.com/repos/${LEADPOET_REPOSITORY_OWNER}/${LEADPOET_REPOSITORY_NAME}/compare`
 const LEADPOET_GATEWAY_URL =
   process.env.LEADPOET_GATEWAY_URL?.trim() ||
   process.env.FULFILLMENT_GATEWAY_URL?.trim() ||
@@ -492,6 +495,7 @@ export type AdminLabRepositorySummary = {
   gatewayCommitSource: string | null
   gatewayCheckedAt: string | null
   commitFreshness: GatewayCommitFreshness
+  commitsBehind: number | null
 }
 
 export type AdminLabDataFreshness = {
@@ -4952,6 +4956,10 @@ async function fetchLeadpoetRepositorySummary(): Promise<AdminLabRepositorySumma
     fetchLeadpoetRepositoryHead(),
     fetchGatewayDeployment({ gatewayUrl: LEADPOET_GATEWAY_URL }),
   ])
+  const comparison = await fetchLeadpoetCommitComparison(
+    gateway.commitSha,
+    repository.commitSha,
+  )
 
   return {
     ...repository,
@@ -4964,23 +4972,51 @@ async function fetchLeadpoetRepositorySummary(): Promise<AdminLabRepositorySumma
     gatewayLoadedAt: gateway.loadedAt,
     gatewayCommitSource: gateway.commitSource,
     gatewayCheckedAt: gateway.checkedAt,
-    commitFreshness: gatewayCommitFreshness(gateway.commitSha, repository.commitSha),
+    commitFreshness: comparison.freshness,
+    commitsBehind: comparison.commitsBehind,
+  }
+}
+
+async function fetchLeadpoetCommitComparison(
+  gatewayCommitSha: string | null,
+  latestCommitSha: string | null,
+): Promise<GatewayCommitComparison> {
+  const fallback = parseGatewayCommitComparison(null, gatewayCommitSha, latestCommitSha)
+  if (fallback.freshness === 'latest' || !gatewayCommitSha || !latestCommitSha) {
+    return fallback
+  }
+
+  try {
+    const response = await fetch(
+      `${LEADPOET_REPOSITORY_COMPARE_API_URL}/${encodeURIComponent(gatewayCommitSha)}...${encodeURIComponent(latestCommitSha)}`,
+      {
+        headers: leadpoetGithubHeaders(),
+        next: { revalidate: 300 },
+        signal: AbortSignal.timeout(5_000),
+      },
+    )
+    if (!response.ok) {
+      throw new Error(`GitHub compare returned ${response.status}`)
+    }
+    return parseGatewayCommitComparison(
+      await response.json(),
+      gatewayCommitSha,
+      latestCommitSha,
+    )
+  } catch (error) {
+    console.warn(
+      '[admin:research-lab] LeadPoet gateway commit distance unavailable',
+      error instanceof Error ? error.message : 'GitHub compare failed',
+    )
+    return fallback
   }
 }
 
 async function fetchLeadpoetRepositoryHead() {
   const checkedAt = new Date().toISOString()
   try {
-    const headers: Record<string, string> = {
-      Accept: 'application/vnd.github+json',
-      'User-Agent': 'leadpoet-dashboard',
-      'X-GitHub-Api-Version': '2022-11-28',
-    }
-    const githubToken = process.env.GITHUB_TOKEN?.trim()
-    if (githubToken) headers.Authorization = `Bearer ${githubToken}`
-
     const response = await fetch(LEADPOET_REPOSITORY_API_URL, {
-      headers,
+      headers: leadpoetGithubHeaders(),
       next: { revalidate: 300 },
       signal: AbortSignal.timeout(5_000),
     })
@@ -5032,6 +5068,17 @@ async function fetchLeadpoetRepositoryHead() {
       checkedAt,
     }
   }
+}
+
+function leadpoetGithubHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    Accept: 'application/vnd.github+json',
+    'User-Agent': 'leadpoet-dashboard',
+    'X-GitHub-Api-Version': '2022-11-28',
+  }
+  const githubToken = process.env.GITHUB_TOKEN?.trim()
+  if (githubToken) headers.Authorization = `Bearer ${githubToken}`
+  return headers
 }
 
 function emptySourcingModelSummary(

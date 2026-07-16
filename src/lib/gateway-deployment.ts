@@ -1,4 +1,14 @@
-export type GatewayCommitFreshness = 'latest' | 'behind' | 'unknown'
+export type GatewayCommitFreshness =
+  | 'latest'
+  | 'behind'
+  | 'ahead'
+  | 'diverged'
+  | 'unknown'
+
+export type GatewayCommitComparison = {
+  freshness: GatewayCommitFreshness
+  commitsBehind: number | null
+}
 
 export type GatewayDeployment = {
   sourceAvailable: boolean
@@ -98,6 +108,30 @@ export function gatewayCommitFreshness(
     : 'behind'
 }
 
+export function parseGatewayCommitComparison(
+  value: unknown,
+  gatewayCommitSha: string | null,
+  latestCommitSha: string | null,
+): GatewayCommitComparison {
+  const fallbackFreshness = gatewayCommitFreshness(gatewayCommitSha, latestCommitSha)
+  if (fallbackFreshness === 'latest') {
+    return { freshness: 'latest', commitsBehind: 0 }
+  }
+
+  const document = objectRecord(value)
+  const status = stringOr(document?.status)?.toLowerCase()
+  const aheadBy = nonNegativeIntegerOrNull(document?.ahead_by)
+
+  if (status === 'identical') return { freshness: 'latest', commitsBehind: 0 }
+  if (status === 'ahead') {
+    return { freshness: 'behind', commitsBehind: aheadBy }
+  }
+  if (status === 'behind') return { freshness: 'ahead', commitsBehind: null }
+  if (status === 'diverged') return { freshness: 'diverged', commitsBehind: null }
+
+  return { freshness: fallbackFreshness, commitsBehind: null }
+}
+
 function unavailableDeployment(unavailableReason: string): GatewayDeployment {
   return {
     sourceAvailable: false,
@@ -126,6 +160,11 @@ function commitShaOrNull(value: unknown): string | null {
 
 function stringOr(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function nonNegativeIntegerOrNull(value: unknown): number | null {
+  const number = typeof value === 'number' ? value : Number(value)
+  return Number.isInteger(number) && number >= 0 ? number : null
 }
 
 function isoStringOr(value: unknown): string | null {
