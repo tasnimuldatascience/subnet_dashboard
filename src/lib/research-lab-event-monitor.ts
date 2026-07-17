@@ -14,6 +14,10 @@ import {
   type ResearchLabImprovementAnalysisDoc,
   type ResearchLabImprovementEvidence,
 } from './research-lab-improvement-analysis'
+import {
+  fetchResearchLabSourceCommit,
+  SOURCING_MODEL_REPOSITORY,
+} from './research-lab-source-commit'
 import { getRuntimeSecretEnvironment } from './runtime-secret-environment'
 
 const EVENT_MONITOR_ID = 'research-lab-events:v1'
@@ -219,7 +223,10 @@ async function executeImprovementWorker(
     if (updateError) throw new Error(`Could not persist improvement analysis: ${updateError.message}`)
     return { claimed: true, eventKey: event.event_key, analyzed: true, error: null }
   } catch (error) {
-    const detail = sanitizeResearchLabProviderError(error, [env.OPENROUTER_KEY ?? ''])
+    const detail = sanitizeResearchLabProviderError(error, [
+      env.OPENROUTER_KEY ?? '',
+      env.SOURCING_MODEL_GITHUB_TOKEN ?? '',
+    ])
     const retryAt = new Date(Date.now() + retryDelayMs(event.analysis_attempt_count)).toISOString()
     await supabase
       .from('ops_research_lab_event_notifications')
@@ -509,6 +516,32 @@ async function collectImprovementEvidence(
   const buildDoc = recordOrEmpty(candidate.candidate_build_doc)
   const providerRows = providerResult.error ? [] : (providerResult.data ?? []) as Array<Record<string, unknown>>
   const runRows = runResult.error ? [] : (runResult.data ?? []) as Array<Record<string, unknown>>
+  const ticketId = stringOrNull(candidate.ticket_id)
+  const [ticketResult, repoCommitResult] = await Promise.all([
+    supabase
+      .from('research_loop_ticket_current')
+      .select('ticket_id, island, brief_sanitized_ref, requested_loop_count, ticket_doc, created_at')
+      .eq('ticket_id', ticketId ?? '')
+      .maybeSingle(),
+    supabase
+      .from('research_lab_private_repo_commit_events')
+      .select('commit_event_id, candidate_id, score_bundle_id, commit_status, git_commit_sha, branch_name, event_doc, created_at')
+      .eq('candidate_id', candidateId)
+      .eq('commit_status', 'pushed')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ])
+  const ticket = recordOrEmpty(ticketResult.error ? {} : ticketResult.data ?? {})
+  const ticketDoc = recordOrEmpty(ticket.ticket_doc)
+  const directionSummary = stringOrNull(ticketDoc.brief_public_summary)
+  const repoCommitEvent = recordOrEmpty(repoCommitResult.error ? {} : repoCommitResult.data ?? {})
+  const repoCommitEventDoc = recordOrEmpty(repoCommitEvent.event_doc)
+  const repositoryCommit = await fetchResearchLabSourceCommit({
+    repository: SOURCING_MODEL_REPOSITORY,
+    commitSha: stringOrNull(repoCommitEvent.git_commit_sha),
+    token: env.SOURCING_MODEL_GITHUB_TOKEN?.trim() || null,
+  })
 
   return Object.freeze({
     promotion: Object.freeze({
@@ -520,8 +553,21 @@ async function collectImprovementEvidence(
       thresholdPoints: numberOrNull(promotion.threshold_points),
       promotedAt: isoOrNull(promotion.created_at),
     }),
+    minerDirection: Object.freeze({
+      ticketId,
+      island: stringOrNull(ticket.island),
+      briefSanitizedRef: stringOrNull(ticket.brief_sanitized_ref),
+      originalDirection: directionSummary,
+      originalDirectionChars: directionSummary?.length ?? null,
+      originalDirectionMayBeTruncated: directionSummary?.length === 2_000,
+      requestedLoopCount: numberOrNull(ticket.requested_loop_count),
+      researchModelTier: stringOrNull(ticketDoc.research_model_tier),
+      patchLane: stringOrNull(patchDoc.lane),
+      planAlignment: stringOrNull(patchDoc.plan_alignment) ?? stringOrNull(hypothesis.plan_alignment),
+      expectedImprovement: stringOrNull(patchDoc.expected_improvement),
+    }),
     sourceChange: Object.freeze({
-      repository: env.SOURCING_MODEL_REPOSITORY_URL?.trim() || 'tasnimuldatascience/Sourcing_model',
+      repository: SOURCING_MODEL_REPOSITORY,
       direction: stringOrNull(patchDoc.lane),
       publicSummary: stringOrNull(candidate.redacted_public_summary),
       targetFiles: stringArray(patchDoc.target_files),
@@ -532,6 +578,15 @@ async function collectImprovementEvidence(
       candidateSourceDiffHash: stringOrNull(candidate.candidate_source_diff_hash),
       sourceValidation: compactRecord(recordOrEmpty(buildDoc.build_validation)),
       promotedVersion: compactRecord(versionResult.error ? {} : versionResult.data ?? {}),
+      pushedCommit: Object.freeze({
+        commitEventId: stringOrNull(repoCommitEvent.commit_event_id),
+        commitSha: stringOrNull(repoCommitEvent.git_commit_sha),
+        branch: stringOrNull(repoCommitEvent.branch_name),
+        pushedAt: isoOrNull(repoCommitEvent.created_at),
+        targetFiles: stringArray(repoCommitEventDoc.target_files),
+        sourceDiffHash: stringOrNull(repoCommitEventDoc.source_diff_hash),
+      }),
+      repositoryCommit,
     }),
     scoring: Object.freeze({
       scoreBundleId,
@@ -566,8 +621,12 @@ async function collectImprovementEvidence(
         'research_lab_provider_cost_events',
         'research_lab_rolling_icp_windows',
         'research_lab_private_model_version_current',
+        'research_loop_ticket_current',
+        'research_lab_private_repo_commit_events',
+        `${SOURCING_MODEL_REPOSITORY} GitHub commit API`,
       ],
-      sshPolicy: 'No SSH credential is exposed to the dashboard; host-emitted durable telemetry is used.',
+      repositoryAccessPolicy: 'A repository-scoped read-only GitHub token is used server-side; the token is never included in evidence, model input, logs, Discord, or dashboard responses.',
+      sshPolicy: 'No SSH credential is exposed to the dashboard; repository reads and host-emitted durable telemetry are used.',
     }),
   })
 }
@@ -617,14 +676,16 @@ export function buildImprovementDiscordPayload(
     allowed_mentions: Object.freeze({ parse: Object.freeze([]) }),
     embeds: Object.freeze([Object.freeze({
       title: `Model improvement analyzed${points === null ? '' : ` · ${signed(points)} points`}`,
-      description: truncate(analysis.summary, 4_096),
+      description: truncate(analysis.summary, 1_000),
       url: dashboardUrl,
       color: verdictColor(analysis.genuineImprovement),
       fields: Object.freeze([
-        Object.freeze({ name: 'Miner direction', value: truncate(analysis.minerDirection, 1_024), inline: false }),
-        Object.freeze({ name: 'Improvement made', value: truncate(analysis.improvementMade, 1_024), inline: false }),
-        Object.freeze({ name: 'Helped ICPs', value: truncate(helped, 1_024), inline: false }),
-        Object.freeze({ name: `Assessment · ${analysis.genuineImprovement.replace('_', ' ')}`, value: truncate(analysis.genuineAssessment, 1_024), inline: false }),
+        Object.freeze({ name: 'Miner direction', value: truncate(analysis.minerDirection, 650), inline: false }),
+        Object.freeze({ name: 'How the system used it', value: truncate(analysis.directionImplementation, 800), inline: false }),
+        Object.freeze({ name: `Direction · ${analysis.directionAlignment.replaceAll('_', ' ')}`, value: truncate(analysis.directionAssessment, 700), inline: false }),
+        Object.freeze({ name: 'Improvement made', value: truncate(analysis.improvementMade, 700), inline: false }),
+        Object.freeze({ name: 'Helped ICPs', value: truncate(helped, 900), inline: false }),
+        Object.freeze({ name: `Result · ${analysis.genuineImprovement.replace('_', ' ')}`, value: truncate(analysis.genuineAssessment, 700), inline: false }),
         Object.freeze({ name: 'Dashboard', value: `[Open stored analysis](${dashboardUrl})`, inline: false }),
       ]),
       footer: Object.freeze({ text: truncate(`Sol xhigh · ${event.event_key}`, 2_048) }),
@@ -736,6 +797,11 @@ function parseStoredAnalysis(value: Record<string, unknown>): ResearchLabImprove
   return {
     summary: stringOrNull(value.summary) ?? 'Improvement analysis completed.',
     minerDirection: stringOrNull(value.minerDirection) ?? 'Not determined',
+    directionImplementation: stringOrNull(value.directionImplementation) ?? 'Not analyzed',
+    directionAlignment: ['aligned', 'partially_aligned', 'not_aligned', 'insufficient_evidence'].includes(String(value.directionAlignment))
+      ? value.directionAlignment as ResearchLabImprovementAnalysisDoc['directionAlignment']
+      : 'insufficient_evidence',
+    directionAssessment: stringOrNull(value.directionAssessment) ?? 'Not analyzed',
     improvementMade: stringOrNull(value.improvementMade) ?? 'Not determined',
     helpedIcps,
     genuineImprovement: ['genuine', 'likely', 'uncertain', 'not_genuine'].includes(verdict)

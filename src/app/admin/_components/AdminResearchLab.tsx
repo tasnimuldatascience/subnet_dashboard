@@ -426,6 +426,9 @@ type AdminLabImprovementAnalysis = {
   reasoningEffort: string | null
   summary: string | null
   minerDirection: string | null
+  directionImplementation: string | null
+  directionAlignment: 'aligned' | 'partially_aligned' | 'not_aligned' | 'insufficient_evidence' | null
+  directionAssessment: string | null
   improvementMade: string | null
   helpedIcps: Array<{
     icpRef: string
@@ -1948,9 +1951,14 @@ function ImprovementAnalysesPanel({
                   </p>
                 )}
 
-                {analysis.minerDirection || analysis.improvementMade ? (
+                {analysis.minerDirection || analysis.directionImplementation || analysis.directionAssessment || analysis.improvementMade ? (
                   <div className="mt-3 grid gap-2 sm:grid-cols-2">
                     <MiniMeta label="Miner direction" value={analysis.minerDirection ?? '—'} />
+                    <MiniMeta label="How the system used it" value={analysis.directionImplementation ?? '—'} />
+                    <MiniMeta
+                      label={analysis.directionAlignment ? `Direction · ${readableTag(analysis.directionAlignment)}` : 'Direction assessment'}
+                      value={analysis.directionAssessment ?? '—'}
+                    />
                     <MiniMeta label="Improvement made" value={analysis.improvementMade ?? '—'} />
                   </div>
                 ) : null}

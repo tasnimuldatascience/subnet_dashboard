@@ -92,7 +92,7 @@ const COMPUTE_SPEND_BATCH_SIZE = 1_000
 const LEADPOET_NETUID = 71
 const SOURCING_MODEL_REPOSITORY_URL =
   process.env.SOURCING_MODEL_REPOSITORY_URL?.trim() ||
-  'https://github.com/tasnimuldatascience/Sourcing_model'
+  'https://github.com/leadpoet/Sourcing_model'
 const LEADPOET_REPOSITORY_OWNER = 'leadpoet'
 const LEADPOET_REPOSITORY_NAME = 'leadpoet'
 const LEADPOET_REPOSITORY_BRANCH = 'main'
@@ -537,6 +537,9 @@ export type AdminLabImprovementAnalysis = {
   reasoningEffort: string | null
   summary: string | null
   minerDirection: string | null
+  directionImplementation: string | null
+  directionAlignment: 'aligned' | 'partially_aligned' | 'not_aligned' | 'insufficient_evidence' | null
+  directionAssessment: string | null
   improvementMade: string | null
   helpedIcps: Array<{
     icpRef: string
@@ -1412,6 +1415,11 @@ async function fetchImprovementAnalyses(
       reasoningEffort: stringOr(row.reasoning_effort) ?? null,
       summary: stringOr(analysis.summary) ?? null,
       minerDirection: stringOr(analysis.minerDirection) ?? null,
+      directionImplementation: stringOr(analysis.directionImplementation) ?? null,
+      directionAlignment: ['aligned', 'partially_aligned', 'not_aligned', 'insufficient_evidence'].includes(String(analysis.directionAlignment))
+        ? analysis.directionAlignment as AdminLabImprovementAnalysis['directionAlignment']
+        : null,
+      directionAssessment: stringOr(analysis.directionAssessment) ?? null,
       improvementMade: stringOr(analysis.improvementMade) ?? null,
       helpedIcps,
       genuineImprovement: ['genuine', 'likely', 'uncertain', 'not_genuine'].includes(verdict ?? '')
