@@ -42,6 +42,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import { formatDateTime, formatRelative, shortHotkey } from '@/lib/admin-format'
 import {
@@ -564,6 +565,7 @@ export function AdminResearchLab({
 }) {
   const [livePayload, setLivePayload] = useState(payload)
   const [initialLoading, setInitialLoading] = useState(!payload)
+  const [slowInitialLoading, setSlowInitialLoading] = useState(false)
   const [liveRefreshError, setLiveRefreshError] = useState<string | null>(null)
   const [liveRefreshing, setLiveRefreshing] = useState(false)
   const [loopPageLoading, setLoopPageLoading] = useState(false)
@@ -643,6 +645,17 @@ export function AdminResearchLab({
     void loadInitial()
     return () => controller.abort()
   }, [payload])
+
+  const isInitialOverviewLoading = initialLoading && !livePayload
+
+  useEffect(() => {
+    if (!isInitialOverviewLoading) {
+      setSlowInitialLoading(false)
+      return
+    }
+    const timer = window.setTimeout(() => setSlowInitialLoading(true), 5_000)
+    return () => window.clearTimeout(timer)
+  }, [isInitialOverviewLoading])
 
   useEffect(() => {
     if (urlSelectionAppliedRef.current || loops.length === 0) return
@@ -927,7 +940,7 @@ export function AdminResearchLab({
   }, [selectedLoop?.ticketId, selectedRunId])
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" aria-busy={isInitialOverviewLoading}>
       <section>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
@@ -944,7 +957,23 @@ export function AdminResearchLab({
               Internal Research Lab execution stream with every ticket, queue, auto-research, candidate, scoring, promotion, and public projection event.
             </p>
           </div>
-          {livePayload?.fetchedAt && (
+          {isInitialOverviewLoading ? (
+            <div
+              role="status"
+              aria-live="polite"
+              className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-[11px]"
+              style={{
+                borderColor: 'var(--surface-border)',
+                background: 'var(--surface)',
+                color: 'var(--text-tertiary)',
+              }}
+            >
+              <span className="dot-gold live-pulse h-1.5 w-1.5 rounded-full motion-reduce:animate-none" />
+              {slowInitialLoading
+                ? 'Still loading—this can take a moment.'
+                : 'Loading latest Lab snapshot...'}
+            </div>
+          ) : livePayload?.fetchedAt ? (
             <div
               className="rounded-lg border px-3 py-2 text-[11px]"
               style={{
@@ -958,29 +987,29 @@ export function AdminResearchLab({
                 {liveRefreshError ? 'Live refresh degraded' : 'Live · 30s overview · 15s active run'} · {formatDateTime(livePayload.fetchedAt)}
               </span>
             </div>
-          )}
+          ) : null}
         </div>
       </section>
 
       {error ? (
-        <div className="rounded-xl border border-burgundy-soft bg-burgundy-soft p-4 text-sm text-burgundy">
+        <div role="alert" className="rounded-xl border border-red-500/40 bg-red-500/[0.06] p-4 text-sm text-red-300/90">
           {error}
         </div>
       ) : null}
       {liveRefreshError ? (
-        <div className="rounded-xl border border-burgundy-soft bg-burgundy-soft px-4 py-3 text-xs text-burgundy">
+        <div role="alert" className="rounded-xl border border-red-500/40 bg-red-500/[0.06] px-4 py-3 text-xs text-red-300/90">
           {livePayload ? 'Live refresh error' : 'Initial load error'}: {liveRefreshError}.
           {livePayload ? ' Showing the most recent successful snapshot.' : ''}
         </div>
       ) : null}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
-        <Stat label="All-time loops" value={livePayload?.stats.totalLoops ?? 0} />
-        <Stat label="Running" value={livePayload?.stats.runningLoops ?? 0} />
-        <Stat label="Scored" value={livePayload?.stats.scoredLoops ?? 0} accent="gold" />
-        <Stat label="Failed" value={livePayload?.stats.failedLoops ?? 0} />
-        <Stat label="Miners" value={livePayload?.stats.uniqueMiners ?? 0} />
-        <Stat label="Model improvements" value={livePayload?.stats.modelImprovementLoops ?? 0} accent="gold" />
+        <Stat label="All-time loops" value={livePayload?.stats.totalLoops} loading={isInitialOverviewLoading} />
+        <Stat label="Running" value={livePayload?.stats.runningLoops} loading={isInitialOverviewLoading} />
+        <Stat label="Scored" value={livePayload?.stats.scoredLoops} accent="gold" loading={isInitialOverviewLoading} />
+        <Stat label="Failed" value={livePayload?.stats.failedLoops} loading={isInitialOverviewLoading} />
+        <Stat label="Miners" value={livePayload?.stats.uniqueMiners} loading={isInitialOverviewLoading} />
+        <Stat label="Model improvements" value={livePayload?.stats.modelImprovementLoops} accent="gold" loading={isInitialOverviewLoading} />
       </div>
 
       {ops ? (
@@ -1034,12 +1063,13 @@ export function AdminResearchLab({
               <input
                 type="text"
                 value={query}
+                disabled={isInitialOverviewLoading}
                 onChange={(e) => {
                   setQuery(e.target.value)
                   setLoopPage(1)
                 }}
                 placeholder="Search ticket, run, hotkey, topic..."
-                className="premium-focus w-full rounded-lg border px-9 py-2 text-sm placeholder:text-white/30 bg-transparent"
+                className="premium-focus w-full rounded-lg border px-9 py-2 text-sm placeholder:text-white/30 bg-transparent disabled:cursor-wait disabled:opacity-45"
                 style={{
                   borderColor: 'var(--surface-border)',
                   background: 'var(--surface)',
@@ -1050,6 +1080,7 @@ export function AdminResearchLab({
 
             <Select
               value={statusFilter}
+              disabled={isInitialOverviewLoading}
               onValueChange={(value) => {
                 setStatusFilter(value)
                 setLoopPage(1)
@@ -1059,7 +1090,11 @@ export function AdminResearchLab({
                 className="h-10 w-full border-[var(--surface-border)] bg-[var(--surface)] font-mono text-xs text-[var(--text-secondary)] shadow-none sm:w-[210px]"
                 aria-label="Filter Lab loops by status"
               >
-                <SelectValue placeholder="All statuses" />
+                {isInitialOverviewLoading ? (
+                  <Skeleton className="h-3 w-20 bg-white/[0.06] motion-reduce:animate-none" />
+                ) : (
+                  <SelectValue placeholder="All statuses" />
+                )}
               </SelectTrigger>
               <SelectContent className="border-[var(--surface-border)] bg-[var(--surface-base)] text-[var(--text-primary)]">
                 {statusOptions.map((option) => (
@@ -1082,10 +1117,11 @@ export function AdminResearchLab({
               background: 'var(--surface-base)',
             }}
           >
-            {initialLoading && filteredLoops.length === 0 ? (
-              <div className="flex items-center justify-center gap-2 p-8 text-sm" style={{ color: 'var(--text-secondary)' }}>
-                <Loader2 className="h-4 w-4 animate-spin text-gold" />
-                Loading Lab overview...
+            {isInitialOverviewLoading ? (
+              <LoopListSkeleton />
+            ) : !livePayload ? (
+              <div className="p-8 text-center text-sm" style={{ color: 'var(--text-secondary)' }}>
+                Lab overview unavailable. Refresh to try again.
               </div>
             ) : filteredLoops.length === 0 ? (
               <div className="p-8 text-center text-sm" style={{ color: 'var(--text-secondary)' }}>
@@ -1155,9 +1191,13 @@ export function AdminResearchLab({
             background: 'var(--surface)',
           }}
         >
-          {!selectedLoop ? (
+          {isInitialOverviewLoading ? (
+            <RunInspectorSkeleton />
+          ) : !selectedLoop ? (
             <div className="p-12 text-center text-sm" style={{ color: 'var(--text-secondary)' }}>
-              Select a Lab loop to inspect its run logs.
+              {livePayload
+                ? 'Select a Lab loop to inspect its run logs.'
+                : 'Run details are unavailable until the Lab overview loads.'}
             </div>
           ) : (
             <div className="min-w-0">
@@ -2970,6 +3010,94 @@ function StatePill({
   )
 }
 
+function LoopListSkeleton() {
+  return (
+    <div className="space-y-px p-1" aria-hidden="true">
+      {Array.from({ length: 5 }, (_, index) => (
+        <div key={index} className="rounded-lg border border-transparent px-4 py-3">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <Skeleton className="h-3 w-24 bg-white/[0.06] motion-reduce:animate-none" />
+                <Skeleton className="h-5 w-16 rounded-full bg-white/[0.05] motion-reduce:animate-none" />
+              </div>
+              <Skeleton
+                className={cn(
+                  'mt-3 h-3.5 bg-white/[0.07] motion-reduce:animate-none',
+                  index % 2 === 0 ? 'w-4/5' : 'w-2/3',
+                )}
+              />
+              <div className="mt-3 flex gap-1.5">
+                <Skeleton className="h-4 w-14 rounded-full bg-white/[0.05] motion-reduce:animate-none" />
+                <Skeleton className="h-4 w-20 rounded-full bg-white/[0.05] motion-reduce:animate-none" />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Skeleton className="h-2.5 w-12 bg-white/[0.05] motion-reduce:animate-none" />
+              <Skeleton className="h-2.5 w-16 bg-white/[0.05] motion-reduce:animate-none" />
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function RunInspectorSkeleton() {
+  return (
+    <div aria-hidden="true">
+      <div className="border-b p-5" style={{ borderColor: 'var(--surface-border)' }}>
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0 flex-1">
+            <div className="flex gap-2">
+              <Skeleton className="h-5 w-20 rounded-full bg-white/[0.06] motion-reduce:animate-none" />
+              <Skeleton className="h-3 w-28 bg-white/[0.05] motion-reduce:animate-none" />
+            </div>
+            <Skeleton className="mt-4 h-5 w-3/4 bg-white/[0.07] motion-reduce:animate-none" />
+            <Skeleton className="mt-2 h-5 w-1/2 bg-white/[0.06] motion-reduce:animate-none" />
+            <div className="mt-3 flex gap-2">
+              <Skeleton className="h-5 w-16 rounded-full bg-white/[0.05] motion-reduce:animate-none" />
+              <Skeleton className="h-5 w-24 rounded-full bg-white/[0.05] motion-reduce:animate-none" />
+            </div>
+          </div>
+          <div className="grid w-full grid-cols-2 gap-2 lg:w-[280px]">
+            {Array.from({ length: 4 }, (_, index) => (
+              <div
+                key={index}
+                className="rounded-lg border px-3 py-2"
+                style={{
+                  borderColor: 'var(--surface-border)',
+                  background: 'var(--surface-elevated)',
+                }}
+              >
+                <Skeleton className="h-2.5 w-12 bg-white/[0.05] motion-reduce:animate-none" />
+                <Skeleton className="mt-2 h-3 w-20 bg-white/[0.06] motion-reduce:animate-none" />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="space-y-4 p-5">
+        <Skeleton className="h-20 w-full bg-white/[0.045] motion-reduce:animate-none" />
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {Array.from({ length: 4 }, (_, index) => (
+            <Skeleton
+              key={index}
+              className="h-16 w-full bg-white/[0.045] motion-reduce:animate-none"
+            />
+          ))}
+        </div>
+        <div className="rounded-lg border p-4" style={{ borderColor: 'var(--surface-border)' }}>
+          <Skeleton className="h-3 w-28 bg-white/[0.06] motion-reduce:animate-none" />
+          <Skeleton className="mt-4 h-3 w-4/5 bg-white/[0.05] motion-reduce:animate-none" />
+          <Skeleton className="mt-3 h-3 w-2/3 bg-white/[0.05] motion-reduce:animate-none" />
+          <Skeleton className="mt-3 h-3 w-3/4 bg-white/[0.05] motion-reduce:animate-none" />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function LoopButton({
   loop,
   active,
@@ -3209,7 +3337,17 @@ function TimelineEvent({ event }: { event: LabTimelineEvent }) {
   )
 }
 
-function Stat({ label, value, accent }: { label: string; value: number; accent?: 'gold' }) {
+function Stat({
+  label,
+  value,
+  accent,
+  loading = false,
+}: {
+  label: string
+  value?: number
+  accent?: 'gold'
+  loading?: boolean
+}) {
   return (
     <div
       className="rounded-xl border p-4"
@@ -3221,9 +3359,13 @@ function Stat({ label, value, accent }: { label: string; value: number; accent?:
       <div className="text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-tertiary)' }}>
         {label}
       </div>
-      <div className={cn('mt-2 text-2xl font-medium leading-none tabular-nums', accent === 'gold' ? 'text-gold' : '')} style={accent ? undefined : { color: 'var(--text-primary)' }}>
-        {value.toLocaleString()}
-      </div>
+      {loading ? (
+        <Skeleton className="mt-3 h-6 w-12 bg-white/[0.07] motion-reduce:animate-none" />
+      ) : (
+        <div className={cn('mt-2 text-2xl font-medium leading-none tabular-nums', accent === 'gold' ? 'text-gold' : '')} style={accent ? undefined : { color: 'var(--text-primary)' }}>
+          {value === undefined ? '—' : value.toLocaleString()}
+        </div>
+      )}
     </div>
   )
 }

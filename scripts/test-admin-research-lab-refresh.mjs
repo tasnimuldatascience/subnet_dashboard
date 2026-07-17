@@ -89,8 +89,16 @@ try {
   assert.match(componentSource, /if \(!cancelled && !controller\.signal\.aborted\)/)
   assert.match(componentSource, /document\.hidden[\s\S]{0,120}controller\?\.abort\(\)/)
   assert.match(componentSource, /else \{\s*void refresh\(\)\s*\}/)
+  assert.match(componentSource, /const isInitialOverviewLoading = initialLoading && !livePayload/)
+  assert.match(componentSource, /setSlowInitialLoading\(true\), 5_000/)
+  assert.match(componentSource, /Loading latest Lab snapshot\.\.\./)
+  assert.match(componentSource, /Still loading—this can take a moment\./)
+  assert.match(componentSource, /<LoopListSkeleton \/>/)
+  assert.match(componentSource, /<RunInspectorSkeleton \/>/)
+  assert.match(componentSource, /disabled=\{isInitialOverviewLoading\}/)
+  assert.doesNotMatch(componentSource, /stats\.totalLoops \?\? 0/)
 
-  console.log('admin-research-lab-refresh: response skew and tab resume guards passed')
+  console.log('admin-research-lab-refresh: response skew, tab resume, and initial loading guards passed')
 } finally {
   await rm(outDir, { recursive: true, force: true })
 }
