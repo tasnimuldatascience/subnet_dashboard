@@ -118,6 +118,12 @@ try {
   const deployment = await readFile(resolve('.github/workflows/deploy.yml'), 'utf8')
   const runtimeSecretLoader = await readFile(resolve('scripts/load-runtime-secret.mjs'), 'utf8')
   const migration = await readFile(resolve('supabase/migrations/20260717043000_research_lab_event_notifications.sql'), 'utf8')
+  const routingMigration = await readFile(resolve('supabase/migrations/20260717185314_route_daily_benchmark_completion_to_lab_chat.sql'), 'utf8')
+  const routingConstraintMigration = await readFile(resolve('supabase/migrations/20260717185619_enforce_daily_benchmark_lab_chat_routing.sql'), 'utf8')
+  const dailyBenchmarkPayloadSource = monitor.slice(
+    monitor.indexOf('export function buildDailyBenchmarkCompletedDiscordPayload'),
+    monitor.indexOf('export function buildImprovementDiscordPayload'),
+  )
 
   assert.match(monitor, /champion_reward_created/)
   assert.match(monitor, /reward_created/)
@@ -128,6 +134,14 @@ try {
   assert.match(monitor, /dependencies\.owner \?\? EVENT_MONITOR_OWNER/)
   assert.match(monitor, /RESEARCH_LAB_ALERT_DISCORD_WEBHOOK_URL/)
   assert.match(monitor, /RESEARCH_LAB_IMPROVEMENT_DISCORD_WEBHOOK_URL/)
+  assert.match(
+    monitor,
+    /event_type: 'daily_benchmark_completed',[\s\S]*?destination: 'lab_chat'/,
+  )
+  assert.match(
+    dailyBenchmarkPayloadSource,
+    /username: env\.RESEARCH_LAB_IMPROVEMENT_DISCORD_USERNAME\?\.trim\(\) \|\| 'Leadpoet Lab Watch'/,
+  )
   assert.match(monitor, /No SSH credential is exposed to the dashboard/)
   assert.match(instrumentation, /RESEARCH_LAB_EVENT_MONITOR_ENABLED/)
   assert.match(instrumentation, /runResearchLabImprovementAnalysisWorker/)
@@ -146,6 +160,9 @@ try {
   assert.match(migration, /for update skip locked/)
   assert.match(migration, /check \(event_type <> 'improvement_analysis' or destination = 'lab_chat'\)/)
   assert.match(migration, /check \(event_type <> 'daily_benchmark_completed' or destination = 'bug_watch'\)/)
+  assert.match(routingMigration, /drop constraint if exists ops_research_lab_event_notifications_check2/)
+  assert.match(routingConstraintMigration, /destination = 'lab_chat'/)
+  assert.match(routingConstraintMigration, /created_at < timestamptz '2026-07-17 20:30:00\+00'/)
 
   console.log('research-lab-event-notifications: Sol xhigh, durable routing, watermarks, storage, and UI wiring passed')
 } finally {

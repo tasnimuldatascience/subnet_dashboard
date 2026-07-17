@@ -323,7 +323,7 @@ async function discoverSourceEvents(
       event_key: `daily-benchmark-completed:${id}`,
       event_type: 'daily_benchmark_completed',
       source_id: id,
-      destination: 'bug_watch',
+      destination: 'lab_chat',
       status: 'pending_delivery',
       occurred_at: occurredAt,
       payload_doc: compactRecord(value),
@@ -580,7 +580,7 @@ export function buildDailyBenchmarkCompletedDiscordPayload(
   const dashboardUrl = getDashboardUrl(env)
   const score = numberOrNull(doc.aggregate_score)
   return Object.freeze({
-    username: env.RESEARCH_LAB_ALERT_DISCORD_USERNAME?.trim() || 'Leadpoet Bug Watch',
+    username: env.RESEARCH_LAB_IMPROVEMENT_DISCORD_USERNAME?.trim() || 'Leadpoet Lab Watch',
     allowed_mentions: Object.freeze({ parse: Object.freeze([]) }),
     embeds: Object.freeze([Object.freeze({
       title: 'Daily benchmark finished',
