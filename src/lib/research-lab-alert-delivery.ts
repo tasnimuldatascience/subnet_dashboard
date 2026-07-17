@@ -58,6 +58,12 @@ export type ResearchLabAlertDeliveryRequest = Readonly<{
   idempotencyKey?: string
 }>
 
+export type ResearchLabDiscordWebhookRequest = Readonly<{
+  webhookUrl: string
+  payload: ResearchLabDiscordAlertPayload
+  timeoutMs?: number
+}>
+
 export type ResearchLabAlertDeliveryChannel = 'discord' | 'email'
 
 export type ResearchLabAlertDeliveryStatus =
@@ -470,6 +476,33 @@ export async function deliverResearchLabAlert(
       : 'failed'
 
   return Object.freeze({ outcome, deliveries })
+}
+
+/** Deliver a pre-rendered Research Lab event embed through the same hardened
+ * Discord transport used by incident alerts. */
+export async function deliverResearchLabDiscordWebhook(
+  request: ResearchLabDiscordWebhookRequest,
+  dependencies: ResearchLabAlertDeliveryDependencies = {},
+): Promise<ResearchLabAlertChannelDeliveryResult> {
+  const webhookUrl = normalizeDiscordWebhookUrl(request.webhookUrl)
+  const timeoutMs = request.timeoutMs === undefined
+    ? DEFAULT_RESEARCH_LAB_ALERT_TIMEOUT_MS
+    : parseTimeoutMs(String(request.timeoutMs))
+  return sendProviderRequest(
+    {
+      channel: 'discord',
+      url: webhookUrl,
+      init: {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request.payload),
+      },
+      secrets: [webhookUrl],
+    },
+    timeoutMs,
+    dependencies.fetch ?? defaultFetch,
+    dependencies.timer ?? DEFAULT_TIMER,
+  )
 }
 
 function normalizeIdempotencyKey(value: string): string {

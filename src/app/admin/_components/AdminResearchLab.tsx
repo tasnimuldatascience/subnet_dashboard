@@ -407,6 +407,33 @@ type AdminLabComputeSpendSummary = {
   }
 }
 
+type AdminLabImprovementAnalysis = {
+  eventKey: string
+  sourceId: string
+  status: 'pending_analysis' | 'analyzing' | 'pending_delivery' | 'delivered'
+  occurredAt: string
+  analyzedAt: string | null
+  deliveredAt: string | null
+  candidateId: string | null
+  minerHotkey: string | null
+  improvementPoints: number | null
+  model: string | null
+  reasoningEffort: string | null
+  summary: string | null
+  minerDirection: string | null
+  improvementMade: string | null
+  helpedIcps: Array<{
+    icpRef: string
+    icpLabel: string
+    deltaVsBase: number | null
+    whyItHelped: string
+  }>
+  genuineImprovement: 'genuine' | 'likely' | 'uncertain' | 'not_genuine' | null
+  genuineAssessment: string | null
+  caveats: string[]
+  lastError: string | null
+}
+
 type AdminLabOpsSummary = {
   state: AdminHealthState
   healthSignals: AdminLabHealthSignal[]
@@ -424,6 +451,7 @@ type AdminLabOpsSummary = {
   dailyBenchmark: AdminLabDailyBenchmark
   benchmarkRuns: AdminLabBenchmarkRunSummary[]
   champions: AdminLabChampionSummary[]
+  improvementAnalyses: AdminLabImprovementAnalysis[]
 }
 
 export type AdminResearchLabPayload = {
@@ -939,6 +967,8 @@ export function AdminResearchLab({
             benchmarkRuns={ops.benchmarkRuns}
             champions={ops.champions}
           />
+
+          <ImprovementAnalysesPanel analyses={ops.improvementAnalyses} />
 
           <ComputeSpendPanel spend={ops.computeSpend} />
 
@@ -1779,6 +1809,126 @@ function HealthSignalCard({ signal }: { signal: AdminLabHealthSignal }) {
         </div>
       ) : null}
     </div>
+  )
+}
+
+function ImprovementAnalysesPanel({
+  analyses,
+}: {
+  analyses: AdminLabImprovementAnalysis[]
+}) {
+  return (
+    <section
+      id="improvement-analyses"
+      className="scroll-mt-24 rounded-xl border"
+      style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)' }}
+    >
+      <PanelHeader
+        icon={<GitCommitHorizontal className="h-4 w-4 text-gold" />}
+        title="Improvement analyses"
+        aside={(
+          <span className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
+            Sol · extra-high reasoning · latest {analyses.length}
+          </span>
+        )}
+      />
+      {analyses.length === 0 ? (
+        <div className="p-6 text-sm" style={{ color: 'var(--text-secondary)' }}>
+          No post-activation improvement analysis has been queued yet.
+        </div>
+      ) : (
+        <div className="grid gap-3 p-4 xl:grid-cols-2">
+          {analyses.map((analysis) => {
+            const state: AdminHealthState = analysis.lastError
+              ? 'critical'
+              : analysis.status === 'delivered'
+                ? 'healthy'
+                : analysis.status === 'pending_delivery'
+                  ? 'degraded'
+                  : 'unknown'
+            const statusLabel = analysis.genuineImprovement
+              ? readableTag(analysis.genuineImprovement)
+              : readableTag(analysis.status)
+            return (
+              <article
+                key={analysis.eventKey}
+                className="min-w-0 rounded-lg border p-4"
+                style={{ borderColor: 'var(--surface-border)', background: 'var(--surface-base)' }}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-[10px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-tertiary)' }}>
+                      {analysis.improvementPoints === null
+                        ? 'Promoted improvement'
+                        : `${analysis.improvementPoints >= 0 ? '+' : ''}${analysis.improvementPoints.toFixed(3)} points`}
+                    </div>
+                    <div className="mt-1 font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }} title={analysis.candidateId ?? analysis.sourceId}>
+                      {shortId(analysis.candidateId ?? analysis.sourceId)}
+                    </div>
+                  </div>
+                  <StatePill state={state} label={statusLabel} />
+                </div>
+
+                {analysis.summary ? (
+                  <p className="mt-3 text-sm leading-relaxed" style={{ color: 'var(--text-primary)' }}>
+                    {analysis.summary}
+                  </p>
+                ) : (
+                  <p className="mt-3 text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                    {analysis.status === 'analyzing'
+                      ? 'Sol is analyzing the source change and scoring evidence.'
+                      : 'Analysis is queued.'}
+                  </p>
+                )}
+
+                {analysis.minerDirection || analysis.improvementMade ? (
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    <MiniMeta label="Miner direction" value={analysis.minerDirection ?? '—'} />
+                    <MiniMeta label="Improvement made" value={analysis.improvementMade ?? '—'} />
+                  </div>
+                ) : null}
+
+                {analysis.helpedIcps.length > 0 ? (
+                  <div className="mt-3 space-y-2">
+                    <div className="text-[10px] uppercase tracking-[0.12em]" style={{ color: 'var(--text-tertiary)' }}>
+                      Helped ICPs
+                    </div>
+                    {analysis.helpedIcps.slice(0, 6).map((icp) => (
+                      <div key={`${analysis.eventKey}:${icp.icpRef}`} className="rounded-md border px-3 py-2" style={{ borderColor: 'var(--surface-border)' }}>
+                        <div className="flex items-start justify-between gap-3 text-xs">
+                          <span className="min-w-0 font-medium" style={{ color: 'var(--text-primary)' }}>{icp.icpLabel}</span>
+                          <span className="shrink-0 font-mono text-[10px] text-gold">
+                            {icp.deltaVsBase === null ? '—' : `${icp.deltaVsBase >= 0 ? '+' : ''}${icp.deltaVsBase.toFixed(3)}`}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-[11px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{icp.whyItHelped}</p>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+
+                {analysis.genuineAssessment ? (
+                  <div className="mt-3 rounded-md border px-3 py-2 text-xs leading-relaxed" style={{ borderColor: 'var(--surface-border)', color: 'var(--text-secondary)' }}>
+                    {analysis.genuineAssessment}
+                  </div>
+                ) : null}
+                {analysis.lastError ? (
+                  <div className="mt-3 rounded-md border border-burgundy-soft bg-burgundy-soft px-3 py-2 text-xs text-burgundy">
+                    {analysis.lastError}
+                  </div>
+                ) : null}
+                <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+                  <span>{formatRelative(analysis.analyzedAt ?? analysis.occurredAt)}</span>
+                  {analysis.model ? <span>{analysis.model}</span> : null}
+                  {analysis.reasoningEffort ? <span>{analysis.reasoningEffort}</span> : null}
+                  {analysis.minerHotkey ? <span>{shortHotkey(analysis.minerHotkey)}</span> : null}
+                </div>
+              </article>
+            )
+          })}
+        </div>
+      )}
+    </section>
   )
 }
 

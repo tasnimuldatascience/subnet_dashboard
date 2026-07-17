@@ -517,6 +517,33 @@ export type AdminLabComputeSpendSummary = {
   reconciliation: AdminLabFinalizedRunReconciliation
 }
 
+export type AdminLabImprovementAnalysis = {
+  eventKey: string
+  sourceId: string
+  status: 'pending_analysis' | 'analyzing' | 'pending_delivery' | 'delivered'
+  occurredAt: string
+  analyzedAt: string | null
+  deliveredAt: string | null
+  candidateId: string | null
+  minerHotkey: string | null
+  improvementPoints: number | null
+  model: string | null
+  reasoningEffort: string | null
+  summary: string | null
+  minerDirection: string | null
+  improvementMade: string | null
+  helpedIcps: Array<{
+    icpRef: string
+    icpLabel: string
+    deltaVsBase: number | null
+    whyItHelped: string
+  }>
+  genuineImprovement: 'genuine' | 'likely' | 'uncertain' | 'not_genuine' | null
+  genuineAssessment: string | null
+  caveats: string[]
+  lastError: string | null
+}
+
 export type AdminLabFinalizedRunReconciliation = ResearchLabFinalizedRunReconciliation & {
   sourceAvailable: boolean
   unavailableReason: string | null
@@ -541,6 +568,7 @@ export type AdminLabOpsSummary = {
   dailyBenchmark: AdminLabDailyBenchmark
   benchmarkRuns: AdminLabBenchmarkRunSummary[]
   champions: AdminLabChampionSummary[]
+  improvementAnalyses: AdminLabImprovementAnalysis[]
 }
 
 export type AdminResearchLabPayload = {
@@ -1248,6 +1276,7 @@ async function fetchAdminLabOps(
     computeSpend,
     benchmarkTelemetry,
     champions,
+    improvementAnalyses,
     metagraph,
   ] = await Promise.all([
     fetchScoreBundleMetrics(supabase, loops),
@@ -1260,6 +1289,7 @@ async function fetchAdminLabOps(
     fetchComputeSpendSummary(supabase),
     fetchBenchmarkTelemetryOverview(supabase, icpMetadata),
     fetchChampionTelemetry(supabase, icpMetadata),
+    fetchImprovementAnalyses(supabase),
     fetchMetagraph(),
   ])
 
@@ -1311,7 +1341,74 @@ async function fetchAdminLabOps(
     dailyBenchmark,
     benchmarkRuns,
     champions,
+    improvementAnalyses,
   }
+}
+
+async function fetchImprovementAnalyses(
+  supabase: ReturnType<typeof getAdminSupabase>,
+): Promise<AdminLabImprovementAnalysis[]> {
+  const { data, error } = await supabase
+    .from('ops_research_lab_event_notifications')
+    .select('event_key, source_id, status, occurred_at, payload_doc, analysis_doc, model, reasoning_effort, analyzed_at, delivered_at, last_error')
+    .eq('event_type', 'improvement_analysis')
+    .order('occurred_at', { ascending: false })
+    .limit(20)
+  if (error) {
+    if (error.code !== '42P01' && error.code !== 'PGRST205') {
+      console.warn('[admin:research-lab] improvement analyses unavailable', error.message)
+    }
+    return []
+  }
+
+  return ((data ?? []) as Array<Record<string, unknown>>).flatMap((row) => {
+    const eventKey = stringOr(row.event_key)
+    const sourceId = stringOr(row.source_id)
+    const occurredAt = isoStringOr(row.occurred_at)
+    const status = stringOr(row.status)
+    if (
+      !eventKey || !sourceId || !occurredAt ||
+      !['pending_analysis', 'analyzing', 'pending_delivery', 'delivered'].includes(status ?? '')
+    ) return []
+    const payload = objectRecord(row.payload_doc) ?? {}
+    const analysis = objectRecord(row.analysis_doc) ?? {}
+    const helpedIcps = (arrayOfRecords(analysis.helpedIcps) ?? []).flatMap((icp) => {
+      const icpRef = stringOr(icp.icpRef)
+      const icpLabel = stringOr(icp.icpLabel)
+      const whyItHelped = stringOr(icp.whyItHelped)
+      if (!icpRef || !icpLabel || !whyItHelped) return []
+      return [{
+        icpRef,
+        icpLabel,
+        deltaVsBase: finiteNumberOrNull(icp.deltaVsBase),
+        whyItHelped,
+      }]
+    })
+    const verdict = stringOr(analysis.genuineImprovement)
+    return [{
+      eventKey,
+      sourceId,
+      status: status as AdminLabImprovementAnalysis['status'],
+      occurredAt,
+      analyzedAt: isoStringOr(row.analyzed_at) ?? null,
+      deliveredAt: isoStringOr(row.delivered_at) ?? null,
+      candidateId: stringOr(payload.candidate_id) ?? null,
+      minerHotkey: stringOr(payload.miner_hotkey) ?? null,
+      improvementPoints: finiteNumberOrNull(payload.improvement_points),
+      model: stringOr(row.model) ?? null,
+      reasoningEffort: stringOr(row.reasoning_effort) ?? null,
+      summary: stringOr(analysis.summary) ?? null,
+      minerDirection: stringOr(analysis.minerDirection) ?? null,
+      improvementMade: stringOr(analysis.improvementMade) ?? null,
+      helpedIcps,
+      genuineImprovement: ['genuine', 'likely', 'uncertain', 'not_genuine'].includes(verdict ?? '')
+        ? verdict as AdminLabImprovementAnalysis['genuineImprovement']
+        : null,
+      genuineAssessment: stringOr(analysis.genuineAssessment) ?? null,
+      caveats: uniqueStrings(Array.isArray(analysis.caveats) ? analysis.caveats.map(stringOr) : []),
+      lastError: stringOr(row.last_error) ?? null,
+    }]
+  })
 }
 
 function buildCanonicalAlertObservations(input: {
