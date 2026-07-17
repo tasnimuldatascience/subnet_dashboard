@@ -17,6 +17,7 @@ import {
   type ResearchLabAlertTransitionEvent,
 } from './research-lab-alert-lifecycle'
 import type {
+  ResearchLabAlertResolution,
   ResearchLabAlertSeverity,
   ResearchLabEvaluatedAlert,
 } from './research-lab-alerts'
@@ -93,20 +94,23 @@ async function executeMonitor(
     const enabledSignals = parseResearchLabAlertSignalAllowlist(
       env.RESEARCH_LAB_ALERT_SIGNALS,
     )
-    const [collectedAlerts, previousIncidents, priorDeliveryAttempts] = await Promise.all([
-      (dependencies.collectAlerts ?? collectCanonicalAlertsFromAdminRoute)(),
+    const [snapshot, previousIncidents, priorDeliveryAttempts] = await Promise.all([
+      dependencies.collectAlerts
+        ? dependencies.collectAlerts().then((alerts) => ({ alerts, resolutions: [] }))
+        : collectCanonicalAlertSnapshotFromAdminRoute(),
       readCurrentIncidents(supabase),
       readDeliveryAttempts(supabase),
     ])
     const evaluatedAlerts = enabledSignals
-      ? collectedAlerts.filter((alert) => enabledSignals.has(alert.signal))
-      : collectedAlerts
+      ? snapshot.alerts.filter((alert) => enabledSignals.has(alert.signal))
+      : snapshot.alerts
     evaluatedAlertCount = evaluatedAlerts.length
 
     const plan = planResearchLabAlertLifecycle({
       now,
       previousIncidents,
       evaluatedAlerts,
+      resolutions: snapshot.resolutions,
       destinations,
       priorDeliveryAttempts,
     })
@@ -187,7 +191,10 @@ export function buildResearchLabAlertDestinations(
   return destinations
 }
 
-async function collectCanonicalAlertsFromAdminRoute(): Promise<ResearchLabEvaluatedAlert[]> {
+async function collectCanonicalAlertSnapshotFromAdminRoute(): Promise<{
+  alerts: ResearchLabEvaluatedAlert[]
+  resolutions: ResearchLabAlertResolution[]
+}> {
   const [{ GET }, { NextRequest }] = await Promise.all([
     import('../app/api/admin/research-lab/route'),
     import('next/server'),
@@ -195,7 +202,7 @@ async function collectCanonicalAlertsFromAdminRoute(): Promise<ResearchLabEvalua
   const response = await GET(new NextRequest('http://research-lab-monitor.local/api/admin/research-lab'))
   const body = await response.json() as {
     error?: unknown
-    ops?: { evaluatedAlerts?: unknown }
+    ops?: { evaluatedAlerts?: unknown; alertResolutions?: unknown }
   }
   if (!response.ok) {
     throw new Error(`Research Lab alert snapshot failed (${response.status}): ${safeError(body.error)}`)
@@ -203,7 +210,12 @@ async function collectCanonicalAlertsFromAdminRoute(): Promise<ResearchLabEvalua
   if (!Array.isArray(body.ops?.evaluatedAlerts)) {
     throw new Error('Research Lab alert snapshot omitted ops.evaluatedAlerts.')
   }
-  return body.ops.evaluatedAlerts.filter(isEvaluatedAlert)
+  return {
+    alerts: body.ops.evaluatedAlerts.filter(isEvaluatedAlert),
+    resolutions: Array.isArray(body.ops.alertResolutions)
+      ? body.ops.alertResolutions.filter(isAlertResolution)
+      : [],
+  }
 }
 
 async function claimMonitorLease(
@@ -573,6 +585,23 @@ function isEvaluatedAlert(value: unknown): value is ResearchLabEvaluatedAlert {
     text(alert.title) &&
     text(alert.detail) &&
     Array.isArray(alert.sources),
+  )
+}
+
+function isAlertResolution(value: unknown): value is ResearchLabAlertResolution {
+  if (!value || typeof value !== 'object') return false
+  const resolution = value as Record<string, unknown>
+  const metadata = resolution.metadata
+  if (!metadata || typeof metadata !== 'object') return false
+  const outcome = text((metadata as Record<string, unknown>).outcome)
+  return Boolean(
+    text(resolution.fingerprint) &&
+    text(resolution.title) &&
+    text(resolution.detail) &&
+    (resolution.observedAt === null || text(resolution.observedAt)) &&
+    (metadata as Record<string, unknown>).kind === 'terminal' &&
+    ['completed', 'failed', 'cancelled', 'unknown'].includes(outcome ?? '') &&
+    text((metadata as Record<string, unknown>).label),
   )
 }
 

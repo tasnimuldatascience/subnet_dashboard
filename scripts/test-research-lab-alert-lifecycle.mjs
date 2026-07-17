@@ -193,6 +193,25 @@ try {
   assert.equal(recovered.deliveryIntents[0].transition, 'recover')
   assert.equal(recovered.deliveryIntents[0].payload.severity, 'critical')
 
+  const terminalClosure = planResearchLabAlertLifecycle({
+    now: at(3_000),
+    previousIncidents: escalated.incidentUpserts,
+    evaluatedAlerts: [],
+    resolutions: [{
+      fingerprint,
+      title: 'Run run-7 ended: No buildable candidate',
+      detail: 'The run failed terminally; this is not a successful recovery.',
+      observedAt: at(2_900),
+      metadata: { kind: 'terminal', outcome: 'failed', label: 'No buildable candidate' },
+    }],
+    destinations: [emailDestination],
+    priorDeliveryAttempts: [openSucceeded, escalationSucceeded],
+    policy: policy({ cooldownMs: 0 }),
+  })
+  assert.equal(terminalClosure.transitionEvents[0].alert.title, 'Run run-7 ended: No buildable candidate')
+  assert.equal(terminalClosure.transitionEvents[0].alert.resolution.outcome, 'failed')
+  assert.match(terminalClosure.deliveryIntents[0].payload.alert.detail, /not a successful recovery/)
+
   const repeatRecovery = planResearchLabAlertLifecycle({
     now: at(3_001),
     previousIncidents: recovered.incidentUpserts,

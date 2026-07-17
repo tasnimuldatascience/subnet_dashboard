@@ -140,7 +140,21 @@ try {
     DASHBOARD_URL,
   )
   assert.equal(recoveredDiscord.embeds[0].color, 0x16a34a)
-  assert.match(recoveredDiscord.embeds[0].title, /^RECOVERED · CRITICAL/)
+  assert.match(recoveredDiscord.embeds[0].title, /^CLEARED · CRITICAL/)
+  assert.match(recoveredDiscord.embeds[0].description, /does not by itself confirm.*workflow succeeded/)
+  const terminalDiscord = buildResearchLabDiscordPayload(
+    {
+      ...alertFixture,
+      title: 'Run run-7 ended: No buildable candidate',
+      detail: 'The run failed terminally; this is not a successful recovery.',
+      resolution: { kind: 'terminal', outcome: 'failed', label: 'No buildable candidate' },
+    },
+    'recover',
+    DASHBOARD_URL,
+  )
+  assert.equal(terminalDiscord.embeds[0].color, 0x64748b)
+  assert.match(terminalDiscord.embeds[0].title, /^CLOSED · CRITICAL/)
+  assert.match(terminalDiscord.embeds[0].description, /not a successful recovery/)
   assert.throws(
     () => renderResearchLabOperatorAlert(alertFixture, 'invalid-transition', DASHBOARD_URL),
     /open, escalate, or recover/,

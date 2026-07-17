@@ -1,4 +1,5 @@
 import type {
+  ResearchLabAlertResolution,
   ResearchLabAlertSeverity,
   ResearchLabEvaluatedAlert,
 } from './research-lab-alerts'
@@ -172,6 +173,8 @@ export type ResearchLabAlertLifecycleInput = {
   now: ResearchLabAlertLifecycleTimestamp
   previousIncidents?: readonly ResearchLabAlertIncident[]
   evaluatedAlerts: readonly ResearchLabEvaluatedAlert[]
+  /** Terminal entity outcomes used to make closure notifications truthful. */
+  resolutions?: readonly ResearchLabAlertResolution[]
   destinations?: readonly ResearchLabAlertDestination[]
   priorDeliveryAttempts?: readonly ResearchLabAlertDeliveryAttempt[]
   policy?: ResearchLabAlertLifecyclePolicy
@@ -244,6 +247,7 @@ export function planResearchLabAlertLifecycle(
   const policy = resolveResearchLabAlertLifecyclePolicy(input.policy)
   const currentAlerts = indexCurrentAlerts(input.evaluatedAlerts)
   const previousIncidents = indexPreviousIncidents(input.previousIncidents ?? [])
+  const resolutions = indexResolutions(input.resolutions ?? [])
   const destinations = normalizeDestinations(input.destinations ?? [])
   const attempts = canonicalizeAttempts(input.priorDeliveryAttempts ?? [])
   const incidentUpserts: ResearchLabAlertIncident[] = []
@@ -307,10 +311,14 @@ export function planResearchLabAlertLifecycle(
   for (const [fingerprint, previous] of sortedEntries(previousIncidents)) {
     if (currentAlerts.has(fingerprint) || previous.status === 'resolved') continue
     const transition = previous.status === 'open' ? 'recover' : 'debounce_cancel'
+    const resolution = resolutions.get(fingerprint)
     const resolved = transitionIncident({
       incident: {
         ...copyIncident(previous),
         updatedAt: now,
+        alert: resolution
+          ? applyResolution(previous.alert, resolution)
+          : copyAlert(previous.alert),
       },
       previous,
       transition,
@@ -915,6 +923,54 @@ function indexPreviousIncidents(
   return result
 }
 
+function indexResolutions(
+  resolutions: readonly ResearchLabAlertResolution[],
+): Map<string, ResearchLabAlertResolution> {
+  const result = new Map<string, ResearchLabAlertResolution>()
+  for (const input of resolutions) {
+    const fingerprint = requiredUnpaddedText(input.fingerprint, 'resolution.fingerprint')
+    if (result.has(fingerprint)) {
+      throw new Error(`Duplicate alert resolution fingerprint ${fingerprint}`)
+    }
+    if (input.metadata.kind !== 'terminal') {
+      throw new Error(`Resolution ${fingerprint} has unsupported kind ${input.metadata.kind}`)
+    }
+    if (!['completed', 'failed', 'cancelled', 'unknown'].includes(input.metadata.outcome)) {
+      throw new Error(`Resolution ${fingerprint} has unsupported outcome ${input.metadata.outcome}`)
+    }
+    if (input.observedAt !== null) requiredTimestamp(input.observedAt, 'resolution.observedAt')
+    result.set(fingerprint, {
+      ...input,
+      fingerprint,
+      title: requiredText(input.title, 'resolution.title'),
+      detail: requiredText(input.detail, 'resolution.detail'),
+      observedAt: input.observedAt,
+      metadata: {
+        ...input.metadata,
+        label: requiredText(input.metadata.label, 'resolution.metadata.label'),
+      },
+    })
+  }
+  return result
+}
+
+function applyResolution(
+  alert: ResearchLabEvaluatedAlert,
+  resolution: ResearchLabAlertResolution,
+): ResearchLabEvaluatedAlert {
+  if (alert.fingerprint !== resolution.fingerprint) {
+    throw new Error(`Resolution ${resolution.fingerprint} does not match its alert`)
+  }
+  return {
+    ...copyAlert(alert),
+    title: resolution.title,
+    detail: resolution.detail,
+    observedAt: resolution.observedAt,
+    ageMs: null,
+    resolution: { ...resolution.metadata },
+  }
+}
+
 function validateIncident(incident: ResearchLabAlertIncident): void {
   requiredUnpaddedText(incident.fingerprint, 'incident.fingerprint')
   if (incident.incidentId !== buildResearchLabAlertIncidentId(incident.fingerprint)) {
@@ -965,6 +1021,7 @@ function copyAlert(alert: ResearchLabEvaluatedAlert): ResearchLabEvaluatedAlert 
   return {
     ...alert,
     sources: [...alert.sources],
+    ...(alert.resolution ? { resolution: { ...alert.resolution } } : {}),
   }
 }
 

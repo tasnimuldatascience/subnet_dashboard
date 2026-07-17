@@ -39,8 +39,11 @@ import {
 } from '@/lib/gateway-deployment'
 import { fetchMetagraph } from '@/lib/metagraph'
 import {
+  buildResearchLabAlertFingerprint,
   evaluateResearchLabAlerts,
+  shouldSuppressResearchLabExecutionAlert,
   type ResearchLabAlertObservations,
+  type ResearchLabAlertResolution,
   type ResearchLabEvaluatedAlert,
   type ResearchLabValidatorAlertObservation,
 } from '@/lib/research-lab-alerts'
@@ -82,6 +85,8 @@ export const dynamic = 'force-dynamic'
 const LOOP_LIMIT = 50
 const LOOP_INDEX_BATCH_SIZE = 1_000
 const ACTIVE_RUN_LIMIT = 40
+const ALERT_RESOLUTION_RUN_LIMIT = 100
+const ALERT_RESOLUTION_LOOKBACK_MS = 24 * 60 * 60 * 1_000
 const COMPUTE_SPEND_DAYS = 30
 const COMPUTE_SPEND_BATCH_SIZE = 1_000
 const LEADPOET_NETUID = 71
@@ -562,6 +567,8 @@ export type AdminLabOpsSummary = {
   alerts: AdminLabAlertSummary
   /** Raw canonical evaluator output for the independent durable monitor. */
   evaluatedAlerts: ResearchLabEvaluatedAlert[]
+  /** Terminal outcomes used to close prior incidents without implying success. */
+  alertResolutions: ResearchLabAlertResolution[]
   attestation: AdminLabAttestationSummary
   sourcingModel: AdminLabSourcingModelSummary
   leadpoetRepository: AdminLabRepositorySummary
@@ -1297,6 +1304,7 @@ async function fetchAdminLabOps(
   const dataFreshness = buildDataFreshness(loops)
   const { dailyBenchmark, benchmarkRuns } = benchmarkTelemetry
   const activeRuns = buildActiveRuns(loops, scoreMetrics.byTicket)
+  const alertNow = Date.now()
   const pipeline = buildPipelineStages(loops)
   const scoring = buildScoringSummary({
     loops,
@@ -1313,9 +1321,12 @@ async function fetchAdminLabOps(
       attestation,
       dataFreshness,
       metagraph,
+      controls,
+      now: alertNow,
     }),
-    { now: Date.now() },
+    { now: alertNow },
   )
+  const alertResolutions = buildRunAlertResolutions(loops, alertNow)
   const alerts = mergeEvaluatedAlertSummary(baseAlerts, evaluatedAlerts)
   const healthSignals = buildHealthSignals({
     dataFreshness,
@@ -1335,6 +1346,7 @@ async function fetchAdminLabOps(
     benchmark,
     alerts,
     evaluatedAlerts,
+    alertResolutions,
     attestation,
     sourcingModel,
     leadpoetRepository,
@@ -1420,6 +1432,8 @@ function buildCanonicalAlertObservations(input: {
   attestation: AdminLabAttestationSummary
   dataFreshness: AdminLabDataFreshness
   metagraph: Awaited<ReturnType<typeof fetchMetagraph>>
+  controls: AdminLabWorkflowControls
+  now: number
 }): ResearchLabAlertObservations {
   const configuredValidators = input.baseAlerts.operations.validators.filter((validator) => validator.enabled)
   const configured = configuredValidators.map((validator) => validator.hotkey)
@@ -1477,8 +1491,15 @@ function buildCanonicalAlertObservations(input: {
     }
   })
 
+  const suppressBenchmarkAlert = input.benchmark.state !== 'failed' &&
+    shouldSuppressResearchLabExecutionAlert({
+      now: input.now,
+      controls: [input.controls.scoring],
+      status: input.benchmark.state,
+      detail: input.benchmark.detail,
+    })
   const benchmarks: ResearchLabAlertObservations['benchmarks'] =
-    input.benchmark.benchmarkDate || input.benchmark.startedAt
+    !suppressBenchmarkAlert && (input.benchmark.benchmarkDate || input.benchmark.startedAt)
       ? [{
           benchmarkId: input.benchmark.benchmarkDate
             ? `${input.benchmark.benchmarkDate}:attempt:${input.benchmark.attempt ?? 0}`
@@ -1492,22 +1513,26 @@ function buildCanonicalAlertObservations(input: {
         }]
       : []
 
-  const activeRuns: Array<NonNullable<ResearchLabAlertObservations['activeRuns']>[number]> = input.activeRuns.map((run) => ({
-    runId: run.runId ?? run.ticketId,
-    validatorId: run.minerHotkey || null,
-    source: 'research lab run telemetry',
-    status: run.statusKey,
-    startedAt: run.submittedAt,
-    lastActivityAt: run.lastActivityAt,
-    blocked: Boolean(run.blocker && /(?:block|wait|pause|stale|rescore)/i.test(`${run.statusKey} ${run.blocker}`)),
-    blockedAt: run.blocker ? run.lastActivityAt : null,
-    blocker: run.blocker,
-  }))
+  const activeRuns: Array<NonNullable<ResearchLabAlertObservations['activeRuns']>[number]> = input.activeRuns
+    .filter((run) => !shouldSuppressRunAlert(run.phase, run.statusKey, run.blocker, input))
+    .map((run) => ({
+      runId: run.runId ?? run.ticketId,
+      validatorId: run.minerHotkey || null,
+      source: 'research lab run telemetry',
+      status: run.statusKey,
+      startedAt: run.submittedAt,
+      lastActivityAt: run.lastActivityAt,
+      blocked: Boolean(run.blocker && /(?:block|wait|pause|stale|rescore)/i.test(`${run.statusKey} ${run.blocker}`)),
+      blockedAt: run.blocker ? run.lastActivityAt : null,
+      blocker: run.blocker,
+    }))
   const representedRuns = new Set(activeRuns.map((run) => run.runId))
   for (const loop of input.loops) {
     const runId = loop.runId ?? loop.ticketId
     if (representedRuns.has(runId)) continue
     if (!/(?:blocked|waiting_for_baseline|needs_rescore|recovery|paused|stalled)/i.test(loop.statusKey)) continue
+    const blocker = loop.actionNote?.detail ?? loop.statusNote?.detail ?? loop.statusDetail ?? loop.opsReason ?? null
+    if (shouldSuppressRunAlert(phaseForLoop(loop), loop.statusKey, blocker, input)) continue
     activeRuns.push({
       runId,
       validatorId: loop.minerHotkey || null,
@@ -1517,7 +1542,7 @@ function buildCanonicalAlertObservations(input: {
       lastActivityAt: loop.lastActivityAt,
       blocked: true,
       blockedAt: loop.lastActivityAt,
-      blocker: loop.actionNote?.detail ?? loop.statusNote?.detail ?? loop.statusDetail ?? loop.opsReason ?? null,
+      blocker,
     })
   }
 
@@ -1541,6 +1566,64 @@ function buildCanonicalAlertObservations(input: {
       observedAt: input.dataFreshness.latestActivityAt,
     }],
   }
+}
+
+function shouldSuppressRunAlert(
+  phase: string,
+  status: string,
+  detail: string | null,
+  input: Pick<Parameters<typeof buildCanonicalAlertObservations>[0], 'controls' | 'now'>,
+): boolean {
+  const controls = phase === 'scoring'
+    ? [input.controls.loops, input.controls.scoring]
+    : [input.controls.loops]
+  return shouldSuppressResearchLabExecutionAlert({
+    now: input.now,
+    controls,
+    status,
+    detail,
+  })
+}
+
+function buildRunAlertResolutions(
+  loops: AdminLabLoopSummary[],
+  now: number,
+): ResearchLabAlertResolution[] {
+  const resolutions: ResearchLabAlertResolution[] = []
+  let includedRuns = 0
+  for (const loop of loops) {
+    if (!loop.runId || !isCompletedResearchLabLoopStatus(loop.statusKey)) continue
+    if (now - timestampOrZero(loop.lastActivityAt) > ALERT_RESOLUTION_LOOKBACK_MS) continue
+    if (includedRuns >= ALERT_RESOLUTION_RUN_LIMIT) break
+    includedRuns += 1
+    const normalizedStatus = loop.statusKey.toLowerCase()
+    const outcome = /cancel/.test(normalizedStatus)
+      ? 'cancelled'
+      : isNoGainOrFailedResearchLabLoopStatus(loop.statusKey) || loop.outcomeBand === 'failed'
+        ? 'failed'
+        : 'completed'
+    const outcomeLabel = loop.statusLabel || loop.outcomeLabel || loop.statusKey
+    const reason = loop.statusDetail ?? loop.opsReason ?? loop.statusNote?.detail ?? null
+    const terminalDetail = outcome === 'completed'
+      ? `The run completed as “${outcomeLabel}.” The prior alert condition is closed.`
+      : `The run ended as “${outcomeLabel}”${reason ? `: ${reason}` : '.'} ` +
+        'The prior alert condition is closed because the run is terminal; this is not a successful recovery.'
+
+    for (const signal of ['active_run_stale', 'active_run_blocked'] as const) {
+      resolutions.push({
+        fingerprint: buildResearchLabAlertFingerprint(signal, 'run', loop.runId),
+        title: `Run ${loop.runId} ended: ${outcomeLabel}`,
+        detail: terminalDetail,
+        observedAt: loop.lastActivityAt,
+        metadata: {
+          kind: 'terminal',
+          outcome,
+          label: outcomeLabel,
+        },
+      })
+    }
+  }
+  return resolutions
 }
 
 function configuredValidatorHotkeys(): string[] {

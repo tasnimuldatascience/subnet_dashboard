@@ -92,7 +92,7 @@ export type ResearchLabAlertDeliveryResult = Readonly<{
 
 export type ResearchLabOperatorAlertMessage = Readonly<{
   transition: ResearchLabAlertTransition
-  transitionLabel: 'OPEN' | 'ESCALATED' | 'RECOVERED'
+  transitionLabel: 'OPEN' | 'ESCALATED' | 'CLEARED' | 'CLOSED'
   severityLabel: 'WARNING' | 'CRITICAL'
   headline: string
   subject: string
@@ -151,7 +151,8 @@ export const RESEND_EMAIL_ENDPOINT = 'https://api.resend.com/emails'
 const DISCORD_EMBED_COLORS = Object.freeze({
   warning: 0xf59e0b,
   critical: 0xdc2626,
-  recovered: 0x16a34a,
+  cleared: 0x16a34a,
+  terminal: 0x64748b,
 })
 
 const TRANSITION_LABELS: Readonly<
@@ -159,7 +160,7 @@ const TRANSITION_LABELS: Readonly<
 > = Object.freeze({
   open: 'OPEN',
   escalate: 'ESCALATED',
-  recover: 'RECOVERED',
+  recover: 'CLEARED',
 })
 
 const RETRYABLE_HTTP_STATUSES = new Set([408, 409, 425, 429])
@@ -287,13 +288,22 @@ export function renderResearchLabOperatorAlert(
 ): ResearchLabOperatorAlertMessage {
   assertTransition(transition)
   const normalizedDashboardUrl = normalizeDashboardUrl(dashboardUrl)
-  const transitionLabel = TRANSITION_LABELS[transition]
+  const transitionLabel = transition === 'recover' && alert.resolution?.kind === 'terminal'
+    ? 'CLOSED'
+    : TRANSITION_LABELS[transition]
   const severityLabel = alert.severity === 'critical' ? 'CRITICAL' : 'WARNING'
   const title = truncate(normalizeInlineText(alert.title) || 'Research Lab alert', 180)
-  const detail = truncate(
+  const originalDetail = truncate(
     normalizeMultilineText(alert.detail) || 'No additional detail was supplied.',
     1_800,
   )
+  const detail = transition === 'recover' && alert.resolution?.kind !== 'terminal'
+    ? truncate(
+        'The alert condition is no longer observed. This closes the alert; it does not by itself ' +
+          `confirm that the underlying workflow succeeded. Last alert evidence: ${originalDetail}`,
+        1_800,
+      )
+    : originalDetail
   const scope = truncate(renderAlertScope(alert), 360)
   const evidence = truncate(renderAlertEvidence(alert), 960)
   const headline = `${transitionLabel} · ${severityLabel} · ${title}`
@@ -333,7 +343,9 @@ export function buildResearchLabDiscordPayload(
 ): ResearchLabDiscordAlertPayload {
   const message = renderResearchLabOperatorAlert(alert, transition, dashboardUrl)
   const color = transition === 'recover'
-    ? DISCORD_EMBED_COLORS.recovered
+    ? alert.resolution?.kind === 'terminal'
+      ? DISCORD_EMBED_COLORS.terminal
+      : DISCORD_EMBED_COLORS.cleared
     : DISCORD_EMBED_COLORS[alert.severity]
   const observedAt = optionalIsoTimestamp(alert.observedAt)
   const username = channel.username

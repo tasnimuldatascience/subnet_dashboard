@@ -30,6 +30,7 @@ try {
     evaluateResearchLabAlerts,
     parseResearchLabAlertSignalAllowlist,
     resolveResearchLabAlertThresholds,
+    shouldSuppressResearchLabExecutionAlert,
   } = require(join(outDir, 'research-lab-alerts.js'))
 
   assert.equal(RESEARCH_LAB_ALERT_SIGNALS.length, 13)
@@ -49,6 +50,34 @@ try {
   const NOW_MS = Date.parse('2026-07-10T12:00:00.000Z')
   const NOW = new Date(NOW_MS).toISOString()
   const ago = (milliseconds) => new Date(NOW_MS - milliseconds).toISOString()
+
+  assert.equal(shouldSuppressResearchLabExecutionAlert({
+    now: NOW,
+    controls: [{ state: 'paused', updatedAt: ago(8 * 60 * 60 * 1_000) }],
+    status: 'running',
+  }), true, 'paused maintenance suppresses stale execution alerts')
+  assert.equal(shouldSuppressResearchLabExecutionAlert({
+    now: NOW,
+    controls: [{ state: 'active', updatedAt: ago(9_000) }],
+    status: 'running',
+  }), true, 'the observed nine-second restart race gets a projection and worker recovery grace window')
+  assert.equal(shouldSuppressResearchLabExecutionAlert({
+    now: NOW,
+    controls: [{ state: 'active', updatedAt: ago(5 * 60 * 1_000) }],
+    status: 'running',
+  }), false, 'a genuinely stale run pages again after the resume grace window')
+  assert.equal(shouldSuppressResearchLabExecutionAlert({
+    now: NOW,
+    controls: [{ state: 'unknown' }],
+    status: 'checkpointed and paused',
+    detail: 'gateway_restart maintenance',
+  }), true, 'maintenance evidence suppresses alerts even when control telemetry is unavailable')
+  assert.equal(shouldSuppressResearchLabExecutionAlert({
+    now: NOW,
+    controls: [{ state: 'active', updatedAt: ago(10 * 60 * 1_000) }],
+    status: 'checkpointed and paused',
+    detail: 'gateway_restart maintenance',
+  }), false)
   const thresholds = {
     pcr0Stale: { warnMs: 10, criticalMs: 20 },
     offchainWeightBundleStale: { warnMs: 10, criticalMs: 20 },

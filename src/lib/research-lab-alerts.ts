@@ -185,6 +185,34 @@ export type ResearchLabEvaluatedAlert = {
   sources: string[]
   /** Number of raw alert candidates collapsed into this fingerprint. */
   occurrences: number
+  /** Present only on a closure snapshot used to explain why an incident ended. */
+  resolution?: ResearchLabAlertResolutionMetadata
+}
+
+export type ResearchLabAlertResolutionOutcome =
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'unknown'
+
+export type ResearchLabAlertResolutionMetadata = {
+  kind: 'terminal'
+  outcome: ResearchLabAlertResolutionOutcome
+  label: string
+}
+
+export type ResearchLabAlertResolution = {
+  fingerprint: string
+  title: string
+  detail: string
+  observedAt: string | null
+  metadata: ResearchLabAlertResolutionMetadata
+}
+
+export type ResearchLabAlertMaintenanceControl = {
+  state: 'active' | 'paused' | 'unknown'
+  updatedAt?: ResearchLabAlertTimestamp | null
+  reason?: string | null
 }
 
 export type ResearchLabAlertEvaluationOptions = {
@@ -195,6 +223,44 @@ export type ResearchLabAlertEvaluationOptions = {
 
 const HOUR_MS = 60 * 60 * 1000
 const MINUTE_MS = 60 * 1000
+
+export const DEFAULT_RESEARCH_LAB_MAINTENANCE_RESUME_GRACE_MS = 5 * MINUTE_MS
+
+/**
+ * Intentional maintenance is not an incident. After maintenance resumes, wait
+ * briefly for workers and projections to emit fresh activity before treating
+ * their pre-maintenance timestamp as a new stale condition.
+ */
+export function shouldSuppressResearchLabExecutionAlert(input: {
+  now: ResearchLabAlertTimestamp
+  controls: readonly ResearchLabAlertMaintenanceControl[]
+  status?: string | null
+  detail?: string | null
+  resumeGraceMs?: number
+}): boolean {
+  const nowMs = requiredTimestamp(input.now, 'now')
+  const resumeGraceMs = input.resumeGraceMs ?? DEFAULT_RESEARCH_LAB_MAINTENANCE_RESUME_GRACE_MS
+  if (!Number.isFinite(resumeGraceMs) || resumeGraceMs < 0) {
+    throw new TypeError('resumeGraceMs must be a finite, non-negative number')
+  }
+
+  for (const control of input.controls) {
+    if (control.state === 'paused') return true
+    const updatedAtMs = optionalTimestamp(control.updatedAt)
+    if (
+      control.state === 'active' &&
+      updatedAtMs !== null &&
+      nowMs >= updatedAtMs &&
+      nowMs - updatedAtMs < resumeGraceMs
+    ) return true
+  }
+
+  if (input.controls.some((control) => control.state !== 'unknown')) return false
+
+  const operationalText = `${input.status ?? ''} ${input.detail ?? ''}`.toLowerCase()
+  return /(?:maintenance|gateway[_\s-]*restart)/.test(operationalText) &&
+    /(?:pause|paused|checkpoint)/.test(operationalText)
+}
 
 export const DEFAULT_RESEARCH_LAB_ALERT_THRESHOLDS: Readonly<ResearchLabAlertThresholds> =
   Object.freeze({
