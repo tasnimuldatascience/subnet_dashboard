@@ -124,6 +124,8 @@ try {
   assert.match(monitor, /daily_benchmark_completed/)
   assert.match(monitor, /historical_events_skipped: true/)
   assert.match(monitor, /claim_ops_research_lab_improvement_analysis/)
+  assert.match(monitor, /const EVENT_MONITOR_OWNER = `\$\{process\.pid\}:\$\{crypto\.randomUUID\(\)\}`/)
+  assert.match(monitor, /dependencies\.owner \?\? EVENT_MONITOR_OWNER/)
   assert.match(monitor, /RESEARCH_LAB_ALERT_DISCORD_WEBHOOK_URL/)
   assert.match(monitor, /RESEARCH_LAB_IMPROVEMENT_DISCORD_WEBHOOK_URL/)
   assert.match(monitor, /No SSH credential is exposed to the dashboard/)

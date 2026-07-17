@@ -44,18 +44,25 @@ export function formatShellEnvironment(values) {
   return `${RUNTIME_SECRET_KEYS.map((key) => `${key}=${quoteForPosixShell(values[key])}`).join('\n')}\n`
 }
 
-async function main() {
-  const secretId = process.env.SUBNET_DASHBOARD_SECRET_ID?.trim()
-  const region = process.env.AWS_REGION?.trim() || process.env.AWS_DEFAULT_REGION?.trim()
+export async function loadRuntimeSecretValues({
+  env = process.env,
+  client,
+} = {}) {
+  const secretId = env.SUBNET_DASHBOARD_SECRET_ID?.trim()
+  const region = env.AWS_REGION?.trim() || env.AWS_DEFAULT_REGION?.trim()
   if (!secretId) throw new Error('SUBNET_DASHBOARD_SECRET_ID is required.')
   if (!region) throw new Error('AWS_REGION is required.')
 
-  const client = new SecretsManagerClient({ region })
-  const response = await client.send(new GetSecretValueCommand({ SecretId: secretId }))
+  const secretsManager = client ?? new SecretsManagerClient({ region })
+  const response = await secretsManager.send(new GetSecretValueCommand({ SecretId: secretId }))
   if (typeof response.SecretString !== 'string') {
     throw new Error('Runtime secret must use SecretString JSON, not SecretBinary.')
   }
-  const values = parseRuntimeSecret(response.SecretString)
+  return parseRuntimeSecret(response.SecretString)
+}
+
+async function main() {
+  const values = await loadRuntimeSecretValues()
   process.stdout.write(formatShellEnvironment(values))
   console.error(`Loaded ${RUNTIME_SECRET_KEYS.length} validated runtime secrets from AWS Secrets Manager.`)
 }

@@ -24,6 +24,7 @@ import { parseResearchLabAlertSignalAllowlist } from './research-lab-alerts'
 
 const MONITOR_ID = 'research-lab-alerts:v1'
 const LEASE_SECONDS = 180
+const MONITOR_OWNER = `${process.pid}:${crypto.randomUUID()}`
 const DELIVERY_BATCH_SIZE = 50
 const DELIVERY_HISTORY_LIMIT = 5_000
 
@@ -71,7 +72,10 @@ async function executeMonitor(
   const supabase = dependencies.supabase ?? getAdminSupabase()
   const now = dependencies.now?.() ?? new Date()
   const nowIso = now.toISOString()
-  const owner = dependencies.owner ?? `${process.pid}:${crypto.randomUUID()}`
+  // Reuse one owner for the lifetime of this worker so each 60-second tick can
+  // renew its own 180-second lease. A new UUID per tick would lock the worker
+  // out until the prior lease expired.
+  const owner = dependencies.owner ?? MONITOR_OWNER
   const env = dependencies.env ?? process.env
   const acquired = await claimMonitorLease(supabase, owner, LEASE_SECONDS)
   if (!acquired) return emptyResult(false)

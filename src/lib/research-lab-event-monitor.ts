@@ -17,6 +17,7 @@ import {
 
 const EVENT_MONITOR_ID = 'research-lab-events:v1'
 const EVENT_MONITOR_LEASE_SECONDS = 180
+const EVENT_MONITOR_OWNER = `${process.pid}:${crypto.randomUUID()}`
 const ANALYSIS_STALE_AFTER_SECONDS = 30 * 60
 const DELIVERY_BATCH_SIZE = 20
 const MAX_SOURCE_EVENTS = 2_000
@@ -100,7 +101,9 @@ async function executeEventMonitor(
   const env = dependencies.env ?? process.env
   const now = dependencies.now?.() ?? new Date()
   const nowIso = now.toISOString()
-  const owner = dependencies.owner ?? `${process.pid}:${crypto.randomUUID()}`
+  // Stable ownership lets this worker renew its lease on every configured
+  // interval instead of waiting for its own previous lease to expire.
+  const owner = dependencies.owner ?? EVENT_MONITOR_OWNER
   const acquired = await claimEventMonitorLease(supabase, owner)
   if (!acquired) return emptyEventMonitorResult(false)
 

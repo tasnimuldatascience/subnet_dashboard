@@ -20,6 +20,8 @@ const leaseMigration = await readFile(
 )
 
 assert.match(monitor, /claim_ops_alert_monitor_lease/)
+assert.match(monitor, /const MONITOR_OWNER = `\$\{process\.pid\}:\$\{crypto\.randomUUID\(\)\}`/)
+assert.match(monitor, /dependencies\.owner \?\? MONITOR_OWNER/)
 assert.match(monitor, /planResearchLabAlertLifecycle/)
 assert.match(monitor, /ops_alert_current/)
 assert.match(monitor, /ops_alert_events/)

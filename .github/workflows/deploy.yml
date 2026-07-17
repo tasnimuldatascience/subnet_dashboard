@@ -131,13 +131,14 @@ jobs:
           AWS_REGION: us-east-1
           AWS_DEFAULT_REGION: us-east-1
           SUBNET_DASHBOARD_SECRET_ID: leadpoet/prod/subnet-dashboard/env
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
           timeout: 45s
           command_timeout: 12m
-          envs: RESEARCH_LAB_ALERT_MONITOR_ENABLED,RESEARCH_LAB_ALERT_MONITOR_INTERVAL_MS,RESEARCH_LAB_ALERT_SIGNALS,OPS_MONITORED_VALIDATOR_HOTKEYS,RESEARCH_LAB_ALERT_DASHBOARD_URL,RESEARCH_LAB_ALERT_MINIMUM_SEVERITY,RESEARCH_LAB_ALERT_TIMEOUT_MS,RESEARCH_LAB_ALERT_DISCORD_USERNAME,RESEARCH_LAB_EVENT_MONITOR_ENABLED,RESEARCH_LAB_EVENT_MONITOR_INTERVAL_MS,RESEARCH_LAB_IMPROVEMENT_DISCORD_USERNAME,RESEARCH_LAB_IMPROVEMENT_ANALYSIS_TIMEOUT_MS,AWS_REGION,AWS_DEFAULT_REGION,SUBNET_DASHBOARD_SECRET_ID
+          envs: RESEARCH_LAB_ALERT_MONITOR_ENABLED,RESEARCH_LAB_ALERT_MONITOR_INTERVAL_MS,RESEARCH_LAB_ALERT_SIGNALS,OPS_MONITORED_VALIDATOR_HOTKEYS,RESEARCH_LAB_ALERT_DASHBOARD_URL,RESEARCH_LAB_ALERT_MINIMUM_SEVERITY,RESEARCH_LAB_ALERT_TIMEOUT_MS,RESEARCH_LAB_ALERT_DISCORD_USERNAME,RESEARCH_LAB_EVENT_MONITOR_ENABLED,RESEARCH_LAB_EVENT_MONITOR_INTERVAL_MS,RESEARCH_LAB_IMPROVEMENT_DISCORD_USERNAME,RESEARCH_LAB_IMPROVEMENT_ANALYSIS_TIMEOUT_MS,AWS_REGION,AWS_DEFAULT_REGION,SUBNET_DASHBOARD_SECRET_ID,NEXT_PUBLIC_SUPABASE_URL
           script: |
             set -euo pipefail
 
@@ -274,22 +275,6 @@ jobs:
             # GitHub runner so it cannot starve the live production worker.
             npm ci --omit=dev --no-audit --no-fund
 
-            # Retrieve the private runtime configuration through the instance role.
-            # The loader validates an explicit allowlist and emits shell-escaped
-            # assignments into a mode-600 temporary file without logging values.
-            umask 077
-            RUNTIME_SECRET_FILE="$(mktemp "$HOME/.subnet-dashboard-runtime-secret.XXXXXX")"
-            cleanup_runtime_secret_file() {
-              rm -f "$RUNTIME_SECRET_FILE"
-            }
-            trap cleanup_runtime_secret_file EXIT
-            node "$APP_ROOT/scripts/load-runtime-secret.mjs" > "$RUNTIME_SECRET_FILE"
-            set -a
-            . "$RUNTIME_SECRET_FILE"
-            set +a
-            cleanup_runtime_secret_file
-            trap - EXIT
-
             rm -rf "$STAGED_BUILD"
             tar -xzf "$ARTIFACT" -C "$APP_ROOT"
             rm -f "$ARTIFACT"
@@ -311,7 +296,7 @@ jobs:
 
             # Prove the new build can boot before changing the production worker.
             RESEARCH_LAB_ALERT_MONITOR_ENABLED=false RESEARCH_LAB_EVENT_MONITOR_ENABLED=false NEXT_DIST_DIR="$CANDIDATE_SLOT" \
-              pm2 start "$APP_ROOT/node_modules/next/dist/bin/next" \
+              pm2 start "$APP_ROOT/scripts/start-production.mjs" \
               --name subnet-dashboard-candidate \
               --cwd "$APP_ROOT" \
               --interpreter node \
@@ -339,6 +324,7 @@ jobs:
             # The process was migrated to this committed cluster definition by
             # commit 7f468eb. A cluster reload starts the replacement worker before
             # retiring the old worker, keeping port 3000 continuously available.
+            MONITOR_VERIFY_AFTER="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
             NEXT_DIST_DIR="$CANDIDATE_SLOT" pm2 startOrReload "$APP_ROOT/ecosystem.config.cjs" --update-env
 
             production_healthy=false
@@ -383,6 +369,27 @@ jobs:
               NEXT_DIST_DIR="$ACTIVE_SLOT" pm2 startOrReload "$APP_ROOT/ecosystem.config.cjs" --update-env || true
               exit 1
             fi
+
+            # A healthy HTTP response does not prove the background schedulers
+            # started. Read the secret only inside this verification subshell,
+            # then require both durable monitor leases to be claimed by the new
+            # worker. Values never enter PM2's managed environment.
+            umask 077
+            RUNTIME_SECRET_FILE="$(mktemp "$HOME/.subnet-dashboard-runtime-secret.XXXXXX")"
+            cleanup_runtime_secret_file() {
+              rm -f "$RUNTIME_SECRET_FILE"
+            }
+            trap cleanup_runtime_secret_file EXIT
+            node "$APP_ROOT/scripts/load-runtime-secret.mjs" > "$RUNTIME_SECRET_FILE"
+            (
+              set -a
+              . "$RUNTIME_SECRET_FILE"
+              set +a
+              VERIFY_MONITOR_AFTER="$MONITOR_VERIFY_AFTER" \
+                node "$APP_ROOT/scripts/verify-runtime-monitors.mjs"
+            )
+            cleanup_runtime_secret_file
+            trap - EXIT
 
             # Record the slot only after the production health check succeeds.
             printf '%s\n' "$CANDIDATE_SLOT" > "$ACTIVE_SLOT_FILE.tmp"

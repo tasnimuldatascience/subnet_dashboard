@@ -1,0 +1,30 @@
+import { RUNTIME_SECRET_KEYS, loadRuntimeSecretValues } from './load-runtime-secret.mjs'
+import { pathToFileURL } from 'node:url'
+
+export async function startProduction({
+  env = process.env,
+  loadSecrets = loadRuntimeSecretValues,
+  runNext = () => import('next/dist/bin/next'),
+  log = console.error,
+} = {}) {
+  const values = await loadSecrets({ env })
+  for (const key of RUNTIME_SECRET_KEYS) env[key] = values[key]
+
+  log(
+    `Loaded ${RUNTIME_SECRET_KEYS.length} validated runtime secrets from AWS Secrets Manager into the production worker.`,
+  )
+
+  // Importing the CLI after installing the secret values keeps Next.js in this
+  // PM2-managed process. That preserves cluster reloads while ensuring every
+  // restart and machine reboot retrieves the current secret through the EC2
+  // instance role instead of relying on PM2's saved environment snapshot.
+  await runNext()
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  startProduction().catch((error) => {
+    const detail = error instanceof Error ? error.message : 'Unknown error'
+    console.error(`Could not start subnet dashboard production worker: ${detail}`)
+    process.exitCode = 1
+  })
+}
