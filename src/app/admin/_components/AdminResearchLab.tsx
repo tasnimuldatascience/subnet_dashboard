@@ -44,6 +44,10 @@ import {
 } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import { formatDateTime, formatRelative, shortHotkey } from '@/lib/admin-format'
+import {
+  adminLabOverviewResponseKeys,
+  classifyAdminLabOverviewResponse,
+} from '@/lib/admin-research-lab-refresh'
 import type { ResearchLabStatusFilterOption } from '@/lib/research-lab-status'
 import {
   DailyBenchmarkTelemetry,
@@ -508,7 +512,7 @@ type AdminResearchLabRefreshPayload = {
   loopStates: AdminLabLoopRefresh[]
   loopPagination: AdminLabLoopPagination
   loopStatusOptions: ResearchLabStatusFilterOption[]
-  ops: Omit<AdminLabOpsSummary, 'champions'>
+  ops: Omit<AdminLabOpsSummary, 'champions' | 'benchmarkRuns' | 'evaluatedAlerts'>
   stats: AdminResearchLabPayload['stats']
   fetchedAt: string
 }
@@ -617,6 +621,15 @@ export function AdminResearchLab({
         })
         const body = await res.json().catch(() => ({}))
         if (!res.ok) throw new Error(body.error || `Initial Lab load failed with ${res.status}`)
+        const responseKind = classifyAdminLabOverviewResponse(body)
+        if (responseKind !== 'full') {
+          console.error('[admin:research-lab] invalid initial overview response', {
+            responseView: res.headers.get('X-Admin-Lab-View'),
+            responseKind,
+            keys: adminLabOverviewResponseKeys(body),
+          })
+          throw new Error('The server returned an incomplete Lab overview response')
+        }
         setLivePayload(body as AdminResearchLabPayload)
         setLiveRefreshError(null)
       } catch (e) {
@@ -684,10 +697,24 @@ export function AdminResearchLab({
         })
         const body = await res.json().catch(() => ({}))
         if (!res.ok) throw new Error(body.error || `Live refresh failed with ${res.status}`)
+        const responseKind = classifyAdminLabOverviewResponse(body)
+        if (responseKind === 'invalid') {
+          console.error('[admin:research-lab] invalid overview refresh response', {
+            responseView: res.headers.get('X-Admin-Lab-View'),
+            keys: adminLabOverviewResponseKeys(body),
+          })
+          throw new Error('The server returned an incomplete Lab refresh response')
+        }
+        const fullOverview = responseKind === 'full'
+          ? body as AdminResearchLabPayload
+          : null
+        const refreshPayload = fullOverview
+          ? refreshPayloadFromAdminResearchLabOverview(fullOverview)
+          : body as AdminResearchLabRefreshPayload
         if (!cancelled) {
           setLivePayload((current) => current
-            ? mergeAdminResearchLabRefresh(current, body as AdminResearchLabRefreshPayload)
-            : current)
+            ? mergeAdminResearchLabRefresh(current, refreshPayload)
+            : fullOverview)
           setLiveRefreshError(null)
         }
       } catch (e) {
@@ -3446,6 +3473,20 @@ function mergeAdminResearchLabRefresh(
     },
     stats: refresh.stats,
     fetchedAt: refresh.fetchedAt,
+  }
+}
+
+function refreshPayloadFromAdminResearchLabOverview(
+  overview: AdminResearchLabPayload,
+): AdminResearchLabRefreshPayload {
+  return {
+    recentLoops: overview.loops,
+    loopStates: overview.loops,
+    loopPagination: overview.loopPagination,
+    loopStatusOptions: overview.loopStatusOptions,
+    ops: overview.ops,
+    stats: overview.stats,
+    fetchedAt: overview.fetchedAt,
   }
 }
 
