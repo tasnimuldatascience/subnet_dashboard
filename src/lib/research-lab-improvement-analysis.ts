@@ -1,9 +1,9 @@
 import { sanitizeResearchLabProviderError } from './research-lab-alert-delivery'
 
-export const RESEARCH_LAB_IMPROVEMENT_MODEL = 'gpt-5.6-sol'
+export const RESEARCH_LAB_IMPROVEMENT_MODEL = 'openai/gpt-5.6-sol'
 export const RESEARCH_LAB_IMPROVEMENT_REASONING_EFFORT = 'xhigh'
 export const RESEARCH_LAB_IMPROVEMENT_PROMPT_VERSION = 'last-improvement:v1'
-export const OPENAI_RESPONSES_ENDPOINT = 'https://api.openai.com/v1/responses'
+export const OPENROUTER_CHAT_COMPLETIONS_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions'
 
 export type ResearchLabImprovementEvidence = Readonly<{
   promotion: Readonly<Record<string, unknown>>
@@ -96,8 +96,8 @@ export async function analyzeResearchLabImprovement(
   env: Readonly<Record<string, string | undefined>> = process.env,
   dependencies: ResearchLabImprovementAnalysisDependencies = {},
 ): Promise<ResearchLabImprovementAnalysisResult> {
-  const apiKey = env.OPENAI_API_KEY?.trim()
-  if (!apiKey) throw new Error('OPENAI_API_KEY is required for improvement analysis.')
+  const apiKey = env.OPENROUTER_KEY?.trim()
+  if (!apiKey) throw new Error('OPENROUTER_KEY is required for improvement analysis.')
 
   const timeoutMs = parseAnalysisTimeout(env.RESEARCH_LAB_IMPROVEMENT_ANALYSIS_TIMEOUT_MS)
   const controller = new AbortController()
@@ -107,38 +107,45 @@ export async function analyzeResearchLabImprovement(
   const fetchImpl = dependencies.fetch ?? fetch
 
   try {
-    const response = await fetchImpl(OPENAI_RESPONSES_ENDPOINT, {
+    const response = await fetchImpl(OPENROUTER_CHAT_COMPLETIONS_ENDPOINT, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://subnet71.com',
+        'X-Title': 'Leadpoet Research Lab Improvement Analysis',
       },
       body: JSON.stringify({
         model: RESEARCH_LAB_IMPROVEMENT_MODEL,
-        reasoning: { effort: RESEARCH_LAB_IMPROVEMENT_REASONING_EFFORT },
-        instructions: SYSTEM_INSTRUCTIONS,
-        input: JSON.stringify(evidence),
-        max_output_tokens: 4_000,
-        store: false,
-        text: {
-          format: {
-            type: 'json_schema',
+        reasoning: {
+          effort: RESEARCH_LAB_IMPROVEMENT_REASONING_EFFORT,
+          exclude: true,
+        },
+        messages: [
+          { role: 'system', content: SYSTEM_INSTRUCTIONS },
+          { role: 'user', content: JSON.stringify(evidence) },
+        ],
+        max_completion_tokens: 4_000,
+        response_format: {
+          type: 'json_schema',
+          json_schema: {
             name: 'research_lab_improvement_analysis',
             strict: true,
             schema: ANALYSIS_SCHEMA,
           },
         },
+        provider: { require_parameters: true },
       }),
       signal: controller.signal,
     })
 
     const body = await response.json().catch(() => ({})) as Record<string, unknown>
     if (!response.ok) {
-      throw new Error(`OpenAI Responses API returned HTTP ${response.status}: ${safeProviderBody(body)}`)
+      throw new Error(`OpenRouter Chat Completions API returned HTTP ${response.status}: ${safeProviderBody(body)}`)
     }
 
     const outputText = extractOutputText(body)
-    if (!outputText) throw new Error('OpenAI response did not contain structured output text.')
+    if (!outputText) throw new Error('OpenRouter response did not contain structured output text.')
     const parsed = JSON.parse(outputText) as unknown
     const analysis = parseAnalysisDoc(parsed)
 
@@ -150,7 +157,7 @@ export async function analyzeResearchLabImprovement(
     }
   } catch (error) {
     if (controller.signal.aborted) {
-      throw new Error(`OpenAI improvement analysis timed out after ${timeoutMs} ms.`)
+      throw new Error(`OpenRouter improvement analysis timed out after ${timeoutMs} ms.`)
     }
     throw new Error(sanitizeResearchLabProviderError(error, [apiKey]))
   } finally {
@@ -165,32 +172,26 @@ function parseAnalysisTimeout(value: string | undefined): number {
 }
 
 function extractOutputText(body: Record<string, unknown>): string | null {
-  if (typeof body.output_text === 'string' && body.output_text.trim()) return body.output_text
-  if (!Array.isArray(body.output)) return null
-  for (const item of body.output) {
-    if (!item || typeof item !== 'object') continue
-    const content = (item as Record<string, unknown>).content
-    if (!Array.isArray(content)) continue
-    for (const part of content) {
-      if (!part || typeof part !== 'object') continue
-      const text = (part as Record<string, unknown>).text
-      if (typeof text === 'string' && text.trim()) return text
-    }
-  }
-  return null
+  if (!Array.isArray(body.choices)) return null
+  const firstChoice = body.choices[0]
+  if (!firstChoice || typeof firstChoice !== 'object') return null
+  const message = (firstChoice as Record<string, unknown>).message
+  if (!message || typeof message !== 'object') return null
+  const content = (message as Record<string, unknown>).content
+  return typeof content === 'string' && content.trim() ? content : null
 }
 
 function parseAnalysisDoc(value: unknown): ResearchLabImprovementAnalysisDoc {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('OpenAI improvement analysis was not an object.')
+    throw new Error('Improvement analysis was not an object.')
   }
   const row = value as Record<string, unknown>
   const verdict = row.genuineImprovement
   if (!['genuine', 'likely', 'uncertain', 'not_genuine'].includes(String(verdict))) {
-    throw new Error('OpenAI improvement analysis returned an invalid verdict.')
+    throw new Error('Improvement analysis returned an invalid verdict.')
   }
   if (!Array.isArray(row.helpedIcps) || !Array.isArray(row.caveats)) {
-    throw new Error('OpenAI improvement analysis omitted required arrays.')
+    throw new Error('Improvement analysis omitted required arrays.')
   }
   return Object.freeze({
     summary: requiredString(row.summary, 'summary'),
@@ -198,12 +199,12 @@ function parseAnalysisDoc(value: unknown): ResearchLabImprovementAnalysisDoc {
     improvementMade: requiredString(row.improvementMade, 'improvementMade'),
     helpedIcps: Object.freeze(row.helpedIcps.map((item, index) => {
       if (!item || typeof item !== 'object' || Array.isArray(item)) {
-        throw new Error(`OpenAI improvement analysis helpedIcps[${index}] is invalid.`)
+        throw new Error(`Improvement analysis helpedIcps[${index}] is invalid.`)
       }
       const icp = item as Record<string, unknown>
       const delta = icp.deltaVsBase
       if (delta !== null && (typeof delta !== 'number' || !Number.isFinite(delta))) {
-        throw new Error(`OpenAI improvement analysis helpedIcps[${index}].deltaVsBase is invalid.`)
+        throw new Error(`Improvement analysis helpedIcps[${index}].deltaVsBase is invalid.`)
       }
       return Object.freeze({
         icpRef: requiredString(icp.icpRef, `helpedIcps[${index}].icpRef`),
@@ -220,7 +221,7 @@ function parseAnalysisDoc(value: unknown): ResearchLabImprovementAnalysisDoc {
 
 function requiredString(value: unknown, field: string): string {
   if (typeof value !== 'string' || !value.trim()) {
-    throw new Error(`OpenAI improvement analysis omitted ${field}.`)
+    throw new Error(`Improvement analysis omitted ${field}.`)
   }
   return value.trim()
 }

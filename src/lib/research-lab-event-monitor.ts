@@ -215,7 +215,7 @@ async function executeImprovementWorker(
     if (updateError) throw new Error(`Could not persist improvement analysis: ${updateError.message}`)
     return { claimed: true, eventKey: event.event_key, analyzed: true, error: null }
   } catch (error) {
-    const detail = sanitizeResearchLabProviderError(error, [env.OPENAI_API_KEY ?? ''])
+    const detail = sanitizeResearchLabProviderError(error, [env.OPENROUTER_KEY ?? ''])
     const retryAt = new Date(Date.now() + retryDelayMs(event.analysis_attempt_count)).toISOString()
     await supabase
       .from('ops_research_lab_event_notifications')

@@ -27,21 +27,18 @@ jobs:
           RESEARCH_LAB_ALERT_DASHBOARD_URL: https://subnet71.com/admin
           RESEARCH_LAB_ALERT_MINIMUM_SEVERITY: warning
           RESEARCH_LAB_ALERT_TIMEOUT_MS: "10000"
-          RESEARCH_LAB_ALERT_DISCORD_WEBHOOK_URL: ${{ secrets.RESEARCH_LAB_ALERT_DISCORD_WEBHOOK_URL }}
           RESEARCH_LAB_ALERT_DISCORD_USERNAME: Leadpoet Bug Watch
           RESEARCH_LAB_EVENT_MONITOR_ENABLED: "true"
           RESEARCH_LAB_EVENT_MONITOR_INTERVAL_MS: "60000"
-          RESEARCH_LAB_IMPROVEMENT_DISCORD_WEBHOOK_URL: ${{ secrets.RESEARCH_LAB_IMPROVEMENT_DISCORD_WEBHOOK_URL }}
           RESEARCH_LAB_IMPROVEMENT_DISCORD_USERNAME: Leadpoet Lab Watch
           RESEARCH_LAB_IMPROVEMENT_ANALYSIS_TIMEOUT_MS: "600000"
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
           timeout: 45s
           command_timeout: 2m
-          envs: RESEARCH_LAB_ALERT_MONITOR_ENABLED,RESEARCH_LAB_ALERT_MONITOR_INTERVAL_MS,RESEARCH_LAB_ALERT_SIGNALS,OPS_MONITORED_VALIDATOR_HOTKEYS,RESEARCH_LAB_ALERT_DASHBOARD_URL,RESEARCH_LAB_ALERT_MINIMUM_SEVERITY,RESEARCH_LAB_ALERT_TIMEOUT_MS,RESEARCH_LAB_ALERT_DISCORD_WEBHOOK_URL,RESEARCH_LAB_ALERT_DISCORD_USERNAME,RESEARCH_LAB_EVENT_MONITOR_ENABLED,RESEARCH_LAB_EVENT_MONITOR_INTERVAL_MS,RESEARCH_LAB_IMPROVEMENT_DISCORD_WEBHOOK_URL,RESEARCH_LAB_IMPROVEMENT_DISCORD_USERNAME,RESEARCH_LAB_IMPROVEMENT_ANALYSIS_TIMEOUT_MS,OPENAI_API_KEY
+          envs: RESEARCH_LAB_ALERT_MONITOR_ENABLED,RESEARCH_LAB_ALERT_MONITOR_INTERVAL_MS,RESEARCH_LAB_ALERT_SIGNALS,OPS_MONITORED_VALIDATOR_HOTKEYS,RESEARCH_LAB_ALERT_DASHBOARD_URL,RESEARCH_LAB_ALERT_MINIMUM_SEVERITY,RESEARCH_LAB_ALERT_TIMEOUT_MS,RESEARCH_LAB_ALERT_DISCORD_USERNAME,RESEARCH_LAB_EVENT_MONITOR_ENABLED,RESEARCH_LAB_EVENT_MONITOR_INTERVAL_MS,RESEARCH_LAB_IMPROVEMENT_DISCORD_USERNAME,RESEARCH_LAB_IMPROVEMENT_ANALYSIS_TIMEOUT_MS
           script: |
             set -euo pipefail
 
@@ -60,7 +57,7 @@ jobs:
               echo "Stopped an abandoned on-instance Next.js build"
               pm2 delete subnet-dashboard-candidate >/dev/null 2>&1 || true
               ACTIVE_SLOT="$(cat "$ACTIVE_SLOT_FILE" 2>/dev/null || printf '.next')"
-              NEXT_DIST_DIR="$ACTIVE_SLOT" pm2 startOrReload "$APP_ROOT/ecosystem.config.cjs" --update-env
+              NEXT_DIST_DIR="$ACTIVE_SLOT" pm2 startOrReload "$APP_ROOT/ecosystem.config.cjs"
 
               production_healthy=false
               for attempt in $(seq 1 20); do
@@ -126,36 +123,23 @@ jobs:
           RESEARCH_LAB_ALERT_DASHBOARD_URL: https://subnet71.com/admin
           RESEARCH_LAB_ALERT_MINIMUM_SEVERITY: warning
           RESEARCH_LAB_ALERT_TIMEOUT_MS: "10000"
-          RESEARCH_LAB_ALERT_DISCORD_WEBHOOK_URL: ${{ secrets.RESEARCH_LAB_ALERT_DISCORD_WEBHOOK_URL }}
           RESEARCH_LAB_ALERT_DISCORD_USERNAME: Leadpoet Bug Watch
           RESEARCH_LAB_EVENT_MONITOR_ENABLED: "true"
           RESEARCH_LAB_EVENT_MONITOR_INTERVAL_MS: "60000"
-          RESEARCH_LAB_IMPROVEMENT_DISCORD_WEBHOOK_URL: ${{ secrets.RESEARCH_LAB_IMPROVEMENT_DISCORD_WEBHOOK_URL }}
           RESEARCH_LAB_IMPROVEMENT_DISCORD_USERNAME: Leadpoet Lab Watch
           RESEARCH_LAB_IMPROVEMENT_ANALYSIS_TIMEOUT_MS: "600000"
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          AWS_REGION: us-east-1
+          AWS_DEFAULT_REGION: us-east-1
+          SUBNET_DASHBOARD_SECRET_ID: leadpoet/prod/subnet-dashboard/env
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
           timeout: 45s
           command_timeout: 12m
-          envs: RESEARCH_LAB_ALERT_MONITOR_ENABLED,RESEARCH_LAB_ALERT_MONITOR_INTERVAL_MS,RESEARCH_LAB_ALERT_SIGNALS,OPS_MONITORED_VALIDATOR_HOTKEYS,RESEARCH_LAB_ALERT_DASHBOARD_URL,RESEARCH_LAB_ALERT_MINIMUM_SEVERITY,RESEARCH_LAB_ALERT_TIMEOUT_MS,RESEARCH_LAB_ALERT_DISCORD_WEBHOOK_URL,RESEARCH_LAB_ALERT_DISCORD_USERNAME,RESEARCH_LAB_EVENT_MONITOR_ENABLED,RESEARCH_LAB_EVENT_MONITOR_INTERVAL_MS,RESEARCH_LAB_IMPROVEMENT_DISCORD_WEBHOOK_URL,RESEARCH_LAB_IMPROVEMENT_DISCORD_USERNAME,RESEARCH_LAB_IMPROVEMENT_ANALYSIS_TIMEOUT_MS,OPENAI_API_KEY
+          envs: RESEARCH_LAB_ALERT_MONITOR_ENABLED,RESEARCH_LAB_ALERT_MONITOR_INTERVAL_MS,RESEARCH_LAB_ALERT_SIGNALS,OPS_MONITORED_VALIDATOR_HOTKEYS,RESEARCH_LAB_ALERT_DASHBOARD_URL,RESEARCH_LAB_ALERT_MINIMUM_SEVERITY,RESEARCH_LAB_ALERT_TIMEOUT_MS,RESEARCH_LAB_ALERT_DISCORD_USERNAME,RESEARCH_LAB_EVENT_MONITOR_ENABLED,RESEARCH_LAB_EVENT_MONITOR_INTERVAL_MS,RESEARCH_LAB_IMPROVEMENT_DISCORD_USERNAME,RESEARCH_LAB_IMPROVEMENT_ANALYSIS_TIMEOUT_MS,AWS_REGION,AWS_DEFAULT_REGION,SUBNET_DASHBOARD_SECRET_ID
           script: |
             set -euo pipefail
-
-            if [ -z "${RESEARCH_LAB_ALERT_DISCORD_WEBHOOK_URL:-}" ]; then
-              echo "RESEARCH_LAB_ALERT_DISCORD_WEBHOOK_URL is not configured"
-              exit 1
-            fi
-            if [ -z "${RESEARCH_LAB_IMPROVEMENT_DISCORD_WEBHOOK_URL:-}" ]; then
-              echo "RESEARCH_LAB_IMPROVEMENT_DISCORD_WEBHOOK_URL is not configured"
-              exit 1
-            fi
-            if [ -z "${OPENAI_API_KEY:-}" ]; then
-              echo "OPENAI_API_KEY is not configured"
-              exit 1
-            fi
 
             APP_ROOT="$HOME/subnet_dashboard"
             RELEASE_ROOT="$HOME/subnet_dashboard_releases"
@@ -268,7 +252,7 @@ jobs:
             # Apply the current process policy before switching releases. This
             # also repairs a worker still cycling under an older, overly-low PM2
             # memory threshold.
-            NEXT_DIST_DIR="$ACTIVE_SLOT" pm2 startOrReload "$APP_ROOT/ecosystem.config.cjs" --update-env
+            NEXT_DIST_DIR="$ACTIVE_SLOT" pm2 startOrReload "$APP_ROOT/ecosystem.config.cjs"
 
             active_healthy=false
             for attempt in $(seq 1 15); do
@@ -289,6 +273,23 @@ jobs:
             # Runtime dependencies remain on EC2, but compilation happened on the
             # GitHub runner so it cannot starve the live production worker.
             npm ci --omit=dev --no-audit --no-fund
+
+            # Retrieve the private runtime configuration through the instance role.
+            # The loader validates an explicit allowlist and emits shell-escaped
+            # assignments into a mode-600 temporary file without logging values.
+            umask 077
+            RUNTIME_SECRET_FILE="$(mktemp "$HOME/.subnet-dashboard-runtime-secret.XXXXXX")"
+            cleanup_runtime_secret_file() {
+              rm -f "$RUNTIME_SECRET_FILE"
+            }
+            trap cleanup_runtime_secret_file EXIT
+            node "$APP_ROOT/scripts/load-runtime-secret.mjs" > "$RUNTIME_SECRET_FILE"
+            set -a
+            . "$RUNTIME_SECRET_FILE"
+            set +a
+            cleanup_runtime_secret_file
+            trap - EXIT
+
             rm -rf "$STAGED_BUILD"
             tar -xzf "$ARTIFACT" -C "$APP_ROOT"
             rm -f "$ARTIFACT"
