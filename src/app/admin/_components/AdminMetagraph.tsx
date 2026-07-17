@@ -422,7 +422,7 @@ export function AdminMetagraph() {
         <SummaryCard
           label="Epoch Blocks Remaining"
           value={epochLoading || epochState === null ? '—' : `${formatAmount(epochState.blocksRemaining, 0)} remaining`}
-          detail={epochState ? `Epoch ${formatAmount(epochState.subnetEpochIndex, 0)} · ${formatAmount(epochState.blocksElapsed, 0)} elapsed` : undefined}
+          detail={epochState ? `${formatAmount(epochState.blocksElapsed, 0)} elapsed` : undefined}
           progress={timeRemainingPercent}
         />
         <SummaryCard

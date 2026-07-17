@@ -359,7 +359,6 @@ class Subtensor:
   assert.match(metagraphUiSource, /label="Official SN71 Epoch"/)
   assert.match(metagraphUiSource, /label="Epoch Blocks Remaining"/)
   assert.match(metagraphUiSource, /epochState\.blocksRemaining, 0\)\} remaining/)
-  assert.match(metagraphUiSource, /Epoch \$\{formatAmount\(epochState\.subnetEpochIndex, 0\)\} · \$\{formatAmount\(epochState\.blocksElapsed, 0\)\} elapsed/)
   assert.match(metagraphUiSource, /label="Time Until Next Epoch"/)
   assert.doesNotMatch(metagraphUiSource, /label="Average VTrust"/)
 
@@ -387,6 +386,8 @@ class Subtensor:
     /progress=\{timeRemainingPercent\}/,
     'blocks and time vials should count down on the same remaining-time basis',
   )
+  assert.match(blocksCardSource, /epochState\.blocksElapsed, 0\)\} elapsed/)
+  assert.doesNotMatch(blocksCardSource, /epochState\.subnetEpochIndex/)
   assert.match(metagraphUiSource, /\.filter\(\(row\) => !row\.isMiner\)/)
   assert.match(metagraphUiSource, /formatAmount\(activeRows\.length, 0\)\}\/\$\{formatAmount\(rows\.length, 0\)/)
   const tableHead = metagraphUiSource.slice(
