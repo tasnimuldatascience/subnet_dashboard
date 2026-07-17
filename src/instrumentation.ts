@@ -52,6 +52,23 @@ const DEFAULT_EVENT_MONITOR_INTERVAL_MS = 60_000
 export async function register(): Promise<void> {
   // Wrapper form (not early return) is load-bearing — see file header.
   if (process.env.NEXT_RUNTIME === 'nodejs') {
+    // Next.js instrumentation can run in a runtime context that does not keep
+    // environment mutations made by the PM2 launcher. Retrieve and install
+    // the same strict secret document here, after Next has established that
+    // context and before any scheduler or route handler starts.
+    const [{ RUNTIME_SECRET_KEYS, loadRuntimeSecretValues }, {
+      installRuntimeSecretEnvironment,
+    }] = await Promise.all([
+      import('../scripts/load-runtime-secret.mjs'),
+      import('./lib/runtime-secret-environment'),
+    ])
+    const runtimeSecretValues = await loadRuntimeSecretValues()
+    installRuntimeSecretEnvironment(runtimeSecretValues)
+    console.log(
+      `[runtime_secrets] loaded ${RUNTIME_SECRET_KEYS.length} validated values ` +
+        'inside Next.js instrumentation',
+    )
+
     // -------------------------------------------------------------
     // 1. Public dashboard cache warm-up + background refresh.
     //    Fire and forget. The cache module guards against duplicate

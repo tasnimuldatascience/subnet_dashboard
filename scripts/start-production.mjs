@@ -10,16 +10,6 @@ export async function startProduction({
   for (const key of RUNTIME_SECRET_KEYS) env[key] = values[key]
   globalThis.__leadpoetSubnetDashboardRuntimeSecretsV1 = values
 
-  // Next.js keeps its own initial environment snapshot and restores it while
-  // booting the production server. Register the freshly loaded values with
-  // that snapshot before importing the CLI; otherwise keys that were absent
-  // when PM2 spawned the worker (notably the Discord webhooks) are deleted
-  // before instrumentation starts the durable monitors.
-  const nextEnvModule = await import('@next/env')
-  const { processEnv, updateInitialEnv } = nextEnvModule.default ?? nextEnvModule
-  processEnv([], process.cwd())
-  updateInitialEnv(values)
-
   log(
     `Loaded ${RUNTIME_SECRET_KEYS.length} validated runtime secrets from AWS Secrets Manager into the production worker.`,
   )

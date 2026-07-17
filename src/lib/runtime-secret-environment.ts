@@ -9,6 +9,14 @@ function runtimeSecretStore(): RuntimeSecretStore | undefined {
   return (globalThis as RuntimeSecretGlobal)[RUNTIME_SECRET_STORE_PROPERTY]
 }
 
+export function installRuntimeSecretEnvironment(
+  secrets: Readonly<Record<string, string>>,
+): void {
+  const installed = { ...secrets }
+  Object.assign(process.env, installed)
+  ;(globalThis as RuntimeSecretGlobal)[RUNTIME_SECRET_STORE_PROPERTY] = installed
+}
+
 /**
  * Next.js may restore its initial process.env snapshot while starting the
  * production server. The PM2 launcher therefore also keeps the validated AWS

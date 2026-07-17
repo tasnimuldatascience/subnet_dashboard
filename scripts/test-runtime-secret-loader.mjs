@@ -52,10 +52,6 @@ const launcher = await readFile(new URL('./start-production.mjs', import.meta.ur
 assert.match(launcher, /const values = await loadSecrets\(\{ env \}\)/)
 assert.match(launcher, /for \(const key of RUNTIME_SECRET_KEYS\) env\[key\] = values\[key\]/)
 assert.match(launcher, /globalThis\.__leadpoetSubnetDashboardRuntimeSecretsV1 = values/)
-assert.match(launcher, /const nextEnvModule = await import\('@next\/env'\)/)
-assert.match(launcher, /const \{ processEnv, updateInitialEnv \} = nextEnvModule\.default \?\? nextEnvModule/)
-assert.match(launcher, /processEnv\(\[\], process\.cwd\(\)\)/)
-assert.match(launcher, /updateInitialEnv\(values\)/)
 assert.match(launcher, /await runNext\(\)/)
 assert.match(launcher, /startProduction\(\)\.catch/)
 assert.doesNotMatch(launcher, /if \(process\.argv\[1\]/)
@@ -78,21 +74,11 @@ const runtimeSecretEnvironment = await readFile(
   'utf8',
 )
 assert.match(runtimeSecretEnvironment, /runtimeSecretStore\(\)\?\.\[name\] \?\? process\.env\[name\]/)
+assert.match(runtimeSecretEnvironment, /installRuntimeSecretEnvironment/)
 
-// Model the reset Next performs during production boot. Updating Next's own
-// initial snapshot is what preserves values loaded after PM2 spawned Node.
-const importedNextEnv = await import('@next/env')
-const { processEnv, resetEnv, updateInitialEnv } = importedNextEnv.default ?? importedNextEnv
-const nextResetProbe = '__SUBNET_DASHBOARD_NEXT_ENV_RESET_PROBE__'
-process.env[nextResetProbe] = 'loaded-before-next-start'
-processEnv([], process.cwd())
-process.env[nextResetProbe] = 'would-be-discarded'
-resetEnv()
-assert.equal(process.env[nextResetProbe], 'loaded-before-next-start')
-updateInitialEnv({ [nextResetProbe]: 'registered-runtime-secret' })
-process.env[nextResetProbe] = 'would-be-discarded-again'
-resetEnv()
-assert.equal(process.env[nextResetProbe], 'registered-runtime-secret')
-delete process.env[nextResetProbe]
+const instrumentation = await readFile(new URL('../src/instrumentation.ts', import.meta.url), 'utf8')
+assert.match(instrumentation, /import\('\.\.\/scripts\/load-runtime-secret\.mjs'\)/)
+assert.match(instrumentation, /await loadRuntimeSecretValues\(\)/)
+assert.match(instrumentation, /installRuntimeSecretEnvironment\(runtimeSecretValues\)/)
 
 console.log('runtime-secret-loader: strict allowlist, validation, and shell escaping passed')
