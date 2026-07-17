@@ -13,6 +13,7 @@ import {
   type AdminResearchLabPayload,
 } from './_components/AdminResearchLab'
 import { AdminResearchLabEconomics } from './_components/AdminResearchLabEconomics'
+import { AdminWeightsAlerts } from './_components/AdminWeightsAlerts'
 import type { ResearchLabEconomicsPayload } from '@/lib/research-lab-economics'
 import { cn } from '@/lib/utils'
 
@@ -192,6 +193,7 @@ export default async function AdminLandingPage({
 
   return (
     <div className="space-y-6">
+      <AdminWeightsAlerts />
       <AdminViewTabs active={activeView} />
       {activeView === 'lab' ? (
         <AdminResearchLab payload={labPayload} error={error} />
