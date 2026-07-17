@@ -46,8 +46,16 @@ const idempotencyKey = requiredEnv('RESEARCH_LAB_EMAIL_TEST_IDEMPOTENCY_KEY')
 if (!apiKey) {
   throw new Error('RESEARCH_LAB_ALERT_RESEND_API_KEY is not configured.')
 }
-if (from !== expectedFrom || replyTo !== expectedReplyTo || !sameRecipients(to, expectedTo)) {
-  throw new Error('Stored email fallback settings do not match the workflow-approved sender and recipients.')
+const settingMatches = Object.freeze({
+  sender: from === expectedFrom,
+  recipients: sameRecipients(to, expectedTo),
+  recipientCount: to.length,
+  replyTo: replyTo === expectedReplyTo,
+})
+if (!settingMatches.sender || !settingMatches.recipients || !settingMatches.replyTo) {
+  throw new Error(
+    `Stored email fallback settings do not match the workflow-approved settings: ${JSON.stringify(settingMatches)}`,
+  )
 }
 
 const response = await fetch('https://api.resend.com/emails', {
