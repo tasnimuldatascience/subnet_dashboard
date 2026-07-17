@@ -7,6 +7,7 @@ import {
   safeAdminRedirectPath,
   verifyAdminCredentials,
 } from '@/lib/admin-auth'
+import { requestPublicUrl } from '@/lib/request-public-url'
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   if (!isAdminAuthConfigured()) {
@@ -26,7 +27,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     typeof password !== 'string' ||
     !verifyAdminCredentials(username, password)
   ) {
-    const loginUrl = new URL('/admin/login', req.url)
+    const loginUrl = requestPublicUrl(req, '/admin/login')
     loginUrl.searchParams.set('error', 'invalid')
     loginUrl.searchParams.set('next', destination)
     const response = NextResponse.redirect(loginUrl, 303)
@@ -42,7 +43,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     })
   }
 
-  const response = NextResponse.redirect(new URL(destination, req.url), 303)
+  const response = NextResponse.redirect(requestPublicUrl(req, destination), 303)
   response.headers.set('Cache-Control', 'no-store')
   response.cookies.set(ADMIN_SESSION_COOKIE, token, {
     httpOnly: true,

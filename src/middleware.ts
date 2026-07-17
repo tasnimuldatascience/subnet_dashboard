@@ -5,6 +5,7 @@ import {
   safeAdminRedirectPath,
   verifyAdminSessionToken,
 } from '@/lib/admin-auth'
+import { requestPublicUrl } from '@/lib/request-public-url'
 
 /**
  * Signed-cookie authentication gate for the admin surface.
@@ -45,7 +46,7 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
 
   if (pathname === '/admin/login' && authenticated) {
     const destination = safeAdminRedirectPath(req.nextUrl.searchParams.get('next'))
-    return NextResponse.redirect(new URL(destination, req.url))
+    return NextResponse.redirect(requestPublicUrl(req, destination))
   }
 
   if (PUBLIC_ADMIN_PATHS.has(pathname)) {
@@ -64,7 +65,7 @@ export async function middleware(req: NextRequest): Promise<NextResponse> {
     )
   }
 
-  const loginUrl = new URL('/admin/login', req.url)
+  const loginUrl = requestPublicUrl(req, '/admin/login')
   loginUrl.searchParams.set('next', `${pathname}${req.nextUrl.search}`)
   return clearInvalidSession(NextResponse.redirect(loginUrl), Boolean(token))
 }
