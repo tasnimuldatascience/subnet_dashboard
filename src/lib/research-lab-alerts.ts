@@ -14,6 +14,7 @@ export const RESEARCH_LAB_ALERT_SIGNALS = [
   'active_run_blocked',
   'transparency_checkpoint_stale',
   'data_freshness',
+  'maintenance_pause_overrun',
 ] as const
 
 export type ResearchLabAlertSignal = (typeof RESEARCH_LAB_ALERT_SIGNALS)[number]
@@ -52,6 +53,7 @@ export type ResearchLabAlertScope =
   | 'run'
   | 'transparency'
   | 'data'
+  | 'maintenance'
 
 export type ResearchLabAlertTimestamp = string | number | Date
 
@@ -74,6 +76,7 @@ export type ResearchLabAlertThresholds = {
   activeRunBlocked: ResearchLabAlertAgeThreshold
   transparencyCheckpointStale: ResearchLabAlertAgeThreshold
   dataFreshness: ResearchLabAlertAgeThreshold
+  maintenancePauseOverrun: ResearchLabAlertAgeThreshold
 }
 
 export type ResearchLabAlertThresholdOverrides = {
@@ -155,6 +158,21 @@ export type ResearchLabDataFreshnessObservation = {
   observedAt: ResearchLabAlertTimestamp | null
 }
 
+export type ResearchLabMaintenancePauseComponent = {
+  componentId: string
+  label: string
+  pausedAt: ResearchLabAlertTimestamp | null
+  reason?: string | null
+  actor?: string | null
+}
+
+export type ResearchLabMaintenancePauseObservation = {
+  /** Stable identifier for the group of maintenance controls. */
+  maintenanceId: string
+  source?: string | null
+  components: readonly ResearchLabMaintenancePauseComponent[]
+}
+
 /**
  * Canonical, already-normalized observations. Arrays may contain the same entity
  * from multiple sources; evaluation merges every emitted signal by fingerprint.
@@ -165,6 +183,7 @@ export type ResearchLabAlertObservations = {
   activeRuns?: readonly ResearchLabActiveRunAlertObservation[]
   transparencyCheckpoints?: readonly ResearchLabTransparencyCheckpointObservation[]
   dataFreshness?: readonly ResearchLabDataFreshnessObservation[]
+  maintenancePauses?: readonly ResearchLabMaintenancePauseObservation[]
 }
 
 export type ResearchLabEvaluatedAlert = {
@@ -277,6 +296,7 @@ export const DEFAULT_RESEARCH_LAB_ALERT_THRESHOLDS: Readonly<ResearchLabAlertThr
     activeRunBlocked: frozenThreshold(0, 60 * MINUTE_MS),
     transparencyCheckpointStale: frozenThreshold(6 * HOUR_MS, 12 * HOUR_MS),
     dataFreshness: frozenThreshold(15 * MINUTE_MS, 60 * MINUTE_MS),
+    maintenancePauseOverrun: frozenThreshold(6 * HOUR_MS, 12 * HOUR_MS),
   })
 
 const FAILED_STATUSES = new Set([
@@ -343,6 +363,9 @@ export function evaluateResearchLabAlerts(
   }
   for (const observation of observations.dataFreshness ?? []) {
     evaluateDataFreshnessObservation(observation, nowMs, thresholds, candidates)
+  }
+  for (const observation of observations.maintenancePauses ?? []) {
+    evaluateMaintenancePauseObservation(observation, nowMs, thresholds, candidates)
   }
 
   return dedupeCandidates(candidates)
@@ -683,6 +706,58 @@ function evaluateDataFreshnessObservation(
     source,
   })
   if (stale) candidates.push(stale)
+}
+
+function evaluateMaintenancePauseObservation(
+  observation: ResearchLabMaintenancePauseObservation,
+  nowMs: number,
+  thresholds: ResearchLabAlertThresholds,
+  candidates: AlertCandidate[],
+): void {
+  const maintenanceId = requiredId(observation.maintenanceId, 'maintenanceId')
+  const source = sourceLabel(observation.source, 'gateway maintenance controls')
+  const paused = observation.components
+    .map((component) => ({
+      componentId: requiredId(component.componentId, 'maintenance componentId'),
+      label: requiredId(component.label, 'maintenance label'),
+      pausedAtMs: optionalTimestamp(component.pausedAt),
+      reason: nonEmptyString(component.reason),
+      actor: nonEmptyString(component.actor),
+    }))
+    .filter((component): component is typeof component & { pausedAtMs: number } => (
+      component.pausedAtMs !== null
+    ))
+    .sort((left, right) => left.pausedAtMs - right.pausedAtMs || left.label.localeCompare(right.label))
+
+  if (paused.length === 0) return
+  const oldestPausedAtMs = paused[0].pausedAtMs
+  const oldestAgeMs = Math.max(0, nowMs - oldestPausedAtMs)
+  const severity = severityAtAge(oldestAgeMs, thresholds.maintenancePauseOverrun)
+  if (!severity) return
+
+  const detail = paused.map((component) => {
+    const ageMs = Math.max(0, nowMs - component.pausedAtMs)
+    const context = [
+      component.reason ? `reason: ${component.reason}` : null,
+      component.actor ? `actor: ${component.actor}` : null,
+    ].filter(Boolean).join('; ')
+    return `${component.label} has been paused for ${durationLabel(ageMs)} since ${new Date(component.pausedAtMs).toISOString()}${context ? ` (${context})` : ''}.`
+  }).join('\n')
+
+  candidates.push(candidate({
+    signal: 'maintenance_pause_overrun',
+    severity,
+    scope: 'maintenance',
+    entityId: maintenanceId,
+    validatorId: null,
+    title: severity === 'critical'
+      ? 'Research Lab maintenance pause exceeded 12 hours'
+      : 'Research Lab maintenance pause exceeded 6 hours',
+    detail,
+    observedAtMs: oldestPausedAtMs,
+    ageMs: oldestAgeMs,
+    source,
+  }))
 }
 
 function staleCandidate(input: {

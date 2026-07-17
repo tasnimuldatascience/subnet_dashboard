@@ -33,7 +33,7 @@ try {
     shouldSuppressResearchLabExecutionAlert,
   } = require(join(outDir, 'research-lab-alerts.js'))
 
-  assert.equal(RESEARCH_LAB_ALERT_SIGNALS.length, 13)
+  assert.equal(RESEARCH_LAB_ALERT_SIGNALS.length, 14)
   assert.equal(parseResearchLabAlertSignalAllowlist(undefined), null)
   assert.equal(parseResearchLabAlertSignalAllowlist('  '), null)
   assert.deepEqual(
@@ -228,6 +228,42 @@ try {
   assert.equal(boundaryById.get('at-critical').severity, 'critical')
   assert.equal(boundaryById.has('before-warning'), false)
   assert.equal(boundaryById.has('future-clock-skew'), false)
+
+  const maintenanceFixture = evaluateResearchLabAlerts({
+    maintenancePauses: [{
+      maintenanceId: 'gateway-workflows',
+      source: 'gateway controls',
+      components: [
+        {
+          componentId: 'autoresearch',
+          label: 'Auto-research loop',
+          pausedAt: ago(13 * 60 * 60 * 1_000),
+          reason: 'gateway_restart',
+          actor: 'ops@example.com',
+        },
+        {
+          componentId: 'scoring',
+          label: 'Scoring worker',
+          pausedAt: ago(7 * 60 * 60 * 1_000),
+          reason: 'planned maintenance',
+        },
+      ],
+    }],
+  }, { now: NOW })
+  assert.equal(maintenanceFixture.length, 1, 'paused subsystems are consolidated into one incident')
+  assert.equal(maintenanceFixture[0].signal, 'maintenance_pause_overrun')
+  assert.equal(maintenanceFixture[0].scope, 'maintenance')
+  assert.equal(maintenanceFixture[0].severity, 'critical')
+  assert.match(maintenanceFixture[0].detail, /Auto-research loop has been paused for 13h/)
+  assert.match(maintenanceFixture[0].detail, /Scoring worker has been paused for 7h/)
+  assert.match(maintenanceFixture[0].detail, /actor: ops@example\.com/)
+
+  assert.deepEqual(evaluateResearchLabAlerts({
+    maintenancePauses: [{
+      maintenanceId: 'short-pause',
+      components: [{ componentId: 'scoring', label: 'Scoring', pausedAt: ago(5 * 60 * 60 * 1_000) }],
+    }],
+  }, { now: NOW }), [], 'maintenance shorter than six hours does not page')
 
   const blockBoundaryFixture = evaluate({
     validators: [

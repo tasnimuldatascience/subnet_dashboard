@@ -7,11 +7,14 @@ export async function startProduction({
   log = console.error,
 } = {}) {
   const values = await loadSecrets({ env })
-  for (const key of RUNTIME_SECRET_KEYS) env[key] = values[key]
+  for (const key of RUNTIME_SECRET_KEYS) {
+    if (typeof values[key] === 'string') env[key] = values[key]
+    else delete env[key]
+  }
   globalThis.__leadpoetSubnetDashboardRuntimeSecretsV1 = values
 
   log(
-    `Loaded ${RUNTIME_SECRET_KEYS.length} validated runtime secrets from AWS Secrets Manager into the production worker.`,
+    `Loaded ${Object.keys(values).length} validated runtime secrets from AWS Secrets Manager into the production worker.`,
   )
 
   // Importing the CLI after installing the secret values keeps Next.js in this

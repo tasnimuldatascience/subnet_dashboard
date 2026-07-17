@@ -10,6 +10,10 @@ const runtimeSecretKeys = [
   "ADMIN_SESSION_SECRET",
   "RESEARCH_LAB_ALERT_DISCORD_WEBHOOK_URL",
   "RESEARCH_LAB_IMPROVEMENT_DISCORD_WEBHOOK_URL",
+  "RESEARCH_LAB_ALERT_RESEND_API_KEY",
+  "RESEARCH_LAB_ALERT_EMAIL_FROM",
+  "RESEARCH_LAB_ALERT_EMAIL_TO",
+  "RESEARCH_LAB_ALERT_EMAIL_REPLY_TO",
 ];
 
 module.exports = {
@@ -42,7 +46,7 @@ module.exports = {
         SUBNET_DASHBOARD_SECRET_ID: "leadpoet/prod/subnet-dashboard/env",
         RESEARCH_LAB_ALERT_MONITOR_ENABLED: "true",
         RESEARCH_LAB_ALERT_MONITOR_INTERVAL_MS: "60000",
-        RESEARCH_LAB_ALERT_SIGNALS: "pcr0_mismatch,pcr0_missing,pcr0_stale,offchain_weight_bundle_missing,offchain_weight_bundle_stale,benchmark_failed,benchmark_stalled,active_run_stale,active_run_blocked,transparency_checkpoint_stale",
+        RESEARCH_LAB_ALERT_SIGNALS: "pcr0_mismatch,pcr0_missing,pcr0_stale,offchain_weight_bundle_missing,offchain_weight_bundle_stale,benchmark_failed,benchmark_stalled,active_run_stale,active_run_blocked,transparency_checkpoint_stale,maintenance_pause_overrun",
         OPS_MONITORED_VALIDATOR_HOTKEYS: "5FNVgRnrxMibhcBGEAaajGrYjsaCn441a5HuGUBUNnxEBLo9",
         RESEARCH_LAB_ALERT_DASHBOARD_URL: "https://subnet71.com/admin",
         RESEARCH_LAB_ALERT_MINIMUM_SEVERITY: "warning",

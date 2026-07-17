@@ -1555,6 +1555,11 @@ function buildCanonicalAlertObservations(input: {
         }]
       : []
 
+  const maintenanceComponents = [
+    { componentId: 'autoresearch', label: 'Auto-research loop', control: input.controls.loops },
+    { componentId: 'scoring', label: 'Scoring worker', control: input.controls.scoring },
+  ].filter((component) => component.control.state === 'paused')
+
   return {
     validators,
     benchmarks,
@@ -1565,6 +1570,19 @@ function buildCanonicalAlertObservations(input: {
       source: 'research lab public loop projection',
       observedAt: input.dataFreshness.latestActivityAt,
     }],
+    maintenancePauses: maintenanceComponents.length > 0
+      ? [{
+          maintenanceId: 'gateway-workflows',
+          source: 'gateway maintenance controls',
+          components: maintenanceComponents.map((component) => ({
+            componentId: component.componentId,
+            label: component.label,
+            pausedAt: component.control.updatedAt,
+            reason: component.control.reason,
+            actor: component.control.actorRef,
+          })),
+        }]
+      : [],
   }
 }
 

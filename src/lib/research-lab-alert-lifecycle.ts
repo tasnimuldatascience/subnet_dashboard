@@ -11,13 +11,14 @@ export type ResearchLabAlertIncidentStatus = 'pending' | 'open' | 'resolved'
 export type ResearchLabAlertTransitionType =
   | 'open'
   | 'escalate'
+  | 'remind'
   | 'deescalate'
   | 'recover'
   | 'debounce_cancel'
 
 export type ResearchLabAlertDeliverableTransition = Extract<
   ResearchLabAlertTransitionType,
-  'open' | 'escalate' | 'recover'
+  'open' | 'escalate' | 'remind' | 'recover'
 >
 
 export type ResearchLabAlertDeliveryChannel = 'email' | 'discord'
@@ -74,6 +75,8 @@ export type ResearchLabAlertDestination = {
   enabled?: boolean
   minimumSeverity?: ResearchLabAlertSeverity
   transitions?: readonly ResearchLabAlertDeliverableTransition[]
+  /** A fallback destination is seeded only after this primary channel fails. */
+  fallbackFor?: Extract<ResearchLabAlertDeliveryChannel, 'discord'>
 }
 
 export type ResearchLabAlertDeliveryPayload = {
@@ -128,6 +131,7 @@ export type ResearchLabAlertDeliveryAttempt = {
   fingerprint: string
   payload: ResearchLabAlertDeliveryPayload
   error?: string | null
+  providerHttpStatus?: number | null
 }
 
 export type ResearchLabAlertDeliverySuppression = {
@@ -202,6 +206,7 @@ export const DEFAULT_RESEARCH_LAB_ALERT_LIFECYCLE_POLICY: Readonly<ResolvedResea
     cooldownMs: Object.freeze({
       open: 30 * MINUTE_MS,
       escalate: 15 * MINUTE_MS,
+      remind: 0,
       recover: 30 * MINUTE_MS,
     }),
     retry: Object.freeze({
@@ -214,8 +219,12 @@ export const DEFAULT_RESEARCH_LAB_ALERT_LIFECYCLE_POLICY: Readonly<ResolvedResea
 const DELIVERABLE_TRANSITIONS = new Set<ResearchLabAlertTransitionType>([
   'open',
   'escalate',
+  'remind',
   'recover',
 ])
+
+const MAINTENANCE_REMINDER_MS = 12 * 60 * MINUTE_MS
+const HARD_DISCORD_FAILURE_STATUSES = new Set([401, 403, 404])
 
 type NormalizedDestination = {
   channel: ResearchLabAlertDeliveryChannel
@@ -223,6 +232,7 @@ type NormalizedDestination = {
   destinationHash: string
   minimumSeverity: ResearchLabAlertSeverity
   transitions: ReadonlySet<ResearchLabAlertDeliverableTransition>
+  fallbackFor: Extract<ResearchLabAlertDeliveryChannel, 'discord'> | null
 }
 
 type DeliverySeed = {
@@ -303,6 +313,23 @@ export function planResearchLabAlertLifecycle(
       })
       incidentUpserts.push(deescalated.incident)
       transitionEvents.push(deescalated.event)
+    } else if (
+      alert.signal === 'maintenance_pause_overrun' &&
+      previous?.severity === 'critical' &&
+      alert.severity === 'critical' &&
+      previous.lastTransitionAt !== null &&
+      nowMs - requiredTimestamp(previous.lastTransitionAt, 'incident.lastTransitionAt') >= MAINTENANCE_REMINDER_MS
+    ) {
+      const reminded = transitionIncident({
+        incident: observed,
+        previous,
+        transition: 'remind',
+        toStatus: 'open',
+        toSeverity: 'critical',
+        now,
+      })
+      incidentUpserts.push(reminded.incident)
+      transitionEvents.push(reminded.event)
     } else {
       incidentUpserts.push(observed)
     }
@@ -373,7 +400,7 @@ export function resolveResearchLabAlertLifecyclePolicy(
     'cooldownMs',
     override.cooldownMs,
     DEFAULT_RESEARCH_LAB_ALERT_LIFECYCLE_POLICY.cooldownMs,
-    ['open', 'escalate', 'recover'],
+    ['open', 'escalate', 'remind', 'recover'],
   )
   const retry = {
     ...DEFAULT_RESEARCH_LAB_ALERT_LIFECYCLE_POLICY.retry,
@@ -540,6 +567,10 @@ function planDeliveries({
     if (!isDeliverableTransition(event.transition)) continue
     const payload = deliveryPayload(event)
     for (const destination of destinations) {
+      if (
+        destination.fallbackFor &&
+        (event.transition !== 'recover' || !didEpisodeUseFallbackEmail(event, destination, attempts))
+      ) continue
       const idempotencyKey = buildResearchLabAlertDeliveryIdempotencyKey(
         event.transitionId,
         destination.channel,
@@ -612,6 +643,37 @@ function planDeliveries({
     }
   }
 
+  // Email remains silent while Discord works. It is seeded only after a hard
+  // invalid-webhook response, two failed attempts for a critical page, or full
+  // Discord retry exhaustion for a warning. The original transition payload
+  // and a channel-specific idempotency key keep the fallback durable.
+  for (const destination of destinations) {
+    if (!destination.fallbackFor) continue
+    for (const group of attempts.values()) {
+      if (
+        group.latest.channel !== destination.fallbackFor ||
+        group.succeeded ||
+        group.latest.status !== 'failed' ||
+        !isRetryStillRelevant(group.latest, finalIncidents) ||
+        !shouldActivateFallback(group, policy.retry.maxAttempts) ||
+        !destination.transitions.has(group.latest.transition) ||
+        severityRank(group.latest.payload.severity) < severityRank(destination.minimumSeverity)
+      ) continue
+      const idempotencyKey = buildResearchLabAlertDeliveryIdempotencyKey(
+        group.latest.transitionId,
+        destination.channel,
+        destination.destinationHash,
+      )
+      if (!seeds.has(idempotencyKey)) {
+        seeds.set(idempotencyKey, {
+          destination,
+          payload: copyPayload(group.latest.payload),
+          idempotencyKey,
+        })
+      }
+    }
+  }
+
   const deliveryIntents: ResearchLabAlertDeliveryIntent[] = []
   const retryExhaustions: ResearchLabAlertRetryExhaustion[] = []
   for (const seed of Array.from(seeds.values()).sort(compareDeliverySeeds)) {
@@ -621,6 +683,7 @@ function planDeliveries({
       continue
     }
     if (group.succeeded || group.latest.status === 'pending') continue
+    if (group.latest.channel === 'discord' && hasHardDiscordFailure(group)) continue
     if (group.maxAttempt >= policy.retry.maxAttempts) {
       retryExhaustions.push(retryExhaustion(group, policy.retry.maxAttempts))
       continue
@@ -729,6 +792,41 @@ function latestCooldownAttempt({
     }
   }
   return latest
+}
+
+function shouldActivateFallback(
+  group: CanonicalAttemptGroup,
+  maxAttempts: number,
+): boolean {
+  const failedAttempts = group.attempts.filter((attempt) => attempt.status === 'failed')
+  if (hasHardDiscordFailure(group)) return true
+  return group.latest.payload.severity === 'critical'
+    ? failedAttempts.length >= 2
+    : failedAttempts.length >= maxAttempts
+}
+
+function hasHardDiscordFailure(group: CanonicalAttemptGroup): boolean {
+  return group.attempts.some((attempt) => (
+    attempt.status === 'failed' &&
+    attempt.providerHttpStatus !== null &&
+    attempt.providerHttpStatus !== undefined &&
+    HARD_DISCORD_FAILURE_STATUSES.has(attempt.providerHttpStatus)
+  ))
+}
+
+function didEpisodeUseFallbackEmail(
+  event: ResearchLabAlertTransitionEvent,
+  destination: NormalizedDestination,
+  attempts: ReadonlyMap<string, CanonicalAttemptGroup>,
+): boolean {
+  return Array.from(attempts.values()).some((group) => (
+    group.succeeded &&
+    group.latest.channel === destination.channel &&
+    group.latest.destinationHash === destination.destinationHash &&
+    group.latest.incidentId === event.incidentId &&
+    group.latest.payload.episode === event.episode &&
+    group.latest.transition !== 'recover'
+  ))
 }
 
 function isRetryStillRelevant(
@@ -852,6 +950,9 @@ function normalizeDestinations(
   const normalized = new Map<string, NormalizedDestination>()
   for (const input of destinations) {
     if (input.enabled === false) continue
+    if (input.fallbackFor && input.channel !== 'email') {
+      throw new Error('Only email destinations may be configured as a Discord fallback')
+    }
     const destination = normalizeDestinationValue(input.channel, input.destination)
     const destinationHash = hashResearchLabAlertDestination(input.channel, destination)
     const minimumSeverity = input.minimumSeverity ?? 'warning'
@@ -859,7 +960,7 @@ function normalizeDestinations(
       throw new Error(`Unsupported minimum severity ${minimumSeverity}`)
     }
     const transitions = new Set<ResearchLabAlertDeliverableTransition>(
-      input.transitions ?? ['open', 'escalate', 'recover'],
+      input.transitions ?? ['open', 'escalate', 'remind', 'recover'],
     )
     for (const transition of transitions) {
       if (!isDeliverableTransition(transition)) {
@@ -877,6 +978,7 @@ function normalizeDestinations(
       destinationHash,
       minimumSeverity,
       transitions,
+      fallbackFor: input.fallbackFor ?? null,
     })
   }
   return Array.from(normalized.values()).sort(compareDestinations)

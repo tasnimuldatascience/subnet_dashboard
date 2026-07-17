@@ -18,6 +18,7 @@ export type AdminLabWorkflowControlSummary = {
   label: 'Active' | 'Paused' | 'Unknown'
   source: 'gateway_control' | 'missing'
   reason: string | null
+  actorRef: string | null
   updatedAt: string | null
 }
 
@@ -29,6 +30,8 @@ export type AdminLabGatewayControlInput = {
   current_reason?: unknown
   reason?: unknown
   status_detail?: unknown
+  current_actor_ref?: unknown
+  actor_ref?: unknown
   current_status_at?: unknown
   status_at?: unknown
   updated_at?: unknown
@@ -50,6 +53,7 @@ export function normalizeAdminLabGatewayControl(
       label: 'Unknown',
       source: 'missing',
       reason: unavailableReason,
+      actorRef: null,
       updatedAt: null,
     }
   }
@@ -87,6 +91,9 @@ export function normalizeAdminLabGatewayControl(
       stringOrNull(row.current_reason) ??
       stringOrNull(row.reason) ??
       stringOrNull(row.status_detail),
+    actorRef:
+      stringOrNull(row.current_actor_ref) ??
+      stringOrNull(row.actor_ref),
     updatedAt:
       isoStringOrNull(row.current_status_at) ??
       isoStringOrNull(row.status_at) ??

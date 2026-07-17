@@ -31,7 +31,7 @@ const DELIVERY_BATCH_SIZE = 50
 const DELIVERY_HISTORY_LIMIT = 5_000
 
 const ALERT_SEVERITIES = new Set<ResearchLabAlertSeverity>(['warning', 'critical'])
-const DELIVERABLE_TRANSITIONS = new Set(['open', 'escalate', 'recover'])
+const DELIVERABLE_TRANSITIONS = new Set(['open', 'escalate', 'remind', 'recover'])
 
 export type ResearchLabAlertMonitorResult = {
   acquired: boolean
@@ -186,6 +186,7 @@ export function buildResearchLabAlertDestinations(
       channel: 'email',
       destination: config.email.to.join(','),
       minimumSeverity,
+      ...(config.discord ? { fallbackFor: 'discord' as const } : {}),
     })
   }
   return destinations
@@ -521,6 +522,7 @@ function parseDeliveryAttemptRow(
     fingerprint: text(row.fingerprint) ?? payload.fingerprint,
     payload,
     error: nullableText(row.error_detail),
+    providerHttpStatus: nullableInteger(row.provider_http_status),
   }
 }
 
@@ -635,6 +637,12 @@ function nullableText(value: unknown): string | null {
 function integer(value: unknown, fallback: number): number {
   const parsed = typeof value === 'number' ? value : Number(value)
   return Number.isInteger(parsed) ? parsed : fallback
+}
+
+function nullableInteger(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null
+  const parsed = typeof value === 'number' ? value : Number(value)
+  return Number.isInteger(parsed) ? parsed : null
 }
 
 function safeError(value: unknown): string {

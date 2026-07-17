@@ -10,7 +10,7 @@ import type { ResearchLabEvaluatedAlert } from './research-lab-alerts'
 
 export type ResearchLabAlert = ResearchLabEvaluatedAlert
 
-export type ResearchLabAlertTransition = 'open' | 'escalate' | 'recover'
+export type ResearchLabAlertTransition = 'open' | 'escalate' | 'remind' | 'recover'
 
 export type ResearchLabDiscordAlertChannel = Readonly<{
   webhookUrl: string
@@ -92,7 +92,7 @@ export type ResearchLabAlertDeliveryResult = Readonly<{
 
 export type ResearchLabOperatorAlertMessage = Readonly<{
   transition: ResearchLabAlertTransition
-  transitionLabel: 'OPEN' | 'ESCALATED' | 'CLEARED' | 'CLOSED'
+  transitionLabel: 'OPEN' | 'ESCALATED' | 'REMINDER' | 'CLEARED' | 'CLOSED'
   severityLabel: 'WARNING' | 'CRITICAL'
   headline: string
   subject: string
@@ -160,6 +160,7 @@ const TRANSITION_LABELS: Readonly<
 > = Object.freeze({
   open: 'OPEN',
   escalate: 'ESCALATED',
+  remind: 'REMINDER',
   recover: 'CLEARED',
 })
 
@@ -866,8 +867,8 @@ function optionalIsoTimestamp(value: string | null): string | null {
 }
 
 function assertTransition(value: string): asserts value is ResearchLabAlertTransition {
-  if (!['open', 'escalate', 'recover'].includes(value)) {
-    throw new Error('Research Lab alert transition must be open, escalate, or recover.')
+  if (!['open', 'escalate', 'remind', 'recover'].includes(value)) {
+    throw new Error('Research Lab alert transition must be open, escalate, remind, or recover.')
   }
 }
 

@@ -1,7 +1,7 @@
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager'
 import { pathToFileURL } from 'node:url'
 
-export const RUNTIME_SECRET_KEYS = Object.freeze([
+export const REQUIRED_RUNTIME_SECRET_KEYS = Object.freeze([
   'SUPABASE_SECRET_KEY',
   'OPENROUTER_KEY',
   'ADMIN_USER',
@@ -9,6 +9,18 @@ export const RUNTIME_SECRET_KEYS = Object.freeze([
   'ADMIN_SESSION_SECRET',
   'RESEARCH_LAB_ALERT_DISCORD_WEBHOOK_URL',
   'RESEARCH_LAB_IMPROVEMENT_DISCORD_WEBHOOK_URL',
+])
+
+export const OPTIONAL_RUNTIME_SECRET_KEYS = Object.freeze([
+  'RESEARCH_LAB_ALERT_RESEND_API_KEY',
+  'RESEARCH_LAB_ALERT_EMAIL_FROM',
+  'RESEARCH_LAB_ALERT_EMAIL_TO',
+  'RESEARCH_LAB_ALERT_EMAIL_REPLY_TO',
+])
+
+export const RUNTIME_SECRET_KEYS = Object.freeze([
+  ...REQUIRED_RUNTIME_SECRET_KEYS,
+  ...OPTIONAL_RUNTIME_SECRET_KEYS,
 ])
 
 export function parseRuntimeSecret(secretString) {
@@ -23,10 +35,21 @@ export function parseRuntimeSecret(secretString) {
   }
 
   const values = {}
-  for (const key of RUNTIME_SECRET_KEYS) {
+  for (const key of REQUIRED_RUNTIME_SECRET_KEYS) {
     const value = document[key]
     if (typeof value !== 'string' || !value.trim()) {
       throw new Error(`Runtime secret is missing non-empty ${key}.`)
+    }
+    if (value !== value.trim()) {
+      throw new Error(`Runtime secret ${key} has leading or trailing whitespace.`)
+    }
+    values[key] = value
+  }
+  for (const key of OPTIONAL_RUNTIME_SECRET_KEYS) {
+    const value = document[key]
+    if (value === undefined || value === null || value === '') continue
+    if (typeof value !== 'string' || !value.trim()) {
+      throw new Error(`Runtime secret ${key} must be a non-empty string when configured.`)
     }
     if (value !== value.trim()) {
       throw new Error(`Runtime secret ${key} has leading or trailing whitespace.`)
@@ -41,7 +64,8 @@ function quoteForPosixShell(value) {
 }
 
 export function formatShellEnvironment(values) {
-  return `${RUNTIME_SECRET_KEYS.map((key) => `${key}=${quoteForPosixShell(values[key])}`).join('\n')}\n`
+  const configured = RUNTIME_SECRET_KEYS.filter((key) => typeof values[key] === 'string')
+  return `${configured.map((key) => `${key}=${quoteForPosixShell(values[key])}`).join('\n')}\n`
 }
 
 export async function loadRuntimeSecretValues({
@@ -64,7 +88,7 @@ export async function loadRuntimeSecretValues({
 async function main() {
   const values = await loadRuntimeSecretValues()
   process.stdout.write(formatShellEnvironment(values))
-  console.error(`Loaded ${RUNTIME_SECRET_KEYS.length} validated runtime secrets from AWS Secrets Manager.`)
+  console.error(`Loaded ${Object.keys(values).length} validated runtime secrets from AWS Secrets Manager.`)
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

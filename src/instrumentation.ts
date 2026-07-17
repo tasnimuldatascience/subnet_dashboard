@@ -56,7 +56,7 @@ export async function register(): Promise<void> {
     // environment mutations made by the PM2 launcher. Retrieve and install
     // the same strict secret document here, after Next has established that
     // context and before any scheduler or route handler starts.
-    const [{ RUNTIME_SECRET_KEYS, loadRuntimeSecretValues }, {
+    const [{ loadRuntimeSecretValues }, {
       installRuntimeSecretEnvironment,
     }] = await Promise.all([
       import('../scripts/load-runtime-secret.mjs'),
@@ -65,7 +65,7 @@ export async function register(): Promise<void> {
     const runtimeSecretValues = await loadRuntimeSecretValues()
     installRuntimeSecretEnvironment(runtimeSecretValues)
     console.log(
-      `[runtime_secrets] loaded ${RUNTIME_SECRET_KEYS.length} validated values ` +
+      `[runtime_secrets] loaded ${Object.keys(runtimeSecretValues).length} validated values ` +
         'inside Next.js instrumentation',
     )
 

@@ -155,9 +155,15 @@ try {
   assert.equal(terminalDiscord.embeds[0].color, 0x64748b)
   assert.match(terminalDiscord.embeds[0].title, /^CLOSED · CRITICAL/)
   assert.match(terminalDiscord.embeds[0].description, /not a successful recovery/)
+  const reminderDiscord = buildResearchLabDiscordPayload(
+    alertFixture,
+    'remind',
+    DASHBOARD_URL,
+  )
+  assert.match(reminderDiscord.embeds[0].title, /^REMINDER · CRITICAL/)
   assert.throws(
     () => renderResearchLabOperatorAlert(alertFixture, 'invalid-transition', DASHBOARD_URL),
-    /open, escalate, or recover/,
+    /open, escalate, remind, or recover/,
   )
 
   assert.deepEqual(

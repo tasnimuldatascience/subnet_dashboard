@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import {
+  OPTIONAL_RUNTIME_SECRET_KEYS,
+  REQUIRED_RUNTIME_SECRET_KEYS,
   RUNTIME_SECRET_KEYS,
   formatShellEnvironment,
   loadRuntimeSecretValues,
@@ -14,6 +16,16 @@ document.ADMIN_PASS = "spaces $dollar 'quote'\nand newline"
 
 const parsed = parseRuntimeSecret(JSON.stringify({ ...document, IGNORED_EXTRA_KEY: 'not-exported' }))
 assert.deepEqual(parsed, document)
+
+const requiredOnly = Object.fromEntries(
+  REQUIRED_RUNTIME_SECRET_KEYS.map((key, index) => [key, `required-${index}`]),
+)
+assert.deepEqual(
+  parseRuntimeSecret(JSON.stringify(requiredOnly)),
+  requiredOnly,
+  'Resend stays optional until fallback email is configured',
+)
+assert.equal(OPTIONAL_RUNTIME_SECRET_KEYS.length, 4)
 
 const shell = formatShellEnvironment(parsed)
 assert.match(shell, /^SUPABASE_SECRET_KEY='value-0'$/m)
@@ -50,7 +62,9 @@ assert.deepEqual(requested, [{ SecretId: 'leadpoet/prod/subnet-dashboard/env' }]
 const { readFile } = await import('node:fs/promises')
 const launcher = await readFile(new URL('./start-production.mjs', import.meta.url), 'utf8')
 assert.match(launcher, /const values = await loadSecrets\(\{ env \}\)/)
-assert.match(launcher, /for \(const key of RUNTIME_SECRET_KEYS\) env\[key\] = values\[key\]/)
+assert.match(launcher, /for \(const key of RUNTIME_SECRET_KEYS\)/)
+assert.match(launcher, /typeof values\[key\] === 'string'/)
+assert.match(launcher, /else delete env\[key\]/)
 assert.match(launcher, /globalThis\.__leadpoetSubnetDashboardRuntimeSecretsV1 = values/)
 assert.match(launcher, /await runNext\(\)/)
 assert.match(launcher, /startProduction\(\)\.catch/)

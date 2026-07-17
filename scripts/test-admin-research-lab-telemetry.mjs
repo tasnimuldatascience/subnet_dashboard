@@ -61,6 +61,7 @@ try {
       current_event_type: 'pause_requested',
       current_control_status: 'active',
       current_reason: 'operator_requested',
+      actor_ref: 'ops@example.com',
       current_status_at: '2026-07-10T15:47:43.575724+00:00',
     }),
     {
@@ -68,6 +69,7 @@ try {
       label: 'Paused',
       source: 'gateway_control',
       reason: 'operator_requested',
+      actorRef: 'ops@example.com',
       updatedAt: '2026-07-10T15:47:43.575724+00:00',
     },
   )

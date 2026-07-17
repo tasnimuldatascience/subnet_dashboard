@@ -54,7 +54,7 @@ try {
     retry: { maxAttempts: 3, baseDelayMs: 1_000, maxDelayMs: 1_500 },
     ...overrides,
   })
-  const attemptFrom = (intent, status, attemptedAt, error = null) => ({
+  const attemptFrom = (intent, status, attemptedAt, error = null, providerHttpStatus = null) => ({
     intentId: intent.intentId,
     idempotencyKey: intent.idempotencyKey,
     attempt: intent.attempt,
@@ -68,6 +68,7 @@ try {
     fingerprint: intent.fingerprint,
     payload: intent.payload,
     error,
+    providerHttpStatus,
   })
 
   const fingerprint = 'research-lab:v1:data_freshness:data:events'
@@ -362,6 +363,201 @@ try {
   assert.equal(exhausted.retryExhaustions.length, 1)
   assert.equal(exhausted.retryExhaustions[0].attempts, 3)
   assert.equal(exhausted.retryExhaustions[0].maxAttempts, 3)
+
+  // Critical maintenance pauses produce a durable reminder every 12 hours.
+  // Other critical incidents remain quiet until their state changes.
+  const TWELVE_HOURS_MS = 12 * 60 * 60 * 1_000
+  const maintenanceFingerprint = 'research-lab:v1:maintenance_pause_overrun:maintenance:gateway-workflows'
+  const maintenanceCritical = {
+    ...alert(maintenanceFingerprint, 'critical'),
+    signal: 'maintenance_pause_overrun',
+    scope: 'maintenance',
+  }
+  const maintenanceOpened = planResearchLabAlertLifecycle({
+    now: at(200_000),
+    evaluatedAlerts: [maintenanceCritical],
+    destinations: [emailDestination],
+    policy: policy(),
+  })
+  const beforeReminder = planResearchLabAlertLifecycle({
+    now: at(200_000 + TWELVE_HOURS_MS - 1),
+    previousIncidents: maintenanceOpened.incidentUpserts,
+    evaluatedAlerts: [maintenanceCritical],
+    destinations: [emailDestination],
+    policy: policy(),
+  })
+  assert.equal(beforeReminder.transitionEvents.length, 0)
+  const reminded = planResearchLabAlertLifecycle({
+    now: at(200_000 + TWELVE_HOURS_MS),
+    previousIncidents: maintenanceOpened.incidentUpserts,
+    evaluatedAlerts: [maintenanceCritical],
+    destinations: [emailDestination],
+    policy: policy(),
+  })
+  assert.equal(reminded.transitionEvents[0].transition, 'remind')
+  assert.equal(reminded.deliveryIntents[0].transition, 'remind')
+  const remindedAgain = planResearchLabAlertLifecycle({
+    now: at(200_000 + (2 * TWELVE_HOURS_MS)),
+    previousIncidents: reminded.incidentUpserts,
+    evaluatedAlerts: [maintenanceCritical],
+    destinations: [emailDestination],
+    policy: policy(),
+  })
+  assert.equal(remindedAgain.transitionEvents[0].transition, 'remind')
+
+  const ordinaryCriticalOpened = planResearchLabAlertLifecycle({
+    now: at(300_000),
+    evaluatedAlerts: [alert('research-lab:v1:data_freshness:data:no-reminder', 'critical')],
+    destinations: [emailDestination],
+    policy: policy(),
+  })
+  const ordinaryLater = planResearchLabAlertLifecycle({
+    now: at(300_000 + TWELVE_HOURS_MS),
+    previousIncidents: ordinaryCriticalOpened.incidentUpserts,
+    evaluatedAlerts: [alert('research-lab:v1:data_freshness:data:no-reminder', 'critical')],
+    destinations: [emailDestination],
+    policy: policy(),
+  })
+  assert.equal(ordinaryLater.transitionEvents.length, 0, 'reminders are limited to maintenance overruns')
+
+  // Resend is a fallback, not a parallel page: critical alerts activate it
+  // after two Discord failures, warnings after retry exhaustion, and an invalid
+  // webhook response immediately. Closure email is sent only for an episode
+  // that previously used email fallback.
+  const discordDestination = {
+    channel: 'discord',
+    destination: 'https://discord.com/api/webhooks/123/token',
+  }
+  const fallbackEmailDestination = {
+    ...emailDestination,
+    fallbackFor: 'discord',
+  }
+  const fallbackFingerprint = 'research-lab:v1:pcr0_mismatch:validator:fallback-test'
+  const fallbackOpened = planResearchLabAlertLifecycle({
+    now: at(400_000),
+    evaluatedAlerts: [alert(fallbackFingerprint, 'critical')],
+    destinations: [discordDestination, fallbackEmailDestination],
+    policy: policy(),
+  })
+  assert.deepEqual(fallbackOpened.deliveryIntents.map((intent) => intent.channel), ['discord'])
+  const discordFailureOne = attemptFrom(
+    fallbackOpened.deliveryIntents[0], 'failed', at(400_100), 'HTTP 503', 503,
+  )
+  const afterOneCriticalFailure = planResearchLabAlertLifecycle({
+    now: at(400_200),
+    previousIncidents: fallbackOpened.incidentUpserts,
+    evaluatedAlerts: [alert(fallbackFingerprint, 'critical')],
+    destinations: [discordDestination, fallbackEmailDestination],
+    priorDeliveryAttempts: [discordFailureOne],
+    policy: policy(),
+  })
+  assert.deepEqual(afterOneCriticalFailure.deliveryIntents.map((intent) => intent.channel), ['discord'])
+  const discordFailureTwo = attemptFrom(
+    afterOneCriticalFailure.deliveryIntents[0], 'failed', at(401_100), 'HTTP 503', 503,
+  )
+  const criticalFallback = planResearchLabAlertLifecycle({
+    now: at(401_200),
+    previousIncidents: fallbackOpened.incidentUpserts,
+    evaluatedAlerts: [alert(fallbackFingerprint, 'critical')],
+    destinations: [discordDestination, fallbackEmailDestination],
+    priorDeliveryAttempts: [discordFailureOne, discordFailureTwo],
+    policy: policy(),
+  })
+  assert.deepEqual(
+    criticalFallback.deliveryIntents.map((intent) => intent.channel).sort(),
+    ['discord', 'email'],
+  )
+
+  const hardFailureOpened = planResearchLabAlertLifecycle({
+    now: at(500_000),
+    evaluatedAlerts: [alert('research-lab:v1:pcr0_missing:validator:invalid-webhook', 'warning')],
+    destinations: [discordDestination, fallbackEmailDestination],
+    policy: policy(),
+  })
+  const hardDiscordFailure = attemptFrom(
+    hardFailureOpened.deliveryIntents[0], 'failed', at(500_100), 'HTTP 404', 404,
+  )
+  const hardFailureFallback = planResearchLabAlertLifecycle({
+    now: at(500_200),
+    previousIncidents: hardFailureOpened.incidentUpserts,
+    evaluatedAlerts: [alert('research-lab:v1:pcr0_missing:validator:invalid-webhook', 'warning')],
+    destinations: [discordDestination, fallbackEmailDestination],
+    priorDeliveryAttempts: [hardDiscordFailure],
+    policy: policy(),
+  })
+  assert.deepEqual(
+    hardFailureFallback.deliveryIntents.map((intent) => intent.channel),
+    ['email'],
+    'an invalid Discord webhook falls back immediately without retrying the bad endpoint',
+  )
+
+  const warningFallbackFingerprint = 'research-lab:v1:pcr0_missing:validator:warning-fallback'
+  const warningFallbackOpened = planResearchLabAlertLifecycle({
+    now: at(600_000),
+    evaluatedAlerts: [alert(warningFallbackFingerprint, 'warning')],
+    destinations: [discordDestination, fallbackEmailDestination],
+    policy: policy(),
+  })
+  const warningFailureOne = attemptFrom(
+    warningFallbackOpened.deliveryIntents[0], 'failed', at(600_100), 'HTTP 503', 503,
+  )
+  const warningRetryTwo = planResearchLabAlertLifecycle({
+    now: at(600_200),
+    previousIncidents: warningFallbackOpened.incidentUpserts,
+    evaluatedAlerts: [alert(warningFallbackFingerprint, 'warning')],
+    destinations: [discordDestination, fallbackEmailDestination],
+    priorDeliveryAttempts: [warningFailureOne],
+    policy: policy(),
+  })
+  const warningFailureTwo = attemptFrom(
+    warningRetryTwo.deliveryIntents[0], 'failed', at(601_100), 'HTTP 503', 503,
+  )
+  const warningRetryThree = planResearchLabAlertLifecycle({
+    now: at(601_200),
+    previousIncidents: warningFallbackOpened.incidentUpserts,
+    evaluatedAlerts: [alert(warningFallbackFingerprint, 'warning')],
+    destinations: [discordDestination, fallbackEmailDestination],
+    priorDeliveryAttempts: [warningFailureOne, warningFailureTwo],
+    policy: policy(),
+  })
+  assert.deepEqual(warningRetryThree.deliveryIntents.map((intent) => intent.channel), ['discord'])
+  const warningFailureThree = attemptFrom(
+    warningRetryThree.deliveryIntents[0], 'failed', at(602_600), 'HTTP 503', 503,
+  )
+  const warningFallback = planResearchLabAlertLifecycle({
+    now: at(602_700),
+    previousIncidents: warningFallbackOpened.incidentUpserts,
+    evaluatedAlerts: [alert(warningFallbackFingerprint, 'warning')],
+    destinations: [discordDestination, fallbackEmailDestination],
+    priorDeliveryAttempts: [warningFailureOne, warningFailureTwo, warningFailureThree],
+    policy: policy(),
+  })
+  assert.deepEqual(warningFallback.deliveryIntents.map((intent) => intent.channel), ['email'])
+
+  const fallbackEmailIntent = criticalFallback.deliveryIntents.find((intent) => intent.channel === 'email')
+  const fallbackEmailSuccess = attemptFrom(fallbackEmailIntent, 'succeeded', at(401_300))
+  const recoveredAfterFallback = planResearchLabAlertLifecycle({
+    now: at(402_000),
+    previousIncidents: fallbackOpened.incidentUpserts,
+    evaluatedAlerts: [],
+    destinations: [discordDestination, fallbackEmailDestination],
+    priorDeliveryAttempts: [discordFailureOne, discordFailureTwo, fallbackEmailSuccess],
+    policy: policy(),
+  })
+  assert.deepEqual(
+    recoveredAfterFallback.deliveryIntents.map((intent) => intent.channel).sort(),
+    ['discord', 'email'],
+    'recovery email closes an episode that used the fallback channel',
+  )
+
+  const recoveredWithoutFallback = planResearchLabAlertLifecycle({
+    now: at(402_000),
+    previousIncidents: fallbackOpened.incidentUpserts,
+    evaluatedAlerts: [],
+    destinations: [discordDestination, fallbackEmailDestination],
+    policy: policy(),
+  })
+  assert.deepEqual(recoveredWithoutFallback.deliveryIntents.map((intent) => intent.channel), ['discord'])
 
   // Once the incident recovers, its failed open attempt is obsolete and is not
   // retried alongside the new recovery notification.
