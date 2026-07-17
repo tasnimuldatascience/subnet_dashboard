@@ -15,10 +15,11 @@ import {
 } from 'lucide-react'
 import type { MetagraphData } from '@/lib/types'
 import { shortHotkey } from '@/lib/admin-format'
-import { blocksUntilNextSubnetEpoch } from '@/lib/subnet-epoch'
+import type { SubnetEpochSnapshot } from '@/lib/subnet-epoch'
 import { cn } from '@/lib/utils'
 
-const REFRESH_INTERVAL_MS = 30_000
+const METAGRAPH_REFRESH_INTERVAL_MS = 30_000
+const EPOCH_REFRESH_INTERVAL_MS = 12_000
 const ACTIVE_VALIDATOR_MAX_BLOCKS = 360
 const BLOCK_TIME_SECONDS = 12
 
@@ -219,9 +220,13 @@ function SortButton({
 
 export function AdminMetagraph() {
   const [data, setData] = useState<MetagraphPayload | null>(null)
+  const [epochState, setEpochState] = useState<SubnetEpochSnapshot | null>(null)
   const [loading, setLoading] = useState(true)
+  const [epochLoading, setEpochLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [epochRefreshing, setEpochRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [epochError, setEpochError] = useState<string | null>(null)
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null)
   const [countdownTick, setCountdownTick] = useState(0)
   const [search, setSearch] = useState('')
@@ -238,7 +243,6 @@ export function AdminMetagraph() {
       if (payload.error) throw new Error(payload.error)
       setData(payload)
       setLastSyncedAt(Date.now())
-      setCountdownTick(0)
       setError(null)
     } catch (fetchError) {
       setError(fetchError instanceof Error ? fetchError.message : 'Failed to refresh the metagraph')
@@ -248,11 +252,43 @@ export function AdminMetagraph() {
     }
   }, [])
 
+  const fetchEpochState = useCallback(async () => {
+    setEpochRefreshing(true)
+    try {
+      const response = await fetch(`/api/admin/subnet-epoch?t=${Date.now()}`, { cache: 'no-store' })
+      const payload = await response.json() as SubnetEpochSnapshot & { error?: string }
+      if (!response.ok || payload.error) {
+        throw new Error(payload.error || `Subnet epoch API returned ${response.status}`)
+      }
+      if (
+        payload.schemaVersion !== 'leadpoet.subnet_epoch_state.v1' ||
+        payload.headKind !== 'best' ||
+        !Number.isSafeInteger(payload.subnetEpochIndex) ||
+        !Number.isSafeInteger(payload.blocksElapsed) ||
+        !Number.isSafeInteger(payload.blocksRemaining) ||
+        !/^0x[0-9a-f]{64}$/i.test(payload.blockHash)
+      ) {
+        throw new Error('Subnet epoch API returned an invalid snapshot')
+      }
+      setEpochState(payload)
+      setCountdownTick(0)
+      setEpochError(null)
+    } catch (fetchError) {
+      // This clock is operational timing data. Never retain a successful value
+      // after a failed live read and imply that it is still the current head.
+      setEpochState(null)
+      setEpochError(fetchError instanceof Error ? fetchError.message : 'Failed to read the live subnet epoch')
+    } finally {
+      setEpochLoading(false)
+      setEpochRefreshing(false)
+    }
+  }, [])
+
   useEffect(() => {
     void fetchMetagraph()
     const interval = window.setInterval(() => {
       if (document.visibilityState === 'visible') void fetchMetagraph()
-    }, REFRESH_INTERVAL_MS)
+    }, METAGRAPH_REFRESH_INTERVAL_MS)
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') void fetchMetagraph()
     }
@@ -265,6 +301,24 @@ export function AdminMetagraph() {
       window.removeEventListener('leadpoet-admin-refresh', handleAdminRefresh)
     }
   }, [fetchMetagraph])
+
+  useEffect(() => {
+    void fetchEpochState()
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void fetchEpochState()
+    }, EPOCH_REFRESH_INTERVAL_MS)
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') void fetchEpochState()
+    }
+    const handleAdminRefresh = () => void fetchEpochState()
+    document.addEventListener('visibilitychange', handleVisibility)
+    window.addEventListener('leadpoet-admin-refresh', handleAdminRefresh)
+    return () => {
+      window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleVisibility)
+      window.removeEventListener('leadpoet-admin-refresh', handleAdminRefresh)
+    }
+  }, [fetchEpochState])
 
   useEffect(() => {
     const interval = window.setInterval(() => setCountdownTick((tick) => tick + 1), 1000)
@@ -289,21 +343,18 @@ export function AdminMetagraph() {
 
   const freshnessAvailable = data?.currentBlock !== null && data?.currentBlock !== undefined
   const activeRows = rows.filter((row) => row.updated !== null && row.updated < ACTIVE_VALIDATOR_MAX_BLOCKS)
-  const nextEpochBlocks = blocksUntilNextSubnetEpoch({
-    currentBlock: data?.currentBlock ?? null,
-    tempo: data?.tempo ?? null,
-    lastEpochBlock: data?.lastEpochBlock ?? null,
-    pendingEpochAt: data?.pendingEpochAt ?? null,
-  })
-  const nextEpochSeconds = nextEpochBlocks === null
+  const nextEpochSeconds = epochState === null
     ? null
-    : Math.max(0, (nextEpochBlocks * BLOCK_TIME_SECONDS) - countdownTick)
-  const blockRemainingPercent = nextEpochBlocks === null || !data?.tempo
+    : Math.max(0, (epochState.blocksRemaining * BLOCK_TIME_SECONDS) - countdownTick)
+  const epochWindowBlocks = epochState === null
+    ? null
+    : epochState.blocksElapsed + epochState.blocksRemaining
+  const epochProgressPercent = epochState === null || !epochWindowBlocks
     ? undefined
-    : (nextEpochBlocks / data.tempo) * 100
-  const timeRemainingPercent = nextEpochSeconds === null || !data?.tempo
+    : (epochState.blocksElapsed / epochWindowBlocks) * 100
+  const timeRemainingPercent = nextEpochSeconds === null || !epochState?.tempo
     ? undefined
-    : (nextEpochSeconds / (data.tempo * BLOCK_TIME_SECONDS)) * 100
+    : (nextEpochSeconds / (epochState.tempo * BLOCK_TIME_SECONDS)) * 100
 
   const handleSort = (column: SortKey) => {
     if (column === sortKey) {
@@ -333,7 +384,7 @@ export function AdminMetagraph() {
             </span>
           </div>
           <p className="mt-0.5 text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
-            Validator weights and trust · refreshes every 30 seconds
+            Validator snapshot every 30s · official epoch clock every 12s
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -342,30 +393,52 @@ export function AdminMetagraph() {
             style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)', color: 'var(--text-secondary)' }}
           >
             <Wifi className="h-3.5 w-3.5 text-gold" />
-            <span>{lastSyncedAt ? new Date(lastSyncedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'Syncing…'}</span>
+            <span>
+              Metagraph {lastSyncedAt
+                ? new Date(lastSyncedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                : 'syncing…'}
+            </span>
+          </div>
+          <div
+            className="inline-flex h-8 items-center gap-2 rounded-lg border px-2.5 font-mono text-[10px]"
+            style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)', color: 'var(--text-secondary)' }}
+            title={epochState ? `Best head ${epochState.blockHash}` : undefined}
+          >
+            <Wifi className={cn('h-3.5 w-3.5', epochState ? 'text-gold' : '')} />
+            <span>
+              {epochState
+                ? `${new Date(epochState.observedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })} · ${epochState.blockHash.slice(0, 10)}…`
+                : epochLoading ? 'Reading best head…' : 'Best head unavailable'}
+            </span>
           </div>
           <button
             type="button"
-            onClick={() => void fetchMetagraph()}
-            disabled={refreshing}
+            onClick={() => void Promise.all([fetchMetagraph(), fetchEpochState()])}
+            disabled={refreshing || epochRefreshing}
             className="inline-flex h-8 items-center gap-2 rounded-lg border px-2.5 text-[11px] transition-colors hover:text-gold disabled:opacity-60"
             style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)', color: 'var(--text-secondary)' }}
           >
-            <RefreshCw className={cn('h-3.5 w-3.5', refreshing ? 'animate-spin' : '')} />
+            <RefreshCw className={cn('h-3.5 w-3.5', refreshing || epochRefreshing ? 'animate-spin' : '')} />
             Refresh now
           </button>
         </div>
       </div>
 
-      <div className="grid gap-2 p-3 md:grid-cols-3">
+      <div className="grid gap-2 p-3 md:grid-cols-2 xl:grid-cols-4">
         <SummaryCard
-          label="Blocks Until Next Epoch"
-          value={loading || nextEpochBlocks === null ? '—' : formatAmount(nextEpochBlocks, 0)}
-          progress={blockRemainingPercent}
+          label="Official SN71 Epoch"
+          value={epochLoading || epochState === null ? '—' : formatAmount(epochState.subnetEpochIndex, 0)}
+          detail={epochState ? `SubnetEpochIndex · best block ${formatAmount(epochState.currentBlock, 0)}` : undefined}
+        />
+        <SummaryCard
+          label="Epoch Block Position"
+          value={epochLoading || epochState === null ? '—' : `${formatAmount(epochState.blocksElapsed, 0)} elapsed`}
+          detail={epochState ? `${formatAmount(epochState.blocksRemaining, 0)} remaining · tempo ${formatAmount(epochState.tempo, 0)}` : undefined}
+          progress={epochProgressPercent}
         />
         <SummaryCard
           label="Time Until Next Epoch"
-          value={loading || nextEpochSeconds === null ? '—' : formatEpochMinutes(nextEpochSeconds)}
+          value={epochLoading || nextEpochSeconds === null ? '—' : formatEpochMinutes(nextEpochSeconds)}
           progress={timeRemainingPercent}
         />
         <SummaryCard
@@ -374,6 +447,12 @@ export function AdminMetagraph() {
           detail={`Weight updated < ${ACTIVE_VALIDATOR_MAX_BLOCKS} blocks ago`}
         />
       </div>
+
+      {epochError && (
+        <div className="mx-3 mb-3 rounded-lg border border-burgundy-soft bg-burgundy-soft px-3 py-2 text-xs text-burgundy">
+          Official epoch clock unavailable: {epochError}. No stale epoch state is shown.
+        </div>
+      )}
 
       {error && (
         <div className="mx-3 mb-3 rounded-lg border border-burgundy-soft bg-burgundy-soft px-3 py-2 text-xs text-burgundy">

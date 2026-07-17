@@ -136,7 +136,10 @@ export function clearMetagraphCache(): void {
 
 // Set metagraph cache directly (for atomic swap during refresh)
 export function setMetagraphCache(data: MetagraphData): void {
-  globalForMetagraph.metagraphCache = { data: withFreshnessDefaults(data), timestamp: Date.now() }
+  globalForMetagraph.metagraphCache = {
+    data: { ...withFreshnessDefaults(data), currentBlock: null },
+    timestamp: Date.now(),
+  }
 }
 
 // --- SCALE decoder for NeuronInfoLite ---
@@ -754,9 +757,9 @@ export async function fetchMetagraphFresh(): Promise<MetagraphData> {
 // (self.subtensor.block in neurons/validator.py), and the snapshot lagged it
 // by 30+ blocks, which misled an operator about the remaining submission
 // window. Fetch the best head (NOT the finalized head, to match the
-// validator's view) with a short timeout on every cached read; on failure
-// the caller keeps the snapshot's block, so a slow RPC still never holds a
-// request hostage.
+// validator's view) with a short timeout on every cached read. If that live
+// read fails, return no block instead of silently presenting the snapshot's
+// cached head as current.
 const LIVE_BLOCK_TIMEOUT_MS = 4000
 
 async function fetchLiveBlockNumber(): Promise<number | null> {
@@ -783,7 +786,7 @@ async function fetchLiveBlockNumber(): Promise<number | null> {
 
 async function withLiveBlock(data: MetagraphData): Promise<MetagraphData> {
   const liveBlock = await fetchLiveBlockNumber()
-  if (liveBlock === null) return data
+  if (liveBlock === null) return { ...data, currentBlock: null }
   if (data.currentBlock !== null && liveBlock < data.currentBlock) {
     // Never move the clock backwards (an RPC replica briefly behind the
     // snapshot's head).
@@ -818,7 +821,7 @@ export async function fetchMetagraph(): Promise<MetagraphData> {
         try {
           const data = await fetchMetagraphFromBittensor()
           if (data.totalNeurons > 0) {
-            globalForMetagraph.metagraphCache = { data, timestamp: Date.now() }
+            setMetagraphCache(data)
           }
           return data
         } finally {
@@ -849,7 +852,7 @@ export async function fetchMetagraph(): Promise<MetagraphData> {
       const data = await fetchMetagraphFromBittensor()
       // Only cache successful results
       if (data.totalNeurons > 0) {
-        globalForMetagraph.metagraphCache = { data, timestamp: Date.now() }
+        setMetagraphCache(data)
       }
       return data
     } finally {

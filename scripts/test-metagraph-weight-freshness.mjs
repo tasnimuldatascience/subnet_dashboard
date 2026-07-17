@@ -186,7 +186,7 @@ try {
   }
 
   const require = createRequire(import.meta.url)
-  const { fetchMetagraphFresh } = require(join(outDir, 'metagraph.js'))
+  const { clearMetagraphCache, fetchMetagraph, fetchMetagraphFresh } = require(join(outDir, 'metagraph.js'))
 
   const finalized = await fetchMetagraphFresh()
   const [hotkey] = Object.keys(finalized.hotkeyToUid)
@@ -217,24 +217,39 @@ try {
   assert.equal(withoutBlock.tempo, null, 'epoch state should be unavailable without a chain snapshot')
   assert.equal(withoutBlock.totalNeurons, 1)
 
+  clearMetagraphCache()
+  blockMode = 'finalized'
+  const liveCachedRead = await fetchMetagraph()
+  assert.equal(liveCachedRead.currentBlock, 1_111_114, 'cached metagraph reads should overlay the live best head')
+  blockMode = 'unavailable'
+  const failedLiveCachedRead = await fetchMetagraph()
+  assert.equal(
+    failedLiveCachedRead.currentBlock,
+    null,
+    'a failed live best-head read must not fall back to the cached snapshot block',
+  )
+
   const { blocksUntilNextSubnetEpoch } = require(join(outDir, 'subnet-epoch.js'))
   assert.equal(blocksUntilNextSubnetEpoch({
     currentBlock: 8_610_875,
     tempo: 360,
     lastEpochBlock: 8_610_516,
     pendingEpochAt: 0,
+    blocksSinceLastStep: 359,
   }), 1, 'one block should remain immediately before the observed SN71 boundary')
   assert.equal(blocksUntilNextSubnetEpoch({
     currentBlock: 8_610_876,
     tempo: 360,
     lastEpochBlock: 8_610_876,
     pendingEpochAt: 0,
+    blocksSinceLastStep: 0,
   }), 360, 'the countdown should reset to the on-chain tempo at the new epoch')
   assert.equal(blocksUntilNextSubnetEpoch({
     currentBlock: 8_610_876,
     tempo: 360,
     lastEpochBlock: 8_610_876,
     pendingEpochAt: 8_610_900,
+    blocksSinceLastStep: 0,
   }), 24, 'a pending manual epoch should move the boundary earlier')
 
   const python = spawnSync('python3', ['--version'], { encoding: 'utf8' })
@@ -290,27 +305,39 @@ class Subtensor:
   assert.match(metagraphUiSource, /aria-expanded=\{detailsExpanded\}/)
   assert.match(metagraphUiSource, /Show validator details/)
   assert.match(metagraphUiSource, /Hide validator details/)
-  assert.match(metagraphUiSource, /blocksUntilNextSubnetEpoch/)
-  assert.match(metagraphUiSource, /lastEpochBlock: data\?\.lastEpochBlock \?\? null/)
-  assert.match(metagraphUiSource, /pendingEpochAt: data\?\.pendingEpochAt \?\? null/)
+  assert.match(metagraphUiSource, /\/api\/admin\/subnet-epoch\?t=/)
+  assert.match(metagraphUiSource, /epochState\.subnetEpochIndex/)
+  assert.match(metagraphUiSource, /epochState\.blocksElapsed/)
+  assert.match(metagraphUiSource, /epochState\.blocksRemaining/)
+  assert.doesNotMatch(metagraphUiSource, /lastEpochBlock: data\?\.lastEpochBlock \?\? null/)
+  assert.doesNotMatch(metagraphUiSource, /pendingEpochAt: data\?\.pendingEpochAt \?\? null/)
   assert.doesNotMatch(metagraphUiSource, /currentBlock \+ SUBNET_NETUID \+ 1/)
   assert.doesNotMatch(metagraphUiSource, /SUBNET_TEMPO_BLOCKS \+ 1/)
   assert.match(metagraphUiSource, /const BLOCK_TIME_SECONDS = 12/)
   assert.match(metagraphUiSource, /Math\.ceil\(seconds \/ 60\)/)
   assert.match(metagraphUiSource, /`\$\{minutes\}m`/)
-  assert.match(metagraphUiSource, /formatAmount\(nextEpochBlocks, 0\)/)
+  assert.match(metagraphUiSource, /formatAmount\(epochState\.blocksRemaining, 0\)/)
   assert.doesNotMatch(metagraphUiSource, /`\$\{minutes\}m \/ \$\{EPOCH_DURATION_MINUTES\}m`/)
   assert.doesNotMatch(metagraphUiSource, /`\$\{formatAmount\(nextEpochBlocks, 0\)\} \/ \$\{SUBNET_TEMPO_BLOCKS\}`/)
   assert.match(metagraphUiSource, /background: 'var\(--accent-positive\)'/)
   assert.match(metagraphUiSource, /role="progressbar"/)
-  assert.match(metagraphUiSource, /nextEpochSeconds \/ \(data\.tempo \* BLOCK_TIME_SECONDS\)/)
-  assert.match(metagraphUiSource, /label="Blocks Until Next Epoch"/)
+  assert.match(metagraphUiSource, /nextEpochSeconds \/ \(epochState\.tempo \* BLOCK_TIME_SECONDS\)/)
+  assert.match(metagraphUiSource, /label="Official SN71 Epoch"/)
+  assert.match(metagraphUiSource, /label="Epoch Block Position"/)
   assert.match(metagraphUiSource, /label="Time Until Next Epoch"/)
   assert.doesNotMatch(metagraphUiSource, /label="Average VTrust"/)
-  const blocksCard = metagraphUiSource.indexOf('label="Blocks Until Next Epoch"')
+
+  const metagraphRouteSource = await readFile(resolve('src/app/api/metagraph/route.ts'), 'utf8')
+  assert.match(metagraphRouteSource, /private, no-store, max-age=0/)
+  assert.doesNotMatch(metagraphRouteSource, /stale-while-revalidate/)
+  const officialEpochCard = metagraphUiSource.indexOf('label="Official SN71 Epoch"')
+  const blocksCard = metagraphUiSource.indexOf('label="Epoch Block Position"')
   const timeCard = metagraphUiSource.indexOf('label="Time Until Next Epoch"')
   const activeCard = metagraphUiSource.indexOf('label="Active validators"')
-  assert.ok(blocksCard < timeCard && timeCard < activeCard, 'epoch and validator cards should render in the requested order')
+  assert.ok(
+    officialEpochCard < blocksCard && blocksCard < timeCard && timeCard < activeCard,
+    'official epoch identity, position, timing, and validators should render in order',
+  )
   assert.match(metagraphUiSource, /\.filter\(\(row\) => !row\.isMiner\)/)
   assert.match(metagraphUiSource, /formatAmount\(activeRows\.length, 0\)\}\/\$\{formatAmount\(rows\.length, 0\)/)
   const tableHead = metagraphUiSource.slice(

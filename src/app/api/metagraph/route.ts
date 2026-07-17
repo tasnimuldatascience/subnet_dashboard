@@ -13,18 +13,18 @@ export async function GET() {
       cachedAt: Date.now()
     })
 
-    // Keep HTTP caching aligned with the 30-second in-memory snapshot. Admin
-    // clients also add a cache buster and poll every 30 seconds.
-    response.headers.set(
-      'Cache-Control',
-      'public, max-age=15, s-maxage=30, stale-while-revalidate=15'
-    )
+    // The neuron snapshot is deduplicated server-side, but the live best-head
+    // block must never be retained by a browser, CDN, or Next.js response
+    // cache. A failed live chain read is represented as null, not a stale head.
+    response.headers.set('Cache-Control', 'private, no-store, max-age=0')
+    response.headers.set('Pragma', 'no-cache')
+    response.headers.set('Expires', '0')
 
     return response
   } catch (error) {
     console.error('Error fetching metagraph:', error)
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       hotkeyToUid: {},
       uidToHotkey: {},
       incentives: {},
@@ -50,5 +50,9 @@ export async function GET() {
       alphaPrice: null,
       error: error instanceof Error ? error.message : 'Failed to fetch metagraph data'
     })
+    response.headers.set('Cache-Control', 'private, no-store, max-age=0')
+    response.headers.set('Pragma', 'no-cache')
+    response.headers.set('Expires', '0')
+    return response
   }
 }
