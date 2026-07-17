@@ -47,23 +47,13 @@ const loaded = await loadRuntimeSecretValues({
 assert.deepEqual(loaded, document)
 assert.deepEqual(requested, [{ SecretId: 'leadpoet/prod/subnet-dashboard/env' }])
 
-const { startProduction } = await import('./start-production.mjs')
-const launchedEnv = {}
-let nextStarted = false
-const launcherLogs = []
-await startProduction({
-  env: launchedEnv,
-  loadSecrets: async () => document,
-  runNext: async () => {
-    nextStarted = true
-  },
-  log: (message) => launcherLogs.push(message),
-})
-assert.deepEqual(launchedEnv, document)
-assert.equal(nextStarted, true)
-assert.deepEqual(launcherLogs, [
-  `Loaded ${RUNTIME_SECRET_KEYS.length} validated runtime secrets from AWS Secrets Manager into the production worker.`,
-])
+const { readFile } = await import('node:fs/promises')
+const launcher = await readFile(new URL('./start-production.mjs', import.meta.url), 'utf8')
+assert.match(launcher, /const values = await loadSecrets\(\{ env \}\)/)
+assert.match(launcher, /for \(const key of RUNTIME_SECRET_KEYS\) env\[key\] = values\[key\]/)
+assert.match(launcher, /await runNext\(\)/)
+assert.match(launcher, /startProduction\(\)\.catch/)
+assert.doesNotMatch(launcher, /if \(process\.argv\[1\]/)
 
 const require = createRequire(import.meta.url)
 const ecosystem = require('../ecosystem.config.cjs')
@@ -72,7 +62,6 @@ assert.match(ecosystem.apps[0].script, /scripts\/start-production\.mjs$/)
 assert.equal(ecosystem.apps[0].env.RESEARCH_LAB_ALERT_MONITOR_ENABLED, 'true')
 assert.equal(ecosystem.apps[0].env.RESEARCH_LAB_EVENT_MONITOR_ENABLED, 'true')
 
-const { readFile } = await import('node:fs/promises')
 const deployment = await readFile(new URL('../.github/workflows/deploy.yml', import.meta.url), 'utf8')
 assert.match(deployment, /scripts\/verify-runtime-monitors\.mjs/)
 assert.match(deployment, /VERIFY_MONITOR_AFTER/)

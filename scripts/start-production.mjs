@@ -1,5 +1,4 @@
 import { RUNTIME_SECRET_KEYS, loadRuntimeSecretValues } from './load-runtime-secret.mjs'
-import { pathToFileURL } from 'node:url'
 
 export async function startProduction({
   env = process.env,
@@ -21,10 +20,11 @@ export async function startProduction({
   await runNext()
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  startProduction().catch((error) => {
-    const detail = error instanceof Error ? error.message : 'Unknown error'
-    console.error(`Could not start subnet dashboard production worker: ${detail}`)
-    process.exitCode = 1
-  })
-}
+// PM2 loads application scripts through its process container, so this entry
+// point must run on module evaluation rather than relying on process.argv[1]
+// matching this file.
+startProduction().catch((error) => {
+  const detail = error instanceof Error ? error.message : 'Unknown error'
+  console.error(`Could not start subnet dashboard production worker: ${detail}`)
+  process.exitCode = 1
+})
