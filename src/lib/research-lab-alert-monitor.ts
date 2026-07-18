@@ -1,6 +1,9 @@
+import { createHash } from 'node:crypto'
+
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 import { getAdminSupabase } from './admin-supabase'
+import { planResearchLabAlertDeliveryBatches } from './research-lab-alert-batching'
 import {
   deliverResearchLabAlert,
   parseResearchLabAlertDeliveryConfig,
@@ -309,45 +312,62 @@ async function deliverDueIntents(
     .limit(DELIVERY_BATCH_SIZE)
   if (error) throw new Error(`Could not read due alert deliveries: ${error.message}`)
 
+  const intents = ((data ?? []) as Array<Record<string, unknown>>)
+    .map(parseDeliveryIntentRow)
+    .filter((intent): intent is ResearchLabAlertDeliveryIntent => intent !== null)
+  const plan = planResearchLabAlertDeliveryBatches(intents, new Date(nowIso))
   let deliveryCount = 0
   let failureCount = 0
-  for (const row of (data ?? []) as Array<Record<string, unknown>>) {
-    const intent = parseDeliveryIntentRow(row)
-    if (!intent) continue
+  for (const batch of plan.batches) {
+    const intent = batch.intents[0]
     const attemptedAt = new Date().toISOString()
     const channelConfig = configForChannel(config, intent.channel)
     if (!channelConfig) {
-      await completeDelivery(supabase, intent.intentId, {
-        status: 'failed',
-        attemptedAt,
-        httpStatus: null,
-        errorCode: 'provider_error',
-        error: `${intent.channel} alert channel is no longer configured.`,
-      })
-      deliveryCount += 1
-      failureCount += 1
+      for (const batchIntent of batch.intents) {
+        await completeDelivery(supabase, batchIntent.intentId, {
+          status: 'failed',
+          attemptedAt,
+          httpStatus: null,
+          errorCode: 'provider_error',
+          error: `${batchIntent.channel} alert channel is no longer configured.`,
+        })
+      }
+      deliveryCount += batch.intents.length
+      failureCount += batch.intents.length
       continue
     }
 
     const result = await deliverResearchLabAlert({
-      alert: intent.payload.alert,
+      alert: batch.alert,
       transition: intent.transition,
       config: channelConfig,
-      idempotencyKey: intent.idempotencyKey,
+      idempotencyKey: batchDeliveryIdempotencyKey(batch.intents),
     })
     const outcome = result.deliveries.find((item) => item.channel === intent.channel)
     const succeeded = outcome?.status === 'sent'
-    await completeDelivery(supabase, intent.intentId, {
-      status: succeeded ? 'succeeded' : 'failed',
-      attemptedAt,
-      httpStatus: outcome?.httpStatus ?? null,
-      errorCode: outcome?.errorCode ?? (succeeded ? null : 'provider_error'),
-      error: outcome?.error ?? (succeeded ? null : 'Alert provider returned no delivery outcome.'),
-    })
-    deliveryCount += 1
-    if (!succeeded) failureCount += 1
+    for (const batchIntent of batch.intents) {
+      await completeDelivery(supabase, batchIntent.intentId, {
+        status: succeeded ? 'succeeded' : 'failed',
+        attemptedAt,
+        httpStatus: outcome?.httpStatus ?? null,
+        errorCode: outcome?.errorCode ?? (succeeded ? null : 'provider_error'),
+        error: outcome?.error ?? (succeeded ? null : 'Alert provider returned no delivery outcome.'),
+      })
+    }
+    deliveryCount += batch.intents.length
+    if (!succeeded) failureCount += batch.intents.length
   }
   return { deliveryCount, failureCount }
+}
+
+function batchDeliveryIdempotencyKey(
+  intents: readonly ResearchLabAlertDeliveryIntent[],
+): string {
+  if (intents.length === 1) return intents[0].idempotencyKey
+  const digest = createHash('sha256')
+    .update(intents.map((intent) => intent.idempotencyKey).sort().join('\n'))
+    .digest('hex')
+  return `research-lab-alert-batch:v1:${digest}`
 }
 
 async function completeDelivery(

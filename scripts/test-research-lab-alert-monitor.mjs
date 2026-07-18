@@ -32,7 +32,8 @@ assert.match(monitor, /enabledSignals\.has\(alert\.signal\)/)
 assert.match(monitor, /fallbackFor: 'discord'/)
 assert.match(monitor, /collectCanonicalAlertSnapshotFromAdminRoute/)
 assert.match(monitor, /resolutions: snapshot\.resolutions/)
-assert.match(monitor, /idempotencyKey: intent\.idempotencyKey/)
+assert.match(monitor, /planResearchLabAlertDeliveryBatches\(intents, new Date\(nowIso\)\)/)
+assert.match(monitor, /idempotencyKey: batchDeliveryIdempotencyKey\(batch\.intents\)/)
 assert.match(monitor, /\.eq\('status', 'pending'\)/)
 const persistenceBlock = monitor.slice(
   monitor.indexOf('async function persistLifecyclePlan'),
