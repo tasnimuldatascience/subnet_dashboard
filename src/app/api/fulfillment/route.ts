@@ -177,28 +177,54 @@ async function fetchFulfillmentData() {
     //    canonical winners, which would give an artificial 100% win-rate.
     //    Capped by CONSENSUS_ROW_LIMIT with a stable ORDER BY so the response
     //    degrades to "most recent" rather than timing out at scale.
-    // 2) Pull chain-side num_leads + held_count metadata in parallel.
-    const [scoreConsensusResult, chainWinnersResults, rootLeadsResults, heldResults] = await Promise.all([
+    // 2) Pull chain-side winners + num_leads + held_count for ALL requests in a
+    //    single RPC. Previously this fired get_chain_winners / _root_num_leads /
+    //    _held_count once per request id (3xN calls, each re-walking the same
+    //    recursive chain) — the dominant weekly PostgREST volume.
+    //    get_chain_summaries walks each chain once and returns all three per id.
+    const [scoreConsensusResult, chainSummariesResult] = await Promise.all([
       supabase
         .from('fulfillment_score_consensus')
         .select('*')
         .in('request_id', allRequestIds)
         .order('computed_at', { ascending: false })
         .limit(CONSENSUS_ROW_LIMIT),
-      Promise.all(allRequestIds.map(rid =>
-        supabase.rpc('get_chain_winners', { fulfilled_id: rid })
-      )),
-      Promise.all(allRequestIds.map(rid =>
-        supabase.rpc('get_chain_root_num_leads', { fulfilled_id: rid })
-      )),
-      Promise.all(allRequestIds.map(rid =>
-        supabase.rpc('get_chain_held_count', { target_id: rid })
-      )),
+      supabase.rpc('get_chain_summaries', { p_request_ids: allRequestIds }),
     ])
 
     if (scoreConsensusResult.error) {
       console.error('[Fulfillment API] score_consensus error:', scoreConsensusResult.error)
     }
+    if (chainSummariesResult.error) {
+      console.error('[Fulfillment API] get_chain_summaries error:', chainSummariesResult.error)
+    }
+
+    // Reshape the one batched response back into per-request arrays aligned to
+    // allRequestIds, preserving the exact shapes the downstream code consumes:
+    // winners rows carry { lead_id }, root_num_leads is a number|null, and
+    // held_count is a number.
+    type ChainSummary = {
+      request_id: string
+      winners: Array<{ lead_id?: string }> | null
+      root_num_leads: number | null
+      held_count: number | null
+    }
+    const summaryByRid = new Map<string, ChainSummary>()
+    for (const row of (chainSummariesResult.data || []) as ChainSummary[]) {
+      summaryByRid.set(row.request_id, row)
+    }
+    const chainWinnersResults = allRequestIds.map(rid => ({
+      data: summaryByRid.get(rid)?.winners ?? [],
+      error: null as unknown,
+    }))
+    const rootLeadsResults = allRequestIds.map(rid => ({
+      data: summaryByRid.get(rid)?.root_num_leads ?? null,
+      error: null as unknown,
+    }))
+    const heldResults = allRequestIds.map(rid => ({
+      data: summaryByRid.get(rid)?.held_count ?? 0,
+      error: null as unknown,
+    }))
 
     // Build a set of (request_id, lead_id) for chain-canonical winners; used to
     // override is_winner when the off-chain consensus disagrees with the chain.
