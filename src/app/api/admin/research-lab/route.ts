@@ -505,6 +505,23 @@ export type AdminLabRepositorySummary = {
   commitsBehind: number | null
 }
 
+export type AdminLabValidatorDeploymentSummary = {
+  sourceAvailable: boolean
+  unavailableReason: string | null
+  source: AdminLabAttestationSummary['source']
+  commitSha: string | null
+  buildId: string | null
+  reportedAt: string | null
+  nodeId: string | null
+  hotkey: string | null
+  checkedAt: string
+  commitFreshness: GatewayCommitFreshness
+  commitsBehind: number | null
+  reportingNodeCount: number
+  distinctCommitCount: number
+  commitShas: string[]
+}
+
 export type AdminLabDataFreshness = {
   state: AdminHealthState
   latestActivityAt: string | null
@@ -576,6 +593,7 @@ export type AdminLabOpsSummary = {
   attestation: AdminLabAttestationSummary
   sourcingModel: AdminLabSourcingModelSummary
   leadpoetRepository: AdminLabRepositorySummary
+  validatorDeployment: AdminLabValidatorDeploymentSummary
   computeSpend: AdminLabComputeSpendSummary
   dailyBenchmark: AdminLabDailyBenchmark
   benchmarkRuns: AdminLabBenchmarkRunSummary[]
@@ -1332,6 +1350,10 @@ async function fetchAdminLabOps(
   )
   const alertResolutions = buildRunAlertResolutions(loops, alertNow)
   const alerts = mergeEvaluatedAlertSummary(baseAlerts, evaluatedAlerts)
+  const validatorDeployment = await buildValidatorDeploymentSummary(
+    attestation,
+    leadpoetRepository,
+  )
   const healthSignals = buildHealthSignals({
     dataFreshness,
     benchmark,
@@ -1354,6 +1376,7 @@ async function fetchAdminLabOps(
     attestation,
     sourcingModel,
     leadpoetRepository,
+    validatorDeployment,
     computeSpend,
     dailyBenchmark,
     benchmarkRuns,
@@ -5229,18 +5252,69 @@ async function fetchLeadpoetRepositorySummary(): Promise<AdminLabRepositorySumma
   }
 }
 
+async function buildValidatorDeploymentSummary(
+  attestation: AdminLabAttestationSummary,
+  repository: AdminLabRepositorySummary,
+): Promise<AdminLabValidatorDeploymentSummary> {
+  const checkedAt = new Date().toISOString()
+  const validatorNodes = attestation.nodes.filter((node) =>
+    attestation.source === 'published_weight_bundles' ||
+    node.component.toLowerCase().includes('validator'),
+  )
+  const reportingNodes = validatorNodes
+    .flatMap((node) => {
+      const gitSha = githubCommitShaOrNull(node.gitSha)
+      return gitSha ? [{ ...node, gitSha }] : []
+    })
+    .sort((a, b) => timestampOrZero(b.attestedAt) - timestampOrZero(a.attestedAt))
+  const latestValidator = reportingNodes[0] ?? null
+  const comparison = await fetchLeadpoetCommitComparison(
+    latestValidator?.gitSha ?? null,
+    repository.commitSha,
+    'validator',
+  )
+
+  const unavailableReason = latestValidator
+    ? null
+    : !attestation.sourceAvailable
+      ? attestation.unavailableReason ?? 'Validator attestation telemetry is unavailable'
+      : validatorNodes.length === 0
+        ? 'No validator deployment telemetry is reporting'
+        : 'Validator telemetry did not report a valid commit SHA'
+
+  return {
+    sourceAvailable: Boolean(latestValidator),
+    unavailableReason,
+    source: attestation.source,
+    commitSha: latestValidator?.gitSha ?? null,
+    buildId: latestValidator?.buildId ?? null,
+    reportedAt: latestValidator?.attestedAt ?? null,
+    nodeId: latestValidator?.nodeId ?? null,
+    hotkey: latestValidator?.hotkey ?? null,
+    checkedAt,
+    commitFreshness: comparison.freshness,
+    commitsBehind: comparison.commitsBehind,
+    reportingNodeCount: reportingNodes.length,
+    distinctCommitCount: new Set(reportingNodes.map((node) => node.gitSha.toLowerCase())).size,
+    commitShas: Array.from(
+      new Map(reportingNodes.map((node) => [node.gitSha.toLowerCase(), node.gitSha])).values(),
+    ),
+  }
+}
+
 async function fetchLeadpoetCommitComparison(
-  gatewayCommitSha: string | null,
+  deployedCommitSha: string | null,
   latestCommitSha: string | null,
+  deploymentLabel: 'gateway' | 'validator' = 'gateway',
 ): Promise<GatewayCommitComparison> {
-  const fallback = parseGatewayCommitComparison(null, gatewayCommitSha, latestCommitSha)
-  if (fallback.freshness === 'latest' || !gatewayCommitSha || !latestCommitSha) {
+  const fallback = parseGatewayCommitComparison(null, deployedCommitSha, latestCommitSha)
+  if (fallback.freshness === 'latest' || !deployedCommitSha || !latestCommitSha) {
     return fallback
   }
 
   try {
     const response = await fetch(
-      `${LEADPOET_REPOSITORY_COMPARE_API_URL}/${encodeURIComponent(gatewayCommitSha)}...${encodeURIComponent(latestCommitSha)}`,
+      `${LEADPOET_REPOSITORY_COMPARE_API_URL}/${encodeURIComponent(deployedCommitSha)}...${encodeURIComponent(latestCommitSha)}`,
       {
         headers: leadpoetGithubHeaders(),
         next: { revalidate: 300 },
@@ -5252,16 +5326,21 @@ async function fetchLeadpoetCommitComparison(
     }
     return parseGatewayCommitComparison(
       await response.json(),
-      gatewayCommitSha,
+      deployedCommitSha,
       latestCommitSha,
     )
   } catch (error) {
     console.warn(
-      '[admin:research-lab] LeadPoet gateway commit distance unavailable',
+      `[admin:research-lab] LeadPoet ${deploymentLabel} commit distance unavailable`,
       error instanceof Error ? error.message : 'GitHub compare failed',
     )
     return fallback
   }
+}
+
+function githubCommitShaOrNull(value: unknown): string | null {
+  const candidate = stringOr(value)
+  return candidate && /^[0-9a-f]{7,64}$/i.test(candidate) ? candidate : null
 }
 
 async function fetchLeadpoetRepositoryHead() {

@@ -128,6 +128,10 @@ try {
   assert.match(routeSource, /fetchLeadpoetCommitComparison/)
   assert.match(routeSource, /commitsBehind: comparison\.commitsBehind/)
   assert.match(routeSource, /LEADPOET_REPOSITORY_COMPARE_API_URL/)
+  assert.match(routeSource, /buildValidatorDeploymentSummary\(/)
+  assert.match(routeSource, /latestValidator\?\.gitSha \?\? null/)
+  assert.match(routeSource, /'validator'/)
+  assert.match(routeSource, /distinctCommitCount:/)
 
   const componentSource = await readFile(resolve('src/app/admin/_components/AdminResearchLab.tsx'), 'utf8')
   assert.match(componentSource, /const isLatest = repository\.commitFreshness === 'latest'/)
@@ -136,8 +140,13 @@ try {
   assert.match(componentSource, /commitsBehindCopy \?\? 'Behind'/)
   assert.match(componentSource, /Gateway is \$\{commitsBehindCopy \?\? 'behind'\} latest/)
   assert.match(componentSource, /label="Gateway commit"/)
+  assert.match(componentSource, /function ValidatorRepositoryPopover/)
+  assert.match(componentSource, /deployment=\{ops\.validatorDeployment\}/)
+  assert.match(componentSource, /Validator is on the latest/)
+  assert.match(componentSource, /label="Validator commit"/)
+  assert.match(componentSource, /Reported validator commits/)
 
-  console.log('gateway-deployment: deployed commit distance, comparison states, and status UI wiring passed')
+  console.log('gateway-deployment: gateway and validator commit distance, comparison states, and status UI wiring passed')
 } finally {
   await rm(outDir, { recursive: true, force: true })
 }

@@ -380,6 +380,23 @@ type AdminLabRepositorySummary = {
   commitsBehind: number | null
 }
 
+type AdminLabValidatorDeploymentSummary = {
+  sourceAvailable: boolean
+  unavailableReason: string | null
+  source: AdminLabAttestationSummary['source']
+  commitSha: string | null
+  buildId: string | null
+  reportedAt: string | null
+  nodeId: string | null
+  hotkey: string | null
+  checkedAt: string
+  commitFreshness: 'latest' | 'behind' | 'ahead' | 'diverged' | 'unknown'
+  commitsBehind: number | null
+  reportingNodeCount: number
+  distinctCommitCount: number
+  commitShas: string[]
+}
+
 type AdminLabDataFreshness = {
   state: AdminHealthState
   latestActivityAt: string | null
@@ -456,6 +473,7 @@ type AdminLabOpsSummary = {
   attestation: AdminLabAttestationSummary
   sourcingModel: AdminLabSourcingModelSummary
   leadpoetRepository: AdminLabRepositorySummary
+  validatorDeployment: AdminLabValidatorDeploymentSummary
   computeSpend: AdminLabComputeSpendSummary
   dailyBenchmark: AdminLabDailyBenchmark
   benchmarkRuns: AdminLabBenchmarkRunSummary[]
@@ -1322,6 +1340,10 @@ function OpsHealthStrip({ ops }: { ops: AdminLabOpsSummary }) {
           <div className="flex items-center gap-1.5">
             <SourcingModelPopover model={ops.sourcingModel} />
             <LeadpoetRepositoryPopover repository={ops.leadpoetRepository} />
+            <ValidatorRepositoryPopover
+              deployment={ops.validatorDeployment}
+              repository={ops.leadpoetRepository}
+            />
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -1730,6 +1752,213 @@ function LeadpoetRepositoryPopover({
               label="Checked"
               value={formatDateTime(repository.gatewayCheckedAt ?? repository.checkedAt)}
             />
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+function ValidatorRepositoryPopover({
+  deployment,
+  repository,
+}: {
+  deployment: AdminLabValidatorDeploymentSummary
+  repository: AdminLabRepositorySummary
+}) {
+  const hoverPopover = useHoverPopover()
+  const isMixed = deployment.distinctCommitCount > 1
+  const isLatest = !isMixed && deployment.commitFreshness === 'latest'
+  const isBehind = !isMixed && deployment.commitFreshness === 'behind'
+  const isAhead = !isMixed && deployment.commitFreshness === 'ahead'
+  const isDiverged = !isMixed && deployment.commitFreshness === 'diverged'
+  const isOutOfLine = isMixed || isBehind || isAhead || isDiverged
+  const tone = sourcingModelAlignmentTone(isLatest, isOutOfLine)
+  const validatorCommitUrl = githubCommitUrl(repository.repositoryUrl, deployment.commitSha)
+  const latestCommitUrl = githubCommitUrl(repository.repositoryUrl, repository.commitSha)
+  const state: AdminHealthState = isLatest ? 'healthy' : isOutOfLine ? 'degraded' : 'unknown'
+  const commitsBehindCopy = deployment.commitsBehind === null
+    ? null
+    : `${deployment.commitsBehind} ${deployment.commitsBehind === 1 ? 'commit' : 'commits'} behind`
+  const stateLabel = isMixed
+    ? 'Mixed'
+    : isLatest
+      ? 'Current'
+      : isBehind
+        ? commitsBehindCopy ?? 'Behind'
+        : isAhead
+          ? 'Ahead'
+          : isDiverged
+            ? 'Diverged'
+            : deployment.sourceAvailable
+              ? 'Unknown'
+              : 'Unavailable'
+  const comparisonCopy = isMixed
+    ? `${deployment.reportingNodeCount} reporting validators are split across ${deployment.distinctCommitCount} commits`
+    : isLatest
+      ? deployment.reportingNodeCount > 1
+        ? `All ${deployment.reportingNodeCount} reporting validators are on the latest ${repository.branch} commit`
+        : `Validator is on the latest ${repository.branch} commit`
+      : isBehind
+        ? `Validator is ${commitsBehindCopy ?? 'behind'} latest ${repository.branch} commit${repository.commitSha ? ` ${compactHash(repository.commitSha)}` : ''}`
+        : isAhead
+          ? `Validator commit is ahead of current ${repository.branch} commit${repository.commitSha ? ` ${compactHash(repository.commitSha)}` : ''}`
+          : isDiverged
+            ? `Validator commit has diverged from current ${repository.branch} commit${repository.commitSha ? ` ${compactHash(repository.commitSha)}` : ''}`
+            : !deployment.sourceAvailable
+              ? 'Validator commit is unavailable'
+              : 'Latest-commit comparison is unavailable'
+  const triggerLabel = deployment.commitSha
+    ? `LeadPoet validator commit ${deployment.commitSha} · ${stateLabel}`
+    : 'View LeadPoet validator commit details'
+  const reportingNode = deployment.hotkey ?? deployment.nodeId
+
+  return (
+    <Popover open={hoverPopover.open} onOpenChange={hoverPopover.setOpen}>
+      <PopoverAnchor asChild>
+        <button
+          type="button"
+          aria-label={triggerLabel}
+          aria-expanded={hoverPopover.open}
+          aria-haspopup="dialog"
+          title={triggerLabel}
+          onMouseEnter={hoverPopover.openPreview}
+          onMouseLeave={hoverPopover.closePreview}
+          onFocus={hoverPopover.openPreview}
+          onBlur={hoverPopover.closePreview}
+          onClick={hoverPopover.togglePinned}
+          className="premium-focus inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition-colors hover-bg-warm"
+          style={{
+            borderColor: tone.borderColor,
+            background: tone.background,
+            color: tone.color,
+          }}
+        >
+          <GitCommitHorizontal className="h-3.5 w-3.5" aria-hidden />
+        </button>
+      </PopoverAnchor>
+      <PopoverContent
+        align="start"
+        sideOffset={8}
+        onOpenAutoFocus={(event) => event.preventDefault()}
+        className="w-[min(calc(100vw-2rem),30rem)] rounded-xl p-0 shadow-2xl shadow-black/50"
+        style={{
+          borderColor: 'var(--surface-border)',
+          background: 'var(--surface-base)',
+          color: 'var(--text-primary)',
+        }}
+      >
+        <div className="flex items-start justify-between gap-4 border-b px-4 py-3" style={{ borderColor: 'var(--surface-border)' }}>
+          <div className="flex min-w-0 items-start gap-2.5">
+            <div
+              className="mt-0.5 rounded-md border p-1.5"
+              style={{ borderColor: tone.borderColor, background: tone.background }}
+            >
+              <GitCommitHorizontal className="h-3.5 w-3.5" style={{ color: tone.color }} aria-hidden />
+            </div>
+            <div className="min-w-0">
+              <div className="text-sm font-medium">LeadPoet validator</div>
+              <div className="mt-0.5 text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+                Reported commit vs latest {repository.owner}/{repository.name}
+              </div>
+            </div>
+          </div>
+          <StatePill state={state} label={stateLabel} />
+        </div>
+
+        <div className="space-y-3 p-4">
+          <div
+            className="rounded-lg border px-3 py-2.5"
+            style={{ borderColor: tone.borderColor, background: tone.background }}
+          >
+            <div className="text-[10px] uppercase tracking-[0.12em]" style={{ color: 'var(--text-tertiary)' }}>
+              Validator commit
+            </div>
+            {deployment.commitSha && validatorCommitUrl ? (
+              <a
+                href={validatorCommitUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="premium-focus mt-1.5 block rounded-sm break-all font-mono text-xs leading-relaxed underline-offset-4 hover:underline"
+                style={{ color: tone.color }}
+                title="Open commit in a new tab"
+              >
+                {deployment.commitSha}
+              </a>
+            ) : (
+              <code className="mt-1.5 block text-xs leading-relaxed" style={{ color: tone.color }}>
+                Not reported
+              </code>
+            )}
+            <div className="mt-2 flex items-center gap-2 text-[10px]" style={{ color: tone.color }}>
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: tone.color }} aria-hidden />
+              <span>{comparisonCopy}</span>
+            </div>
+          </div>
+
+          {!deployment.sourceAvailable || !repository.sourceAvailable ? (
+            <div
+              className="rounded-lg border px-3 py-2 text-[11px] leading-relaxed"
+              style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)', color: 'var(--text-secondary)' }}
+            >
+              {!deployment.sourceAvailable
+                ? `Validator deployment telemetry is unavailable${deployment.unavailableReason ? `: ${deployment.unavailableReason}` : '.'}`
+                : `LeadPoet repository telemetry is unavailable${repository.unavailableReason ? `: ${repository.unavailableReason}` : '.'}`}
+            </div>
+          ) : null}
+
+          {isMixed ? (
+            <div className="rounded-lg border px-3 py-2.5" style={{ borderColor: tone.borderColor, background: tone.background }}>
+              <div className="text-[9px] uppercase tracking-[0.12em]" style={{ color: 'var(--text-tertiary)' }}>
+                Reported validator commits
+              </div>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {deployment.commitShas.map((commitSha) => (
+                  <a
+                    key={commitSha}
+                    href={githubCommitUrl(repository.repositoryUrl, commitSha) ?? undefined}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="premium-focus rounded border px-2 py-1 font-mono text-[10px] underline-offset-2 hover:underline"
+                    style={{ borderColor: tone.borderColor, color: tone.color }}
+                    title={`${commitSha} · Open in a new tab`}
+                  >
+                    {compactHash(commitSha)}
+                  </a>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="grid grid-cols-2 gap-2">
+            <SourcingModelDetail
+              label="Validator commit"
+              value={deployment.commitSha}
+              href={validatorCommitUrl}
+              compact
+            />
+            <SourcingModelDetail
+              label={`Latest ${repository.branch}`}
+              value={repository.commitSha}
+              href={latestCommitUrl}
+              compact
+            />
+            <SourcingModelDetail label="Reported by" value={reportingNode} compact />
+            <SourcingModelDetail label="Validator build" value={deployment.buildId} />
+            <SourcingModelDetail
+              label="Validator reported"
+              value={deployment.reportedAt ? formatDateTime(deployment.reportedAt) : null}
+            />
+            <SourcingModelDetail
+              label={`Latest ${repository.branch} committed`}
+              value={repository.committedAt ? formatDateTime(repository.committedAt) : null}
+            />
+            <SourcingModelDetail label={`Latest ${repository.branch} author`} value={repository.authorLogin} />
+            <SourcingModelDetail label="Repository" value={`${repository.owner}/${repository.name}`} />
+            <SourcingModelDetail label="Reporting nodes" value={String(deployment.reportingNodeCount)} />
+            <SourcingModelDetail label="Distinct commits" value={String(deployment.distinctCommitCount)} />
+            <SourcingModelDetail label="Telemetry source" value={readableTag(deployment.source)} />
+            <SourcingModelDetail label="Checked" value={formatDateTime(deployment.checkedAt)} />
           </div>
         </div>
       </PopoverContent>
