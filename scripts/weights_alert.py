@@ -22,13 +22,34 @@ import sys
 import time
 import urllib.request
 
-WATCHED_UIDS = {
-    0: "primary (Leadpoet)",
-    202: "auditor (TAO.com)",
-    142: "auditor (Yuma)",
-    179: "auditor (Rizzo)",
-    62: "auditor (Opentensor Fdn)",
-}
+# Watched validators are identified by hotkey (the stable identity) in
+# validator_registry.json, shared with the dashboard UI. UIDs are resolved
+# live from the metagraph each pass, so a re-registration that moves a
+# validator to a new UID is followed automatically; a hotkey rotation is a
+# deliberate reviewed edit to the registry, never an automatic follow.
+REGISTRY_ENV = "WEIGHTS_ALERT_REGISTRY"
+REGISTRY_CANDIDATES = (
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "validator_registry.json"),
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "validator_registry.json"),
+    os.path.expanduser("~/validator_registry.json"),
+)
+
+
+def load_registry() -> list:
+    paths = [os.environ.get(REGISTRY_ENV, "")] if os.environ.get(REGISTRY_ENV) else []
+    paths.extend(REGISTRY_CANDIDATES)
+    for candidate in paths:
+        try:
+            with open(candidate) as handle:
+                doc = json.load(handle)
+            validators = doc.get("validators")
+            if isinstance(validators, list) and validators:
+                return validators
+        except Exception:
+            continue
+    return []
+
+
 NETUID = 71
 # A validator that submits every epoch is at most tempo + a few submission
 # blocks behind the head. The grace mirrors the dashboard's weights watch.
@@ -149,17 +170,48 @@ def main() -> int:
         log(f"invalid tempo {tempo} (skipping this pass)")
         return 0
 
+    validators = load_registry()
+    if not validators:
+        log("no validator registry found (skipping this pass)")
+        return 0
+
     state = load_state()
     stale_blocks = tempo + SUBMISSION_GRACE_BLOCKS
+    hotkeys = list(mg.hotkeys)
+    hotkey_to_uid = {hk: i for i, hk in enumerate(hotkeys)}
     misses = []
-    for uid, label in WATCHED_UIDS.items():
-        if uid >= len(mg.hotkeys):
+    for validator in validators:
+        vid = str(validator.get("id") or validator.get("hotkey") or "")[:64]
+        label = str(validator.get("label") or vid)
+        hotkey = str(validator.get("hotkey") or "")
+        expected_coldkey = str(validator.get("expectedColdkey") or "")
+        if not vid or not hotkey:
             continue
-        last_set_block = int(mg.last_update[uid])
-        blocks_since = block - last_set_block
-        if blocks_since > stale_blocks and state.get(str(uid)) != epoch_index:
-            misses.append((uid, label, last_set_block, blocks_since))
-            state[str(uid)] = epoch_index
+        problems = []
+        uid = hotkey_to_uid.get(hotkey)
+        last_set_block = None
+        blocks_since = None
+        if uid is None:
+            problems.append("hotkey no longer registered")
+        else:
+            coldkey = str(mg.coldkeys[uid])
+            if expected_coldkey and coldkey != expected_coldkey:
+                problems.append("unexpected coldkey")
+            if not bool(mg.validator_permit[uid]):
+                problems.append("validator permit lost")
+            if not bool(mg.active[uid]):
+                problems.append("validator inactive")
+            last_set_block = int(mg.last_update[uid])
+            blocks_since = block - last_set_block
+            if blocks_since > stale_blocks:
+                problems.append(
+                    f"weight update stale ({blocks_since} blocks since last set)"
+                )
+        # Deduplicate per validator identity and official epoch — never per
+        # UID, which can change under the validator.
+        if problems and state.get(vid) != epoch_index:
+            misses.append((vid, label, uid, last_set_block, blocks_since, problems))
+            state[vid] = epoch_index
 
     if misses:
         epoch_block = max(0, block - last_epoch_block)
@@ -167,18 +219,19 @@ def main() -> int:
             f"🚨 **SN71 missed weight set** "
             f"(official epoch {epoch_index}, block {epoch_block}/{tempo} into it)"
         ]
-        for uid, label, last_set_block, behind in misses:
-            lines.append(
-                f"• UID {uid} {label}: last set at block {last_set_block}, "
-                f"{behind} blocks since last update"
+        for vid, label, uid, last_set_block, behind, problems in misses:
+            uid_text = f"current UID {uid}" if uid is not None else "not registered"
+            set_text = (
+                f", last set {behind} blocks ago" if behind is not None else ""
             )
-        if any(uid == 0 for uid, *_ in misses):
+            lines.append(f"• {label} · {uid_text}{set_text}: " + "; ".join(problems))
+        if any(vid == "leadpoet-primary" for vid, *_ in misses):
             lines.append(
                 "Primary miss ⇒ auditors have no bundle to copy; check gateway "
                 "/weights/submit responses and the validator log."
             )
         post_discord("\n".join(lines))
-        log(f"ALERTED: {[(m[0], m[3]) for m in misses]}")
+        log(f"ALERTED: {[(m[0], m[5]) for m in misses]}")
     save_state(state)
     return 0
 

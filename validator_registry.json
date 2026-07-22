@@ -1,0 +1,30 @@
+{
+  "$comment": "Watched validators, keyed by hotkey — the stable identity. UIDs are resolved live from the metagraph on every refresh and must never be hardcoded. A hotkey rotation is a deliberate operator event: update this file in a reviewed commit. Never follow display names or coldkeys automatically (names are mutable; one coldkey can control several hotkeys). Consumed by src/app/admin/_components/AdminWeightsAlerts.tsx and scripts/weights_alert.py.",
+  "$pending": "Rizzo: authoritative current hotkey unconfirmed — their former UID 179 was re-registered by an unrelated coldkey. The fourth permit-holding auditor hotkey below is monitored but deliberately unlabelled until its identity is confirmed.",
+  "validators": [
+    {
+      "id": "leadpoet-primary",
+      "label": "primary (Leadpoet)",
+      "hotkey": "5FNVgRnrxMibhcBGEAaajGrYjsaCn441a5HuGUBUNnxEBLo9",
+      "expectedColdkey": "5DwHzMhBXPGPSSxnPzp3J8Y12UyYmU17nppQ8oHum6yrRjSk"
+    },
+    {
+      "id": "tao-com",
+      "label": "auditor (TAO.com)",
+      "hotkey": "5CyvXeynbEubeKbYfBdEB5mtck38eZTDNh2yVHo5YH7N4Tj9",
+      "expectedColdkey": "5CWzmvA17MAMQ9mnAecLxFXS2N8846rz6T7m4QNHyVtJVq4j"
+    },
+    {
+      "id": "yuma",
+      "label": "auditor (Yuma)",
+      "hotkey": "5Chnr6Y72gdfTFdoZnsCvkndKpMk8jAtt9JAYKaNG3LmU4BW",
+      "expectedColdkey": "5E9fVY1jexCNVMjd2rdBsAxeamFGEMfzHcyTn2fHgdHeYc5p"
+    },
+    {
+      "id": "auditor-unconfirmed",
+      "label": "auditor (identity unconfirmed)",
+      "hotkey": "5GeEtY7Ars1FbSKhueoffzLHrYgw3rxn7eF6egicCbWmNs71",
+      "expectedColdkey": "5FuzgvtfbZWdKSRxyYVPAPYNaNnf9cMnpT7phL3s2T3Kkrzo"
+    }
+  ]
+}
