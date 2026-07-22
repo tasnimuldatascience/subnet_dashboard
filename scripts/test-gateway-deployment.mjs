@@ -132,6 +132,9 @@ try {
   assert.match(routeSource, /latestValidator\?\.gitSha \?\? null/)
   assert.match(routeSource, /'validator'/)
   assert.match(routeSource, /distinctCommitCount:/)
+  assert.match(routeSource, /attestation\.source === 'ops_attestation_current'/)
+  assert.match(routeSource, /currentCommitVerified/)
+  assert.match(routeSource, /freshness: 'unknown', commitsBehind: null/)
 
   const componentSource = await readFile(resolve('src/app/admin/_components/AdminResearchLab.tsx'), 'utf8')
   assert.match(componentSource, /const isLatest = repository\.commitFreshness === 'latest'/)
@@ -143,8 +146,15 @@ try {
   assert.match(componentSource, /function ValidatorRepositoryPopover/)
   assert.match(componentSource, /deployment=\{ops\.validatorDeployment\}/)
   assert.match(componentSource, /Validator is on the latest/)
-  assert.match(componentSource, /label="Validator commit"/)
+  assert.match(componentSource, /isVerified \? 'Validator commit' : 'Last published commit'/)
   assert.match(componentSource, /Reported validator commits/)
+  assert.match(componentSource, /Current validator commit/)
+  assert.match(componentSource, /Running validator commit is unknown/)
+  assert.match(componentSource, /Last published commit/)
+  assert.match(
+    componentSource,
+    /const tone = isVerified\s+\? sourcingModelAlignmentTone\(isLatest, isOutOfLine\)\s+: sourcingModelAlignmentTone\(false, false\)/,
+  )
 
   console.log('gateway-deployment: gateway and validator commit distance, comparison states, and status UI wiring passed')
 } finally {

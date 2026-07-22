@@ -383,6 +383,8 @@ type AdminLabRepositorySummary = {
 type AdminLabValidatorDeploymentSummary = {
   sourceAvailable: boolean
   unavailableReason: string | null
+  currentCommitVerified: boolean
+  verificationReason: string | null
   source: AdminLabAttestationSummary['source']
   commitSha: string | null
   buildId: string | null
@@ -1767,22 +1769,27 @@ function ValidatorRepositoryPopover({
   repository: AdminLabRepositorySummary
 }) {
   const hoverPopover = useHoverPopover()
-  const isMixed = deployment.distinctCommitCount > 1
-  const isLatest = !isMixed && deployment.commitFreshness === 'latest'
-  const isBehind = !isMixed && deployment.commitFreshness === 'behind'
-  const isAhead = !isMixed && deployment.commitFreshness === 'ahead'
-  const isDiverged = !isMixed && deployment.commitFreshness === 'diverged'
+  const isVerified = deployment.currentCommitVerified
+  const isMixed = isVerified && deployment.distinctCommitCount > 1
+  const isLatest = isVerified && !isMixed && deployment.commitFreshness === 'latest'
+  const isBehind = isVerified && !isMixed && deployment.commitFreshness === 'behind'
+  const isAhead = isVerified && !isMixed && deployment.commitFreshness === 'ahead'
+  const isDiverged = isVerified && !isMixed && deployment.commitFreshness === 'diverged'
   const isOutOfLine = isMixed || isBehind || isAhead || isDiverged
-  const tone = sourcingModelAlignmentTone(isLatest, isOutOfLine)
+  const tone = isVerified
+    ? sourcingModelAlignmentTone(isLatest, isOutOfLine)
+    : sourcingModelAlignmentTone(false, false)
   const validatorCommitUrl = githubCommitUrl(repository.repositoryUrl, deployment.commitSha)
   const latestCommitUrl = githubCommitUrl(repository.repositoryUrl, repository.commitSha)
   const state: AdminHealthState = isLatest ? 'healthy' : isOutOfLine ? 'degraded' : 'unknown'
   const commitsBehindCopy = deployment.commitsBehind === null
     ? null
     : `${deployment.commitsBehind} ${deployment.commitsBehind === 1 ? 'commit' : 'commits'} behind`
-  const stateLabel = isMixed
-    ? 'Mixed'
-    : isLatest
+  const stateLabel = !isVerified
+    ? 'Unknown'
+    : isMixed
+      ? 'Mixed'
+      : isLatest
       ? 'Current'
       : isBehind
         ? commitsBehindCopy ?? 'Behind'
@@ -1790,12 +1797,14 @@ function ValidatorRepositoryPopover({
           ? 'Ahead'
           : isDiverged
             ? 'Diverged'
-            : deployment.sourceAvailable
-              ? 'Unknown'
-              : 'Unavailable'
-  const comparisonCopy = isMixed
-    ? `${deployment.reportingNodeCount} reporting validators are split across ${deployment.distinctCommitCount} commits`
-    : isLatest
+            : 'Unknown'
+  const comparisonCopy = !isVerified
+    ? deployment.reportedAt
+      ? `Running validator commit is unknown. Last published telemetry was ${formatDateTime(deployment.reportedAt)}.`
+      : 'Running validator commit is unknown until fresh runtime telemetry reports it.'
+    : isMixed
+      ? `${deployment.reportingNodeCount} reporting validators are split across ${deployment.distinctCommitCount} commits`
+      : isLatest
       ? deployment.reportingNodeCount > 1
         ? `All ${deployment.reportingNodeCount} reporting validators are on the latest ${repository.branch} commit`
         : `Validator is on the latest ${repository.branch} commit`
@@ -1808,9 +1817,11 @@ function ValidatorRepositoryPopover({
             : !deployment.sourceAvailable
               ? 'Validator commit is unavailable'
               : 'Latest-commit comparison is unavailable'
-  const triggerLabel = deployment.commitSha
+  const triggerLabel = isVerified && deployment.commitSha
     ? `LeadPoet validator commit ${deployment.commitSha} · ${stateLabel}`
-    : 'View LeadPoet validator commit details'
+    : deployment.commitSha
+      ? `LeadPoet validator commit unknown · last published ${deployment.commitSha}`
+      : 'LeadPoet validator commit unknown'
   const reportingNode = deployment.hotkey ?? deployment.nodeId
 
   return (
@@ -1859,7 +1870,7 @@ function ValidatorRepositoryPopover({
             <div className="min-w-0">
               <div className="text-sm font-medium">LeadPoet validator</div>
               <div className="mt-0.5 text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
-                Reported commit vs latest {repository.owner}/{repository.name}
+                Running commit verification vs latest {repository.owner}/{repository.name}
               </div>
             </div>
           </div>
@@ -1872,9 +1883,9 @@ function ValidatorRepositoryPopover({
             style={{ borderColor: tone.borderColor, background: tone.background }}
           >
             <div className="text-[10px] uppercase tracking-[0.12em]" style={{ color: 'var(--text-tertiary)' }}>
-              Validator commit
+              Current validator commit
             </div>
-            {deployment.commitSha && validatorCommitUrl ? (
+            {isVerified && deployment.commitSha && validatorCommitUrl ? (
               <a
                 href={validatorCommitUrl}
                 target="_blank"
@@ -1887,7 +1898,7 @@ function ValidatorRepositoryPopover({
               </a>
             ) : (
               <code className="mt-1.5 block text-xs leading-relaxed" style={{ color: tone.color }}>
-                Not reported
+                Unknown
               </code>
             )}
             <div className="mt-2 flex items-center gap-2 text-[10px]" style={{ color: tone.color }}>
@@ -1904,6 +1915,15 @@ function ValidatorRepositoryPopover({
               {!deployment.sourceAvailable
                 ? `Validator deployment telemetry is unavailable${deployment.unavailableReason ? `: ${deployment.unavailableReason}` : '.'}`
                 : `LeadPoet repository telemetry is unavailable${repository.unavailableReason ? `: ${repository.unavailableReason}` : '.'}`}
+            </div>
+          ) : null}
+
+          {deployment.sourceAvailable && !isVerified ? (
+            <div
+              className="rounded-lg border px-3 py-2 text-[11px] leading-relaxed"
+              style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)', color: 'var(--text-secondary)' }}
+            >
+              {deployment.verificationReason ?? 'No fresh runtime attestation is available for the running validator.'}
             </div>
           ) : null}
 
@@ -1932,7 +1952,7 @@ function ValidatorRepositoryPopover({
 
           <div className="grid grid-cols-2 gap-2">
             <SourcingModelDetail
-              label="Validator commit"
+              label={isVerified ? 'Validator commit' : 'Last published commit'}
               value={deployment.commitSha}
               href={validatorCommitUrl}
               compact
@@ -1943,10 +1963,10 @@ function ValidatorRepositoryPopover({
               href={latestCommitUrl}
               compact
             />
-            <SourcingModelDetail label="Reported by" value={reportingNode} compact />
-            <SourcingModelDetail label="Validator build" value={deployment.buildId} />
+            <SourcingModelDetail label={isVerified ? 'Reported by' : 'Last published by'} value={reportingNode} compact />
+            <SourcingModelDetail label={isVerified ? 'Validator build' : 'Published epoch'} value={deployment.buildId} />
             <SourcingModelDetail
-              label="Validator reported"
+              label={isVerified ? 'Validator reported' : 'Last published'}
               value={deployment.reportedAt ? formatDateTime(deployment.reportedAt) : null}
             />
             <SourcingModelDetail

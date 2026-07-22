@@ -111,6 +111,7 @@ const PUBLIC_LOG_WINDOW_MS = 24 * 60 * 60 * 1000
 const PUBLIC_LOG_LIMIT = 1_000
 const FRESH_PUBLISHED_ATTESTATION_MS = 3 * 60 * 60 * 1000
 const DEGRADED_PUBLISHED_ATTESTATION_MS = 6 * 60 * 60 * 1000
+const FRESH_VALIDATOR_RUNTIME_ATTESTATION_MS = 5 * 60 * 1000
 const FRESH_WEIGHT_SUBMISSION_MS = 3 * 60 * 60 * 1000
 const DEGRADED_WEIGHT_SUBMISSION_MS = 6 * 60 * 60 * 1000
 const FRESH_ARWEAVE_CHECKPOINT_MS = 6 * 60 * 60 * 1000
@@ -508,6 +509,8 @@ export type AdminLabRepositorySummary = {
 export type AdminLabValidatorDeploymentSummary = {
   sourceAvailable: boolean
   unavailableReason: string | null
+  currentCommitVerified: boolean
+  verificationReason: string | null
   source: AdminLabAttestationSummary['source']
   commitSha: string | null
   buildId: string | null
@@ -5268,11 +5271,24 @@ async function buildValidatorDeploymentSummary(
     })
     .sort((a, b) => timestampOrZero(b.attestedAt) - timestampOrZero(a.attestedAt))
   const latestValidator = reportingNodes[0] ?? null
-  const comparison = await fetchLeadpoetCommitComparison(
-    latestValidator?.gitSha ?? null,
-    repository.commitSha,
-    'validator',
+  const reportedAtMs = latestValidator?.attestedAt
+    ? timestampOrZero(latestValidator.attestedAt)
+    : 0
+  const reportAgeMs = reportedAtMs > 0 ? Date.now() - reportedAtMs : null
+  const currentCommitVerified = Boolean(
+    latestValidator &&
+    attestation.source === 'ops_attestation_current' &&
+    reportAgeMs !== null &&
+    reportAgeMs >= -60_000 &&
+    reportAgeMs <= FRESH_VALIDATOR_RUNTIME_ATTESTATION_MS,
   )
+  const comparison: GatewayCommitComparison = currentCommitVerified
+    ? await fetchLeadpoetCommitComparison(
+        latestValidator?.gitSha ?? null,
+        repository.commitSha,
+        'validator',
+      )
+    : { freshness: 'unknown', commitsBehind: null }
 
   const unavailableReason = latestValidator
     ? null
@@ -5281,10 +5297,21 @@ async function buildValidatorDeploymentSummary(
       : validatorNodes.length === 0
         ? 'No validator deployment telemetry is reporting'
         : 'Validator telemetry did not report a valid commit SHA'
+  const verificationReason = currentCommitVerified
+    ? null
+    : latestValidator && attestation.source === 'published_weight_bundles'
+      ? 'Only the last published weight bundle is available; it does not verify the currently running validator'
+      : latestValidator && reportAgeMs === null
+        ? 'Validator runtime telemetry did not report a valid timestamp'
+        : latestValidator
+          ? 'The latest validator runtime attestation is stale'
+          : unavailableReason
 
   return {
     sourceAvailable: Boolean(latestValidator),
     unavailableReason,
+    currentCommitVerified,
+    verificationReason,
     source: attestation.source,
     commitSha: latestValidator?.gitSha ?? null,
     buildId: latestValidator?.buildId ?? null,
