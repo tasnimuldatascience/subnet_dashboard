@@ -21,10 +21,16 @@ import { cn } from '@/lib/utils'
 
 const METAGRAPH_REFRESH_INTERVAL_MS = 30_000
 const EPOCH_REFRESH_INTERVAL_MS = 12_000
+const EPOCH_LAST_GOOD_MAX_AGE_MS = 5 * 60_000
 const ACTIVE_VALIDATOR_MAX_BLOCKS = 360
 const BLOCK_TIME_SECONDS = 12
 
 type MetagraphPayload = MetagraphData & { cachedAt?: number }
+type SubnetEpochPayload = SubnetEpochSnapshot & {
+  freshness?: 'live' | 'stale'
+  refreshError?: string
+  error?: string
+}
 type SortKey =
   | 'uid'
   | 'name'
@@ -118,6 +124,14 @@ function formatEpochMinutes(totalSeconds: number): string {
   const seconds = Math.max(0, Math.floor(totalSeconds))
   const minutes = Math.ceil(seconds / 60)
   return `${minutes}m`
+}
+
+function formatSnapshotAge(totalMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(totalMs / 1000))
+  if (totalSeconds < 60) return `${totalSeconds}s old`
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${minutes}m ${seconds}s old`
 }
 
 function SummaryCard({
@@ -225,8 +239,9 @@ export function AdminMetagraph() {
   const [epochRefreshing, setEpochRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [epochError, setEpochError] = useState<string | null>(null)
+  const [epochRefreshFailedAt, setEpochRefreshFailedAt] = useState<number | null>(null)
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null)
-  const [countdownTick, setCountdownTick] = useState(0)
+  const [clockNow, setClockNow] = useState(() => Date.now())
   const [search, setSearch] = useState('')
   const [detailsExpanded, setDetailsExpanded] = useState(false)
   const [sortKey, setSortKey] = useState<SortKey>('stake')
@@ -254,7 +269,7 @@ export function AdminMetagraph() {
     setEpochRefreshing(true)
     try {
       const response = await fetch(`/api/admin/subnet-epoch?t=${Date.now()}`, { cache: 'no-store' })
-      const payload = await response.json() as SubnetEpochSnapshot & { error?: string }
+      const payload = await response.json() as SubnetEpochPayload
       if (!response.ok || payload.error) {
         throw new Error(payload.error || `Subnet epoch API returned ${response.status}`)
       }
@@ -264,18 +279,23 @@ export function AdminMetagraph() {
         !Number.isSafeInteger(payload.subnetEpochIndex) ||
         !Number.isSafeInteger(payload.blocksElapsed) ||
         !Number.isSafeInteger(payload.blocksRemaining) ||
+        !Number.isFinite(Date.parse(payload.observedAt)) ||
         !/^0x[0-9a-f]{64}$/i.test(payload.blockHash)
       ) {
         throw new Error('Subnet epoch API returned an invalid snapshot')
       }
       setEpochState(payload)
-      setCountdownTick(0)
-      setEpochError(null)
+      setClockNow(Date.now())
+      if (payload.freshness === 'stale') {
+        setEpochError(payload.refreshError || 'Live subnet epoch refresh failed')
+        setEpochRefreshFailedAt((failedAt) => failedAt ?? Date.now())
+      } else {
+        setEpochError(null)
+        setEpochRefreshFailedAt(null)
+      }
     } catch (fetchError) {
-      // This clock is operational timing data. Never retain a successful value
-      // after a failed live read and imply that it is still the current head.
-      setEpochState(null)
       setEpochError(fetchError instanceof Error ? fetchError.message : 'Failed to read the live subnet epoch')
+      setEpochRefreshFailedAt((failedAt) => failedAt ?? Date.now())
     } finally {
       setEpochLoading(false)
       setEpochRefreshing(false)
@@ -319,7 +339,7 @@ export function AdminMetagraph() {
   }, [fetchEpochState])
 
   useEffect(() => {
-    const interval = window.setInterval(() => setCountdownTick((tick) => tick + 1), 1000)
+    const interval = window.setInterval(() => setClockNow(Date.now()), 1000)
     return () => window.clearInterval(interval)
   }, [])
 
@@ -341,12 +361,29 @@ export function AdminMetagraph() {
 
   const freshnessAvailable = data?.currentBlock !== null && data?.currentBlock !== undefined
   const activeRows = rows.filter((row) => row.updated !== null && row.updated < ACTIVE_VALIDATOR_MAX_BLOCKS)
-  const nextEpochSeconds = epochState === null
+  const epochObservedAt = epochState ? Date.parse(epochState.observedAt) : null
+  const epochSnapshotAgeMs = epochObservedAt === null ? null : Math.max(0, clockNow - epochObservedAt)
+  const epochSnapshotExpired = epochSnapshotAgeMs !== null && epochSnapshotAgeMs > EPOCH_LAST_GOOD_MAX_AGE_MS
+  const displayedEpochState = epochSnapshotExpired ? null : epochState
+  const countdownReference = epochRefreshFailedAt ?? clockNow
+  const countdownAgeSeconds = epochObservedAt === null
+    ? 0
+    : Math.max(0, Math.floor((countdownReference - epochObservedAt) / 1000))
+  const nextEpochSeconds = displayedEpochState === null
     ? null
-    : Math.max(0, (epochState.blocksRemaining * BLOCK_TIME_SECONDS) - countdownTick)
-  const timeRemainingPercent = nextEpochSeconds === null || !epochState?.tempo
+    : Math.max(0, (displayedEpochState.blocksRemaining * BLOCK_TIME_SECONDS) - countdownAgeSeconds)
+  const timeRemainingPercent = nextEpochSeconds === null || !displayedEpochState?.tempo
     ? undefined
-    : (nextEpochSeconds / (epochState.tempo * BLOCK_TIME_SECONDS)) * 100
+    : (nextEpochSeconds / (displayedEpochState.tempo * BLOCK_TIME_SECONDS)) * 100
+  const epochObservedLabel = epochState
+    ? new Date(epochState.observedAt).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      })
+    : null
+  const epochAgeLabel = epochSnapshotAgeMs === null ? null : formatSnapshotAge(epochSnapshotAgeMs)
+  const epochErrorDetail = epochError?.replace(/[.\s]+$/, '')
 
   const handleSort = (column: SortKey) => {
     if (column === sortKey) {
@@ -394,12 +431,16 @@ export function AdminMetagraph() {
           <div
             className="inline-flex h-8 items-center gap-2 rounded-lg border px-2.5 font-mono text-[10px]"
             style={{ borderColor: 'var(--surface-border)', background: 'var(--surface)', color: 'var(--text-secondary)' }}
-            title={epochState ? `Best head ${epochState.blockHash}` : undefined}
+            title={displayedEpochState
+              ? `${epochError ? 'Last successful' : 'Best'} head ${displayedEpochState.blockHash}`
+              : undefined}
           >
-            <Wifi className={cn('h-3.5 w-3.5', epochState ? 'text-gold' : '')} />
+            <Wifi className={cn('h-3.5 w-3.5', displayedEpochState && !epochError ? 'text-gold' : '')} />
             <span>
-              {epochState
-                ? `${new Date(epochState.observedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })} · ${epochState.blockHash.slice(0, 10)}…`
+              {displayedEpochState
+                ? epochError
+                  ? `Last good ${epochObservedLabel} · ${epochAgeLabel}`
+                  : `${epochObservedLabel} · ${displayedEpochState.blockHash.slice(0, 10)}…`
                 : epochLoading ? 'Reading best head…' : 'Best head unavailable'}
             </span>
           </div>
@@ -419,8 +460,8 @@ export function AdminMetagraph() {
       <div className="grid gap-2 p-3 md:grid-cols-2 xl:grid-cols-4">
         <SummaryCard
           label="Epoch Blocks Remaining"
-          value={epochLoading || epochState === null ? '—' : `${formatAmount(epochState.blocksRemaining, 0)} remaining`}
-          detail={epochState ? `${formatAmount(epochState.blocksElapsed, 0)} elapsed` : undefined}
+          value={epochLoading || displayedEpochState === null ? '—' : `${formatAmount(displayedEpochState.blocksRemaining, 0)} remaining`}
+          detail={displayedEpochState ? `${formatAmount(displayedEpochState.blocksElapsed, 0)} elapsed` : undefined}
           progress={timeRemainingPercent}
         />
         <SummaryCard
@@ -430,8 +471,8 @@ export function AdminMetagraph() {
         />
         <SummaryCard
           label="Official SN71 Epoch"
-          value={epochLoading || epochState === null ? '—' : formatAmount(epochState.subnetEpochIndex, 0)}
-          detail={epochState ? `SubnetEpochIndex · best block ${formatAmount(epochState.currentBlock, 0)}` : undefined}
+          value={epochLoading || displayedEpochState === null ? '—' : formatAmount(displayedEpochState.subnetEpochIndex, 0)}
+          detail={displayedEpochState ? `SubnetEpochIndex · best block ${formatAmount(displayedEpochState.currentBlock, 0)}` : undefined}
         />
         <SummaryCard
           label="Active validators"
@@ -442,7 +483,12 @@ export function AdminMetagraph() {
 
       {epochError && (
         <div className="mx-3 mb-3 rounded-lg border border-burgundy-soft bg-burgundy-soft px-3 py-2 text-xs text-burgundy">
-          Official epoch clock unavailable: {epochError}. No stale epoch state is shown.
+          Live epoch refresh unavailable: {epochErrorDetail}.{' '}
+          {displayedEpochState
+            ? `Showing the last successful snapshot pulled at ${epochObservedLabel} (${epochAgeLabel}); its countdown is paused until live reads recover.`
+            : epochState
+              ? `The last successful snapshot was pulled at ${epochObservedLabel} (${epochAgeLabel}), which exceeds the five-minute display limit.`
+              : 'No successful snapshot is available yet.'}
         </div>
       )}
 

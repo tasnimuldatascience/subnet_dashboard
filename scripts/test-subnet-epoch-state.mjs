@@ -77,9 +77,12 @@ try {
 
     if (Array.isArray(request)) {
       storageCalls += 1
-      assert.equal(request.length, 5, 'all scheduler fields should be read together')
-      observedStorageHashes.push(...request.map((entry) => entry.params[1]))
-      for (const entry of request) {
+      assert.equal(request.length, 6, 'the header and all scheduler fields should be read together')
+      const [headerRequest, ...storageRequests] = request
+      assert.equal(headerRequest.method, 'chain_getHeader')
+      assert.deepEqual(headerRequest.params, [scenario.hash], 'header must use the exact best-head hash')
+      observedStorageHashes.push(...storageRequests.map((entry) => entry.params[1]))
+      for (const entry of storageRequests) {
         assert.equal(entry.method, 'state_getStorage')
         assert.equal(entry.params[1], scenario.hash, 'storage must use the exact best-head hash')
         assert.match(entry.params[0], /4700$/, 'storage keys must encode SN71 as little-endian u16')
@@ -94,11 +97,19 @@ try {
       ]
       // Reverse the batch response to prove decoding is keyed by JSON-RPC ID,
       // not by response order.
-      return jsonResponse(request.map((entry, index) => (
+      const storageResponses = storageRequests.map((entry, index) => (
         index === scenario.failStorageIndex
           ? { jsonrpc: '2.0', id: entry.id, error: { message: 'forced storage failure' } }
           : { jsonrpc: '2.0', id: entry.id, result: values[index] }
-      )).reverse())
+      ))
+      return jsonResponse([
+        {
+          jsonrpc: '2.0',
+          id: headerRequest.id,
+          result: { number: `0x${scenario.currentBlock.toString(16)}` },
+        },
+        ...storageResponses,
+      ].reverse())
     }
 
     if (request.method === 'chain_getHead') {
@@ -106,22 +117,18 @@ try {
       if (scenario.headGate) await scenario.headGate
       return jsonResponse({ jsonrpc: '2.0', id: request.id, result: scenario.hash })
     }
-    if (request.method === 'chain_getHeader') {
-      assert.deepEqual(request.params, [scenario.hash], 'header must be resolved at the selected head')
-      return jsonResponse({
-        jsonrpc: '2.0',
-        id: request.id,
-        result: { number: `0x${scenario.currentBlock.toString(16)}` },
-      })
-    }
     throw new Error(`Unexpected RPC method: ${request.method}`)
   }
 
   const require = createRequire(import.meta.url)
-  const { fetchBestSubnetEpochState } = require(join(outDir, 'subnet-epoch-state.js'))
+  const {
+    fetchBestSubnetEpochState,
+    getLastSuccessfulSubnetEpochState,
+  } = require(join(outDir, 'subnet-epoch-state.js'))
+  const fetchFreshSubnetEpochState = () => fetchBestSubnetEpochState({ maxAgeMs: 0 })
 
   useScenario()
-  const official = await fetchBestSubnetEpochState()
+  const official = await fetchFreshSubnetEpochState()
   assert.equal(official.schemaVersion, 'leadpoet.subnet_epoch_state.v1')
   assert.equal(official.headKind, 'best')
   assert.equal(official.netuid, 71)
@@ -141,7 +148,7 @@ try {
     pendingEpochAt: 8_637_170,
     blocksSinceLastStep: 9,
   })
-  const pending = await fetchBestSubnetEpochState()
+  const pending = await fetchFreshSubnetEpochState()
   assert.equal(pending.subnetEpochIndex, 23_927, 'pending state stays in the current official epoch')
   assert.equal(pending.blocksElapsed, 9)
   assert.equal(pending.nextEpochBlock, 8_637_170)
@@ -153,7 +160,7 @@ try {
     pendingEpochAt: 8_637_170,
     blocksSinceLastStep: 15,
   })
-  const due = await fetchBestSubnetEpochState()
+  const due = await fetchFreshSubnetEpochState()
   assert.equal(due.subnetEpochIndex, 23_927, 'a due/deferred slot does not invent the next epoch ID')
   assert.equal(due.blocksRemaining, 0, 'a reached pending boundary must remain visibly due')
 
@@ -163,7 +170,7 @@ try {
     pendingEpochAt: 0,
     blocksSinceLastStep: 50_399,
   })
-  const safetyInTwo = await fetchBestSubnetEpochState()
+  const safetyInTwo = await fetchFreshSubnetEpochState()
   assert.equal(safetyInTwo.nextEpochBlock, 8_637_174)
   assert.equal(safetyInTwo.blocksRemaining, 2, '50,399 must fire after two post-snapshot increments')
 
@@ -173,7 +180,7 @@ try {
     pendingEpochAt: 0,
     blocksSinceLastStep: 50_400,
   })
-  const safetyNext = await fetchBestSubnetEpochState()
+  const safetyNext = await fetchFreshSubnetEpochState()
   assert.equal(safetyNext.nextEpochBlock, 8_637_174)
   assert.equal(safetyNext.blocksRemaining, 1, '50,400 must fire after the next increment')
 
@@ -183,14 +190,22 @@ try {
     pendingEpochAt: 0,
     blocksSinceLastStep: 50_401,
   })
-  const safetyDue = await fetchBestSubnetEpochState()
+  const safetyDue = await fetchFreshSubnetEpochState()
   assert.equal(safetyDue.nextEpochBlock, 8_637_174)
   assert.equal(safetyDue.blocksRemaining, 0, 'the MAX_TEMPO safety valve must be visibly due')
 
   const callsBeforeFailure = headCalls
+  const lastGoodBeforeFailure = getLastSuccessfulSubnetEpochState(5 * 60_000)
+  assert.deepEqual(lastGoodBeforeFailure, safetyDue)
   useScenario({ hash: HASH_A, failStorageIndex: 3 })
-  await assert.rejects(fetchBestSubnetEpochState(), /forced storage failure/)
+  await assert.rejects(fetchFreshSubnetEpochState(), /forced storage failure/)
   assert.equal(headCalls, callsBeforeFailure + 1, 'a failed refresh must perform a new live read')
+  assert.deepEqual(
+    getLastSuccessfulSubnetEpochState(5 * 60_000),
+    lastGoodBeforeFailure,
+    'a failed refresh must retain the bounded last-good fallback',
+  )
+  assert.equal(getLastSuccessfulSubnetEpochState(0), null, 'a zero-age fallback must not serve cached data')
 
   useScenario({
     hash: HASH_B,
@@ -200,7 +215,7 @@ try {
     subnetEpochIndex: 23_928,
     blocksSinceLastStep: 2,
   })
-  const recovered = await fetchBestSubnetEpochState()
+  const recovered = await fetchFreshSubnetEpochState()
   assert.equal(recovered.subnetEpochIndex, 23_928)
   assert.equal(recovered.currentBlock, 8_637_172)
   assert.notDeepEqual(recovered, official, 'failure recovery must not return the old successful snapshot')
@@ -210,8 +225,8 @@ try {
   useScenario({ hash: HASH_C, currentBlock: 8_637_173, headGate })
   const headCallsBeforeFlight = headCalls
   const storageCallsBeforeFlight = storageCalls
-  const concurrentA = fetchBestSubnetEpochState()
-  const concurrentB = fetchBestSubnetEpochState()
+  const concurrentA = fetchFreshSubnetEpochState()
+  const concurrentB = fetchFreshSubnetEpochState()
   await new Promise((resolveTick) => setImmediate(resolveTick))
   assert.equal(headCalls, headCallsBeforeFlight + 1, 'concurrent requests should share only the in-flight read')
   releaseHead()
@@ -220,14 +235,22 @@ try {
   assert.equal(storageCalls, storageCallsBeforeFlight + 1)
 
   useScenario({ hash: HASH_A, currentBlock: 8_637_174 })
-  await fetchBestSubnetEpochState()
-  assert.equal(headCalls, headCallsBeforeFlight + 2, 'completed snapshots must never be result-cached')
+  const completed = await fetchFreshSubnetEpochState()
+  assert.equal(headCalls, headCallsBeforeFlight + 2, 'maxAgeMs: 0 must bypass the completed-snapshot cache')
+  const headCallsBeforeSharedSnapshot = headCalls
+  const cachedA = await fetchBestSubnetEpochState()
+  const cachedB = await fetchBestSubnetEpochState()
+  assert.deepEqual(cachedA, completed)
+  assert.deepEqual(cachedB, completed)
+  assert.equal(headCalls, headCallsBeforeSharedSnapshot, 'dashboard viewers should share a recent completed snapshot')
 
   const routeSource = await readFile(resolve('src/app/api/admin/subnet-epoch/route.ts'), 'utf8')
   assert.match(routeSource, /dynamic = 'force-dynamic'/)
   assert.match(routeSource, /revalidate = 0/)
   assert.match(routeSource, /fetchCache = 'force-no-store'/)
   assert.match(routeSource, /private, no-store, max-age=0, must-revalidate/)
+  assert.match(routeSource, /freshness: 'stale'/)
+  assert.match(routeSource, /getLastSuccessfulSubnetEpochState\(LAST_GOOD_MAX_AGE_MS\)/)
   assert.match(routeSource, /status: 502/)
 
   const middlewareSource = await readFile(resolve('src/middleware.ts'), 'utf8')
@@ -237,16 +260,21 @@ try {
   assert.match(uiSource, /const EPOCH_REFRESH_INTERVAL_MS = 12_000/)
   assert.match(uiSource, /\/api\/admin\/subnet-epoch\?t=/)
   assert.match(uiSource, /cache: 'no-store'/)
-  assert.match(uiSource, /setEpochState\(null\)/, 'failed live reads must clear the displayed epoch')
+  assert.doesNotMatch(uiSource, /setEpochState\(null\)/, 'a transient live-read failure must retain the last successful epoch')
+  assert.match(uiSource, /const EPOCH_LAST_GOOD_MAX_AGE_MS = 5 \* 60_000/)
+  assert.match(uiSource, /`Last good \$\{epochObservedLabel\} · \$\{epochAgeLabel\}`/)
+  assert.match(uiSource, /Showing the last successful snapshot/)
+  assert.match(uiSource, /pulled at \$\{epochObservedLabel\} \(\$\{epochAgeLabel\}\)/)
+  assert.match(uiSource, /countdown is paused until live reads recover/)
   assert.match(uiSource, /label="Official SN71 Epoch"/)
-  assert.match(uiSource, /epochState\.subnetEpochIndex/)
-  assert.match(uiSource, /epochState\.blocksElapsed/)
-  assert.match(uiSource, /epochState\.blocksRemaining/)
+  assert.match(uiSource, /displayedEpochState\.subnetEpochIndex/)
+  assert.match(uiSource, /displayedEpochState\.blocksElapsed/)
+  assert.match(uiSource, /displayedEpochState\.blocksRemaining/)
   assert.match(uiSource, /epochState\.observedAt/)
-  assert.match(uiSource, /epochState\.blockHash/)
+  assert.match(uiSource, /displayedEpochState\.blockHash/)
   assert.doesNotMatch(uiSource, /lastEpochBlock: data\?\./, 'epoch cards must not use cached metagraph schedule fields')
 
-  console.log('subnet-epoch-state: exact best-head reads, official vector, pending state, no-store, and no-stale fallback passed')
+  console.log('subnet-epoch-state: exact best-head reads, shared snapshots, bounded last-good fallback, and paused stale countdown passed')
 } finally {
   globalThis.fetch = originalFetch
   await rm(outDir, { recursive: true, force: true })

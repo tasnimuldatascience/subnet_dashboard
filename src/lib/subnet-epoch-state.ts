@@ -7,6 +7,7 @@ import {
 
 const DEFAULT_SUBTENSOR_RPC = 'https://entrypoint-finney.opentensor.ai:443'
 const RPC_TIMEOUT_MS = 8_000
+const SHARED_SNAPSHOT_MAX_AGE_MS = 10_000
 
 type RpcResponse<T> = {
   id?: number | string
@@ -16,6 +17,10 @@ type RpcResponse<T> = {
 
 const globalForSubnetEpoch = globalThis as unknown as {
   subnetEpochFlight?: SingleFlightState<SubnetEpochSnapshot>
+  subnetEpochCache?: {
+    snapshot: SubnetEpochSnapshot
+    cachedAt: number
+  }
 }
 
 if (!globalForSubnetEpoch.subnetEpochFlight) {
@@ -131,9 +136,6 @@ async function readBestSubnetEpochState(): Promise<SubnetEpochSnapshot> {
   const signal = AbortSignal.timeout(RPC_TIMEOUT_MS)
   const netuid = configuredNetuid()
   const blockHash = parseBlockHash(await rpc<unknown>('chain_getHead', [], 1, signal))
-  const header = await rpc<{ number?: unknown }>('chain_getHeader', [blockHash], 2, signal)
-  const currentBlock = parseBlockNumber(header.number)
-
   const storageFields = [
     { field: 'tempo', storage: 'Tempo' },
     { field: 'lastEpochBlock', storage: 'LastEpochBlock' },
@@ -141,18 +143,31 @@ async function readBestSubnetEpochState(): Promise<SubnetEpochSnapshot> {
     { field: 'subnetEpochIndex', storage: 'SubnetEpochIndex' },
     { field: 'blocksSinceLastStep', storage: 'BlocksSinceLastStep' },
   ] as const
-  const requests = storageFields.map((entry, index) => ({
-    jsonrpc: '2.0',
-    method: 'state_getStorage',
-    params: [netuidStorageKey(entry.storage, netuid), blockHash],
-    id: 100 + index,
-  }))
+  const requests = [
+    {
+      jsonrpc: '2.0',
+      method: 'chain_getHeader',
+      params: [blockHash],
+      id: 2,
+    },
+    ...storageFields.map((entry, index) => ({
+      jsonrpc: '2.0',
+      method: 'state_getStorage',
+      params: [netuidStorageKey(entry.storage, netuid), blockHash],
+      id: 100 + index,
+    })),
+  ]
   const response = await postRpc(requests, signal)
   if (!Array.isArray(response)) throw new Error('Subnet epoch storage returned a non-array response')
 
   const entries = new Map<number | string | undefined, RpcResponse<unknown>>(
     (response as Array<RpcResponse<unknown>>).map((entry) => [entry.id, entry]),
   )
+  const headerEntry = entries.get(2)
+  if (!headerEntry || headerEntry.error || !headerEntry.result || typeof headerEntry.result !== 'object') {
+    throw new Error(headerEntry?.error?.message || 'Best-head header returned an empty result')
+  }
+  const currentBlock = parseBlockNumber((headerEntry.result as { number?: unknown }).number)
   const values = Object.fromEntries(storageFields.map((entry, index) => {
     const rpcEntry = entries.get(100 + index)
     if (!rpcEntry || rpcEntry.error || rpcEntry.result === undefined || rpcEntry.result === null) {
@@ -187,11 +202,37 @@ async function readBestSubnetEpochState(): Promise<SubnetEpochSnapshot> {
   }
 }
 
+function cachedSubnetEpochState(maxAgeMs: number): SubnetEpochSnapshot | null {
+  const cache = globalForSubnetEpoch.subnetEpochCache
+  if (!cache || maxAgeMs <= 0 || Date.now() - cache.cachedAt >= maxAgeMs) return null
+  return cache.snapshot
+}
+
 /**
  * Read one internally consistent best-head snapshot. Concurrent requests share
- * only the active RPC read; a completed value is never retained or served as a
- * stale fallback.
+ * the active RPC read, and dashboard viewers arriving within ten seconds share
+ * the same completed snapshot instead of multiplying calls to the public RPC.
  */
-export function fetchBestSubnetEpochState(): Promise<SubnetEpochSnapshot> {
-  return runSingleFlight(globalForSubnetEpoch.subnetEpochFlight!, readBestSubnetEpochState)
+export function fetchBestSubnetEpochState(
+  options: { maxAgeMs?: number } = {},
+): Promise<SubnetEpochSnapshot> {
+  const maxAgeMs = options.maxAgeMs ?? SHARED_SNAPSHOT_MAX_AGE_MS
+  const cached = cachedSubnetEpochState(maxAgeMs)
+  if (cached) return Promise.resolve(cached)
+
+  return runSingleFlight(globalForSubnetEpoch.subnetEpochFlight!, async () => {
+    const shared = cachedSubnetEpochState(maxAgeMs)
+    if (shared) return shared
+
+    const snapshot = await readBestSubnetEpochState()
+    globalForSubnetEpoch.subnetEpochCache = {
+      snapshot,
+      cachedAt: Date.now(),
+    }
+    return snapshot
+  })
+}
+
+export function getLastSuccessfulSubnetEpochState(maxAgeMs: number): SubnetEpochSnapshot | null {
+  return cachedSubnetEpochState(maxAgeMs)
 }
