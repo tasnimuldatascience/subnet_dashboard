@@ -421,10 +421,12 @@ async function fetchModelCompetitionData(): Promise<unknown> {
 
   // Fetch recent historical submissions directly from the source table so the
   // public UI can show activity even when the today-only leaderboard view is
-  // empty. Keep code_content gated by the same 24h public lock below.
+  // empty. code_content is deliberately NOT selected: it multiplied this
+  // every-60s refresh to ~6.7 MB across ~40 rows. The dialog lazy-loads code
+  // on open via /api/model-code (which enforces the same 24h public lock).
   const { data: recentModelsFromSource, error: recentModelsError } = await supabase
     .from('qualification_models')
-    .select('id, miner_hotkey, model_name, status, score, score_breakdown, code_content, created_at, evaluated_at, is_champion')
+    .select('id, miner_hotkey, model_name, status, score, score_breakdown, created_at, evaluated_at, is_champion')
     .gte('created_at', MODEL_COMPETITION_SUBMISSIONS_LIVE_AT)
     .order('created_at', { ascending: false })
     .limit(100)
@@ -503,7 +505,6 @@ async function fetchModelCompetitionData(): Promise<unknown> {
     status: string
     score: number | null
     score_breakdown: unknown | null
-    code_content: unknown | null
     created_at: string
     evaluated_at: string | null
     is_champion: boolean | null
@@ -512,16 +513,6 @@ async function fetchModelCompetitionData(): Promise<unknown> {
     .map((m) => {
       const createdAt = new Date(m.created_at)
       const canShowCode = createdAt < twentyFourHoursAgo
-      let parsedCodeContent: Record<string, string> | null = null
-      if (canShowCode && m.code_content) {
-        try {
-          parsedCodeContent = typeof m.code_content === 'string'
-            ? JSON.parse(m.code_content)
-            : m.code_content as Record<string, string>
-        } catch {
-          console.error('[Cache] Failed to parse code_content for historical submission:', m.id)
-        }
-      }
 
       return {
         id: m.id,
@@ -530,7 +521,8 @@ async function fetchModelCompetitionData(): Promise<unknown> {
         status: m.status,
         score: m.score,
         scoreBreakdown: m.score_breakdown,
-        codeContent: parsedCodeContent,
+        // Lazy-loaded by the dialog via /api/model-code when canShowCode.
+        codeContent: null,
         createdAt: m.created_at,
         evaluatedAt: m.evaluated_at,
         isChampion: champModel ? m.id === champModel.id : Boolean(m.is_champion),

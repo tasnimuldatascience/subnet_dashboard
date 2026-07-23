@@ -29,17 +29,20 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // Fetch model from qualification_leaderboard VIEW (public, last 24h models)
-    // The view contains both submitted and evaluated models
+    // Fetch from the qualification_models SOURCE table. The former
+    // qualification_leaderboard view only contains the current day's models,
+    // while code becomes viewable strictly AFTER 24 hours -- so every
+    // code-eligible model 404'd here. The source table covers all of them; the
+    // evaluated-status and 24h gates below are unchanged.
     const { data: model, error } = await supabase
-      .from('qualification_leaderboard')
-      .select('model_id, status, code_content, miner_hotkey, created_at')
-      .eq('model_id', modelId)
+      .from('qualification_models')
+      .select('id, status, code_content, miner_hotkey, created_at')
+      .eq('id', modelId)
       .single()
 
     if (error || !model) {
       return NextResponse.json(
-        { success: false, error: 'Model not found or no longer available (only last 24h models are accessible)' },
+        { success: false, error: 'Model not found' },
         { status: 404 }
       )
     }
@@ -91,7 +94,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      modelId: model.model_id,
+      modelId: model.id,
       code: codeFiles,
     })
   } catch (err) {

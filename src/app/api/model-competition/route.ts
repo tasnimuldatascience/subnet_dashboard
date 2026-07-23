@@ -13,9 +13,12 @@ async function fetchPastSubmissionsFallback() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!
   const key = process.env.SUPABASE_SECRET_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   const supabase = createClient(url, key, { auth: { persistSession: false } })
+  // code_content deliberately not selected: the dialog lazy-loads code via
+  // /api/model-code (same 24h public lock), so this per-request fallback stays
+  // metadata-sized instead of shipping every model's code.
   const { data, error } = await supabase
     .from('qualification_models')
-    .select('id, miner_hotkey, model_name, status, score, score_breakdown, code_content, created_at, evaluated_at, is_champion')
+    .select('id, miner_hotkey, model_name, status, score, score_breakdown, created_at, evaluated_at, is_champion')
     .gte('created_at', MODEL_COMPETITION_SUBMISSIONS_LIVE_AT)
     .order('created_at', { ascending: false })
     .limit(100)
@@ -33,17 +36,6 @@ async function fetchPastSubmissionsFallback() {
     .map((m) => {
       const createdAtMs = new Date(m.created_at).getTime()
       const canShowCode = createdAtMs < twentyFourHoursAgo
-      let parsedCodeContent: Record<string, string> | null = null
-      if (canShowCode && m.code_content) {
-        try {
-          parsedCodeContent =
-            typeof m.code_content === 'string'
-              ? JSON.parse(m.code_content)
-              : (m.code_content as Record<string, string>)
-        } catch {
-          parsedCodeContent = null
-        }
-      }
 
       return {
         id: m.id,
@@ -52,7 +44,8 @@ async function fetchPastSubmissionsFallback() {
         status: m.status,
         score: m.score,
         scoreBreakdown: m.score_breakdown,
-        codeContent: parsedCodeContent,
+        // Lazy-loaded by the dialog via /api/model-code when canShowCode.
+        codeContent: null,
         createdAt: m.created_at,
         evaluatedAt: m.evaluated_at,
         isChampion: Boolean(m.is_champion),

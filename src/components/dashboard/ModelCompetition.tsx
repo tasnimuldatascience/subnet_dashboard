@@ -1061,36 +1061,49 @@ function SubmissionDetailDialog({
   const [codeContent, setCodeContent] = useState<Record<string, string> | null>(null)
   const [activeFile, setActiveFile] = useState<string | null>(null)
 
-  // Parse code content when dialog opens
+  // Resolve code when the dialog opens: use inline codeContent if the payload
+  // carries it, otherwise LAZY-LOAD from /api/model-code (the minute cache no
+  // longer ships every model's code — ~6.7 MB/refresh saved; the endpoint
+  // enforces the same evaluated-status + 24h lock).
   useEffect(() => {
     if (!submission || !isOpen) return
 
     // Reset state
     setActiveTab('score')
+    setCodeContent(null)
+    setActiveFile(null)
 
-    // Parse code content if available
-    if (submission.codeContent) {
+    const applyCode = (raw: unknown) => {
       let parsedCode: Record<string, string> | null = null
       try {
-        if (typeof submission.codeContent === 'string') {
-          parsedCode = JSON.parse(submission.codeContent)
-        } else {
-          parsedCode = submission.codeContent as Record<string, string>
-        }
+        parsedCode = typeof raw === 'string' ? JSON.parse(raw) : (raw as Record<string, string>)
       } catch {
         console.error('Failed to parse code content')
       }
-
       if (parsedCode && Object.keys(parsedCode).length > 0) {
         setCodeContent(parsedCode)
         setActiveFile(Object.keys(parsedCode)[0])
-      } else {
-        setCodeContent(null)
-        setActiveFile(null)
       }
-    } else {
-      setCodeContent(null)
-      setActiveFile(null)
+    }
+
+    if (submission.codeContent) {
+      applyCode(submission.codeContent)
+      return
+    }
+    if (!submission.canShowCode) return
+
+    let cancelled = false
+    fetch(`/api/model-code?modelId=${encodeURIComponent(submission.id)}`)
+      .then((res) => res.json())
+      .then((payload) => {
+        if (cancelled) return
+        if (payload?.success && payload.code) applyCode(payload.code)
+      })
+      .catch(() => {
+        // Leave the code tab in its "unavailable" state on fetch failure.
+      })
+    return () => {
+      cancelled = true
     }
   }, [submission, isOpen])
 
