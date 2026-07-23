@@ -47,6 +47,17 @@ const CONSENSUS_COLUMNS =
   'consensus_id,request_id,miner_hotkey,lead_id,consensus_final_score,' +
   'consensus_rep_score,any_fabricated,is_winner,reward_pct,computed_at,' +
   'consensus_email_verified,consensus_person_verified,consensus_company_verified'
+// The every-60s base refresh only feeds the cosmos graph and aggregate tallies,
+// which consume these fields; the full detail rows (rep score, verification
+// flags, reward) are loaded on demand per request when a dialog opens.
+const CONSENSUS_SUMMARY_COLUMNS =
+  'consensus_id,request_id,miner_hotkey,lead_id,is_winner,consensus_final_score,computed_at'
+// Detail rows for one request, cached briefly so dialog reopen/spam does not
+// re-query; bounded to keep the module map small.
+const DETAIL_CACHE_TTL = 30_000
+const DETAIL_CACHE_MAX = 200
+const detailCache = new Map<string, { leads: unknown[]; ts: number }>()
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const TOP_MINER_BONUS_PCTS = [5, 3, 1.5] as const
 
 type CachedResponse = {
@@ -85,6 +96,97 @@ function currentRewardWeekStartUTC(now = new Date()): Date {
   const daysSinceMonday = (day + 6) % 7
   start.setUTCDate(start.getUTCDate() - daysSinceMonday)
   return start
+}
+
+function pickField(row: Record<string, unknown>, ...keys: string[]): unknown {
+  for (const k of keys) {
+    const v = row[k]
+    if (v !== undefined && v !== null) return v
+  }
+  return undefined
+}
+
+// Shared row normalizer for both the summary refresh and the per-request detail
+// endpoint: chain-canonical winner override + the stable client shape. Fields
+// absent from the summary columns default (0/false/null) — only the detail
+// endpoint returns them populated.
+function mapConsensusRow(
+  row: Record<string, unknown>,
+  chainWinnerKeys: Set<string>,
+) {
+  const requestId = row.request_id as string
+  const leadId = (row.lead_id as string | undefined) ?? ''
+  const minerHotkey = (row.miner_hotkey as string | undefined) ?? ''
+  const chainWinner = leadId ? chainWinnerKeys.has(`${requestId}|${leadId}`) : false
+  const is_winner = chainWinnerKeys.size > 0 ? chainWinner : Boolean(row.is_winner)
+  return {
+    consensus_id: (row.consensus_id as string | undefined) ?? `${requestId}|${leadId}|${minerHotkey}`,
+    request_id: requestId,
+    miner_hotkey: minerHotkey,
+    lead_id: leadId,
+    is_winner,
+    reward_pct: (pickField(row, 'reward_pct') as number | null | undefined) ?? null,
+    computed_at: (pickField(row, 'computed_at', 'updated_at', 'created_at') as string | undefined) ?? '',
+    consensus_final_score: Number(pickField(row, 'consensus_final_score', 'final_score') ?? 0),
+    consensus_rep_score: Number(pickField(row, 'consensus_rep_score', 'rep_score') ?? 0),
+    consensus_tier2_passed: Boolean(pickField(row, 'consensus_tier2_passed', 'tier2_passed')),
+    any_fabricated: Boolean(pickField(row, 'any_fabricated', 'all_fabricated')),
+    consensus_email_verified: Boolean(pickField(row, 'consensus_email_verified', 'email_verified')),
+    consensus_person_verified: Boolean(pickField(row, 'consensus_person_verified', 'person_verified')),
+    consensus_company_verified: Boolean(pickField(row, 'consensus_company_verified', 'company_verified')),
+  }
+}
+
+// Full detail rows for ONE request, loaded when a dialog opens instead of
+// shipping every request's full rows in the every-60s payload. Applies the same
+// chain-canonical winner merge/override as the former inline path and returns
+// rows winner-first, score-desc (the dialog's order). Briefly cached.
+async function fetchRequestLeadDetail(requestId: string): Promise<unknown[]> {
+  const cached = detailCache.get(requestId)
+  if (cached && Date.now() - cached.ts < DETAIL_CACHE_TTL) return cached.leads
+
+  const supabase = getSupabase()
+  const [rowsResult, summaryResult] = await Promise.all([
+    supabase
+      .from('fulfillment_score_consensus')
+      .select(CONSENSUS_COLUMNS)
+      .eq('request_id', requestId)
+      .order('computed_at', { ascending: false })
+      .limit(2000),
+    supabase.rpc('get_chain_summaries', { p_request_ids: [requestId] }),
+  ])
+  if (rowsResult.error) {
+    console.error('[Fulfillment API] detail rows error:', rowsResult.error)
+  }
+  if (summaryResult.error) {
+    console.error('[Fulfillment API] detail summary error:', summaryResult.error)
+  }
+  const base = (rowsResult.data || []) as unknown as Array<Record<string, unknown>>
+  const { chainWinnerKeys, chainCanonicalRows } = reshapeChainSummaries(
+    [requestId],
+    (summaryResult.data || []) as ChainSummaryRow[],
+  )
+  const seen = new Set(base.map((r) => `${r.request_id}|${r.lead_id}`))
+  const merged = [...base]
+  for (const row of chainCanonicalRows) {
+    const leadId = (row.lead_id as string | undefined) ?? ''
+    if (!leadId || seen.has(`${requestId}|${leadId}`)) continue
+    seen.add(`${requestId}|${leadId}`)
+    merged.push({ ...row, request_id: requestId })
+  }
+  const leads = merged
+    .map((row) => mapConsensusRow(row, chainWinnerKeys))
+    .sort((a, b) => {
+      if (a.is_winner !== b.is_winner) return a.is_winner ? -1 : 1
+      return b.consensus_final_score - a.consensus_final_score
+    })
+
+  detailCache.set(requestId, { leads, ts: Date.now() })
+  if (detailCache.size > DETAIL_CACHE_MAX) {
+    const oldest = detailCache.keys().next().value
+    if (oldest !== undefined) detailCache.delete(oldest)
+  }
+  return leads
 }
 
 async function fetchFulfillmentData() {
@@ -140,7 +242,7 @@ async function fetchFulfillmentData() {
     const [scoreConsensusResult, chainSummariesResult] = await Promise.all([
       supabase
         .from('fulfillment_score_consensus')
-        .select(CONSENSUS_COLUMNS)
+        .select(CONSENSUS_SUMMARY_COLUMNS)
         .in('request_id', allRequestIds)
         .order('computed_at', { ascending: false })
         .limit(CONSENSUS_ROW_LIMIT),
@@ -195,36 +297,7 @@ async function fetchFulfillmentData() {
       supplemental.push({ ...row, request_id: visibleRid })
     }
     const rawConsensus = [...rawConsensusBase, ...supplemental]
-    const pick = (row: Record<string, unknown>, ...keys: string[]): unknown => {
-      for (const k of keys) {
-        const v = row[k]
-        if (v !== undefined && v !== null) return v
-      }
-      return undefined
-    }
-    consensusData = rawConsensus.map((row: Record<string, unknown>) => {
-      const requestId = row.request_id as string
-      const leadId = (row.lead_id as string | undefined) ?? ''
-      const minerHotkey = (row.miner_hotkey as string | undefined) ?? ''
-      const chainWinner = leadId ? chainWinnerKeys.has(`${requestId}|${leadId}`) : false
-      const is_winner = chainWinnerKeys.size > 0 ? chainWinner : Boolean(row.is_winner)
-      return {
-        consensus_id: (row.consensus_id as string | undefined) ?? `${requestId}|${leadId}|${minerHotkey}`,
-        request_id: requestId,
-        miner_hotkey: minerHotkey,
-        lead_id: leadId,
-        is_winner,
-        reward_pct: (pick(row, 'reward_pct') as number | null | undefined) ?? null,
-        computed_at: (pick(row, 'computed_at', 'updated_at', 'created_at') as string | undefined) ?? '',
-        consensus_final_score: Number(pick(row, 'consensus_final_score', 'final_score') ?? 0),
-        consensus_rep_score: Number(pick(row, 'consensus_rep_score', 'rep_score') ?? 0),
-        consensus_tier2_passed: Boolean(pick(row, 'consensus_tier2_passed', 'tier2_passed')),
-        any_fabricated: Boolean(pick(row, 'any_fabricated', 'all_fabricated')),
-        consensus_email_verified: Boolean(pick(row, 'consensus_email_verified', 'email_verified')),
-        consensus_person_verified: Boolean(pick(row, 'consensus_person_verified', 'person_verified')),
-        consensus_company_verified: Boolean(pick(row, 'consensus_company_verified', 'company_verified')),
-      }
-    })
+    consensusData = rawConsensus.map((row) => mapConsensusRow(row, chainWinnerKeys))
 
     // Override num_leads with chain root value and add held count.
     for (let i = 0; i < allRequestIds.length; i++) {
@@ -353,7 +426,25 @@ async function fetchFulfillmentData() {
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl
   const minerHotkey = searchParams.get('minerHotkey')
+  const requestId = searchParams.get('requestId')
   const ifNoneMatch = request.headers.get('if-none-match')
+
+  // Per-request lead detail (dialog open): full rows for ONE request only.
+  if (requestId) {
+    if (!UUID_RE.test(requestId)) {
+      return NextResponse.json({ success: false, error: 'invalid requestId' }, { status: 400 })
+    }
+    try {
+      const leads = await fetchRequestLeadDetail(requestId)
+      return NextResponse.json(
+        { success: true, leads },
+        { headers: { 'Cache-Control': 'private, max-age=30' } },
+      )
+    } catch (err) {
+      console.error('[Fulfillment API] detail error:', err)
+      return NextResponse.json({ success: false, error: 'detail unavailable' }, { status: 500 })
+    }
+  }
 
   try {
     // Base data: use cache when possible. We keep the ETag alongside the data

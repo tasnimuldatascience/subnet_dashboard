@@ -677,7 +677,11 @@ export function Fulfillment({ onSync }: { onSync?: () => void } = {}) {
     return new Set<string>([`mnr:${focusedMinerHotkey}`])
   }, [focusedMinerHotkey])
 
-  const dialogLeads = useMemo<ConsensusResult[]>(() => {
+  // The 60s payload now carries summary consensus rows only (graph fields);
+  // full detail rows (rep score, verification flags, reward) load on demand
+  // when the dialog opens. The summary rows render immediately as a skeleton
+  // (scores + winners are present) and are upgraded when the detail arrives.
+  const summaryDialogLeads = useMemo<ConsensusResult[]>(() => {
     if (!data || !dialogRequest) return []
     return data.allConsensus
       .filter((c) => c.request_id === dialogRequest.request_id)
@@ -687,6 +691,29 @@ export function Fulfillment({ onSync }: { onSync?: () => void } = {}) {
         return b.consensus_final_score - a.consensus_final_score
       })
   }, [data, dialogRequest])
+
+  const [detailLeads, setDetailLeads] = useState<ConsensusResult[] | null>(null)
+  useEffect(() => {
+    setDetailLeads(null)
+    if (!dialogRequest) return
+    let cancelled = false
+    fetch(`/api/fulfillment?requestId=${encodeURIComponent(dialogRequest.request_id)}`)
+      .then((res) => res.json())
+      .then((payload) => {
+        if (cancelled) return
+        if (payload?.success && Array.isArray(payload.leads)) {
+          setDetailLeads(payload.leads as ConsensusResult[])
+        }
+      })
+      .catch(() => {
+        // Keep the summary rows on fetch failure.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [dialogRequest])
+
+  const dialogLeads = detailLeads ?? summaryDialogLeads
 
   const historyStats = useMemo(() => {
     if (!data) return { submissions: 0, fulfilled: 0, miners: 0 }
