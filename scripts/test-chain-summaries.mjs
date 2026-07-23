@@ -96,4 +96,21 @@ for (const role of ['anon', 'authenticated', 'service_role']) {
   assert.ok(migration.includes(`TO ${role}`), `grant to ${role} preserved`)
 }
 
+// --- rejection-histogram migration guards ---
+const { readdir } = await import('node:fs/promises')
+const migDir = resolve('supabase/migrations')
+const histName = (await readdir(migDir)).find((f) => f.endsWith('_rejection_reason_histogram.sql'))
+assert.ok(histName, 'rejection-histogram migration must exist')
+const hist = await readFile(join(migDir, histName), 'utf8')
+assert.match(hist, /get_rejection_reason_histogram/, 'defines the histogram RPC')
+assert.match(hist, /at most 100 unique request ids/, 'histogram RPC bounded to 100 ids')
+const histSql = hist.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n')
+assert.doesNotMatch(histSql, /UNION ALL/, 'histogram recursion must be cycle-safe')
+assert.match(hist, /LIMIT 25000/, 'mirrors the route 25k consensus window')
+// Reproduces the exact reason categories the Node code produced.
+for (const cat of ['insufficient_intent', 'geography_mismatch', 'role_mismatch',
+                   'industry_mismatch', 'country_mismatch', 'truelist_inline_verification', 'not_selected']) {
+  assert.ok(hist.includes(cat), `reason category ${cat} preserved`)
+}
+
 console.log('test-chain-summaries: OK')

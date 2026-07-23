@@ -47,21 +47,12 @@ const CONSENSUS_COLUMNS =
   'consensus_id,request_id,miner_hotkey,lead_id,consensus_final_score,' +
   'consensus_rep_score,any_fabricated,is_winner,reward_pct,computed_at,' +
   'consensus_email_verified,consensus_person_verified,consensus_company_verified'
-const SCORE_ROW_BATCH_SIZE = 1000
 const TOP_MINER_BONUS_PCTS = [5, 3, 1.5] as const
 
 type CachedResponse = {
   data: unknown
   etag: string
   ts: number
-}
-
-type ScoreReasonRow = {
-  request_id: string
-  lead_id: string
-  failure_reason: string | null
-  failure_detail: string | null
-  scored_at: string | null
 }
 
 let cache: CachedResponse | null = null
@@ -94,66 +85,6 @@ function currentRewardWeekStartUTC(now = new Date()): Date {
   const daysSinceMonday = (day + 6) % 7
   start.setUTCDate(start.getUTCDate() - daysSinceMonday)
   return start
-}
-
-function chunks<T>(items: T[], size: number): T[][] {
-  const out: T[][] = []
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size))
-  return out
-}
-
-
-async function fetchScoreReasonsForRequests(
-  supabase: ReturnType<typeof getSupabase>,
-  requestIds: string[],
-): Promise<Map<string, ScoreReasonRow>> {
-  const scoreByLead = new Map<string, ScoreReasonRow>()
-  for (const group of chunks(requestIds, 25)) {
-    for (let offset = 0; ; offset += SCORE_ROW_BATCH_SIZE) {
-      const { data, error } = await supabase
-        .from('fulfillment_scores')
-        .select('request_id, lead_id, failure_reason, failure_detail, scored_at')
-        .in('request_id', group)
-        .order('scored_at', { ascending: false })
-        .range(offset, offset + SCORE_ROW_BATCH_SIZE - 1)
-
-      if (error) {
-        console.error('[Fulfillment API] score reason query failed:', error)
-        break
-      }
-
-      const batch = (data ?? []) as ScoreReasonRow[]
-      for (const row of batch) {
-        const key = `${row.request_id}|${row.lead_id}`
-        const prev = scoreByLead.get(key)
-        if (!prev) {
-          scoreByLead.set(key, row)
-          continue
-        }
-        const prevHasReason = Boolean(prev.failure_reason || prev.failure_detail)
-        const rowHasReason = Boolean(row.failure_reason || row.failure_detail)
-        if (!prevHasReason && rowHasReason) scoreByLead.set(key, row)
-      }
-
-      if (batch.length < SCORE_ROW_BATCH_SIZE) break
-    }
-  }
-  return scoreByLead
-}
-
-function rejectionReasonFromScore(row: ScoreReasonRow | undefined): string {
-  const reason = row?.failure_reason?.trim()
-  if (reason) return reason
-
-  const detail = row?.failure_detail?.toLowerCase() ?? ''
-  if (detail.includes('intent')) return 'insufficient_intent'
-  if (detail.includes('geography') || detail.includes('location')) return 'geography_mismatch'
-  if (detail.includes('role')) return 'role_mismatch'
-  if (detail.includes('industry')) return 'industry_mismatch'
-  if (detail.includes('country')) return 'country_mismatch'
-  if (detail.includes('email')) return 'truelist_inline_verification'
-
-  return 'not_selected'
 }
 
 async function fetchFulfillmentData() {
@@ -229,7 +160,6 @@ async function fetchFulfillmentData() {
     // query (previously ~3.46M cumulative calls). Pure + unit-tested
     // (scripts/test-chain-summaries.mjs).
     const {
-      chainWinnersResults,
       rootLeadsResults,
       heldResults,
       chainWinnerKeys,
@@ -307,18 +237,31 @@ async function fetchFulfillmentData() {
   }
   // Cumulative stats come from DB COUNT queries above — no row limits.
 
-  const rejectionRequestIds = Array.from(new Set(consensusData.map(c => c.request_id)))
-  const scoreByLead = await fetchScoreReasonsForRequests(supabase, rejectionRequestIds)
-  const rejectionCounts: Record<string, number> = {}
+  // Winner / non-winner tallies are a cheap in-memory count (no extra fetch).
   let fulfilledEvaluatedCount = 0
   let unfulfilledEvaluatedCount = 0
   for (const c of consensusData) {
-    if (c.is_winner) {
-      fulfilledEvaluatedCount++
+    if (c.is_winner) fulfilledEvaluatedCount++
+    else unfulfilledEvaluatedCount++
+  }
+  // Rejection histogram is aggregated in SQL (get_rejection_reason_histogram)
+  // instead of downloading ~12.5k fulfillment_scores rows every minute and
+  // bucketing them in Node. The RPC reproduces the exact chain-winner override,
+  // score-dedup, and reason-derivation -- verified byte-identical to the former
+  // Node computation against live data. Falls back to the empty histogram on
+  // error (the panel simply shows no breakdown, never a wrong one).
+  const rejectionCounts: Record<string, number> = {}
+  if (allRequestIds.length > 0) {
+    const { data: histogram, error: histErr } = await supabase.rpc(
+      'get_rejection_reason_histogram',
+      { p_request_ids: allRequestIds },
+    )
+    if (histErr) {
+      console.error('[Fulfillment API] get_rejection_reason_histogram error:', histErr)
     } else {
-      unfulfilledEvaluatedCount++
-      const reason = rejectionReasonFromScore(scoreByLead.get(`${c.request_id}|${c.lead_id}`))
-      rejectionCounts[reason] = (rejectionCounts[reason] || 0) + 1
+      for (const row of (histogram || []) as Array<{ reason: string; count: number }>) {
+        rejectionCounts[row.reason] = Number(row.count)
+      }
     }
   }
   const rejectionBreakdown = Object.entries(rejectionCounts)
