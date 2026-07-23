@@ -233,15 +233,18 @@ try {
   assert.equal(jsReason('  ', 'wrong Location '), 'geography_mismatch')
   assert.equal(jsReason(null, null), 'not_selected')
 
-  // --- graph summary: per-(request,miner) aggregates with chain-winner override ---
+  // --- graph summary: base aggregates with chain-winner override PLUS the
+  // supplemental chain-canonical winners (recycled-chain wins attributed to the
+  // first visible request) -- dropping those undercounts wins.
   const gs = mustSql(
     `SELECT miner_hotkey || '=' || lead_count || ':' || win_count
        FROM public.get_fulfillment_graph_summary(ARRAY['${A}']::uuid[]) ORDER BY miner_hotkey`,
     'graph summary for A')
-  // Request A's rows: hkA leads L-a1(win) L-a2 L-a3 -> 3:1 ; chain winner L-b1
-  // belongs to request B, not A's base rows, so it is not a group here.
+  // Base rows of A: hkA leads L-a1(chain win) L-a2 L-a3 -> 3:1.
+  // Supplemental: chain winner L-b1 lives under cycle B (not among A's base
+  // rows) -> attributed to A as (hkB, 1 lead, 1 win) like the former merge.
   const gsLines = gs.split('\n').filter(Boolean)
-  assert.deepEqual(gsLines, ['hkA=3:1'], `graph summary groups: ${JSON.stringify(gsLines)}`)
+  assert.deepEqual(gsLines, ['hkA=3:1', 'hkB=1:1'], `graph summary groups: ${JSON.stringify(gsLines)}`)
   // Oversized flood rejected before unnest.
   const gsOver = psql(['-c', `SELECT count(*) FROM public.get_fulfillment_graph_summary(ARRAY[${flood}]::uuid[])`])
   assert.notEqual(gsOver.status, 0, 'graph summary rejects a 101-dup flood')
