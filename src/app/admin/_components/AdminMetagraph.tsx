@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import type { MetagraphData } from '@/lib/types'
 import { shortHotkey } from '@/lib/admin-format'
+import { isValidatorRosterMember } from '@/lib/metagraph-validator-roster'
 import type { SubnetEpochSnapshot } from '@/lib/subnet-epoch'
 import { cn } from '@/lib/utils'
 
@@ -22,7 +23,6 @@ const METAGRAPH_REFRESH_INTERVAL_MS = 30_000
 const EPOCH_REFRESH_INTERVAL_MS = 12_000
 const ACTIVE_VALIDATOR_MAX_BLOCKS = 360
 const BLOCK_TIME_SECONDS = 12
-const PRIMARY_VALIDATOR_UID = 0
 
 type MetagraphPayload = MetagraphData & { cachedAt?: number }
 type SortKey =
@@ -55,14 +55,13 @@ interface ValidatorRow {
   updated: number | null
   axon: string | null
   rank: number
-  isMiner: boolean
 }
 
 function validatorRows(data: MetagraphPayload | null): ValidatorRow[] {
   if (!data) return []
 
   return Object.entries(data.hotkeyToUid)
-    .filter(([hotkey]) => data.isValidator[hotkey])
+    .filter(([hotkey, uid]) => isValidatorRosterMember(data, hotkey, uid))
     .map(([hotkey, uid]) => {
       const lastUpdate = data.lastUpdates[hotkey]
       const updated = data.currentBlock !== null && Number.isFinite(lastUpdate)
@@ -87,10 +86,8 @@ function validatorRows(data: MetagraphPayload | null): ValidatorRow[] {
         updated,
         axon: data.axons[hotkey] ?? null,
         rank: data.ranks[hotkey] ?? 0,
-        isMiner: trust > 0 || consensus > 0 || incentive > 0,
       }
     })
-    .filter((row) => row.uid === PRIMARY_VALIDATOR_UID || !row.isMiner)
 }
 
 function numericValue(row: ValidatorRow, key: SortKey): number | string {

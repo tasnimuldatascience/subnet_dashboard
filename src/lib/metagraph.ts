@@ -187,20 +187,33 @@ class ScaleDecoder {
     return bytes
   }
 
-  readCompact(): number {
+  readCompactBigInt(): bigint {
     const first = this.readByte()
     const mode = first & 0x03
-    if (mode === 0) return first >> 2
-    if (mode === 1) return ((this.readByte() << 6) | (first >> 2))
+    if (mode === 0) return BigInt(first >> 2)
+    if (mode === 1) return BigInt((this.readByte() << 6) | (first >> 2))
     if (mode === 2) {
       const b1 = this.readByte(), b2 = this.readByte(), b3 = this.readByte()
-      return ((b3 << 22) | (b2 << 14) | (b1 << 6) | (first >> 2))
+      return BigInt(
+        (b3 * 4_194_304) +
+        (b2 * 16_384) +
+        (b1 * 64) +
+        (first >> 2),
+      )
     }
     // Big integer mode
     const len = (first >> 2) + 4
     let val = BigInt(0)
     for (let i = 0; i < len; i++) val = val | (BigInt(this.readByte()) << BigInt(i * 8))
-    return Number(val)
+    return val
+  }
+
+  readCompact(): number {
+    const value = this.readCompactBigInt()
+    if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new Error(`SCALE compact value ${value} exceeds JavaScript's safe integer range`)
+    }
+    return Number(value)
   }
 
   readAccountId(): string {
@@ -280,6 +293,66 @@ class ScaleDecoder {
       validator_permit,
     }
   }
+}
+
+// SubnetState SCALE layout:
+// Option<SubnetState> + netuid + hotkeys + coldkeys + active +
+// validator_permit + 12 compact-number vectors. The final three vectors are
+// alpha stake, root TAO stake, and the effective stake used by consensus.
+// See Subtensor's rpc_info/show_subnet.rs.
+export function decodeSubnetStateTotalStakeRao(payload: number[]): number[] {
+  const decoder = new ScaleDecoder(new Uint8Array(payload))
+  const option = decoder.readByte()
+  if (option === 0) throw new Error(`Subnet ${NETUID} does not exist`)
+  if (option !== 1) throw new Error(`Invalid subnet-state option tag ${option}`)
+
+  const netuid = decoder.readCompact()
+  if (netuid !== NETUID) {
+    throw new Error(`Subnet-state response was for netuid ${netuid}, expected ${NETUID}`)
+  }
+
+  const hotkeys = decoder.readVec(() => decoder.readAccountId())
+  const coldkeys = decoder.readVec(() => decoder.readAccountId())
+  const active = decoder.readVec(() => decoder.readBool())
+  const validatorPermits = decoder.readVec(() => decoder.readBool())
+
+  if (
+    coldkeys.length !== hotkeys.length ||
+    active.length !== hotkeys.length ||
+    validatorPermits.length !== hotkeys.length
+  ) {
+    throw new Error('Subnet-state identity and status vectors have inconsistent lengths')
+  }
+
+  const skipCompactVector = () => {
+    decoder.readVec(() => decoder.readCompactBigInt())
+  }
+
+  skipCompactVector() // pruning_score
+  skipCompactVector() // last_update
+  skipCompactVector() // emission
+  skipCompactVector() // dividends
+  skipCompactVector() // incentives
+  skipCompactVector() // consensus
+  skipCompactVector() // trust
+  skipCompactVector() // rank
+  skipCompactVector() // block_at_registration
+  skipCompactVector() // alpha_stake
+  skipCompactVector() // tao_stake
+  const totalStake = decoder.readVec(() => decoder.readCompactBigInt())
+
+  if (totalStake.length !== hotkeys.length) {
+    throw new Error(
+      `Subnet-state returned ${totalStake.length} stake weights for ${hotkeys.length} neurons`,
+    )
+  }
+
+  return totalStake.map((rao) => {
+    if (rao > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new Error(`Stake weight ${rao} exceeds JavaScript's safe integer range`)
+    }
+    return Number(rao)
+  })
 }
 
 function formatIpAddress(ip: bigint, ipType: number): string | null {
@@ -538,6 +611,31 @@ async function fetchChainTelemetryFromRPC(): Promise<ChainTelemetry> {
   }
 }
 
+async function fetchSubnetStateTotalStakeFromRPC(): Promise<number[]> {
+  const response = await fetch(SUBTENSOR_RPC, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      method: 'subnetInfo_getSubnetState',
+      params: [NETUID],
+      id: 6,
+    }),
+    signal: AbortSignal.timeout(60000),
+  })
+
+  if (!response.ok) {
+    throw new Error(`subnetInfo_getSubnetState returned HTTP ${response.status}`)
+  }
+
+  const json = await response.json() as RpcResponse<number[]>
+  if (json.error || !json.result) {
+    throw new Error(json.error?.message || 'subnetInfo_getSubnetState returned an empty result')
+  }
+
+  return decodeSubnetStateTotalStakeRao(json.result)
+}
+
 // Fetch metagraph via subtensor RPC (pure TypeScript, no Python dependency)
 // Note: RPC fallback doesn't include alphaPrice - that requires Python/bittensor
 async function fetchMetagraphFromRPC(): Promise<MetagraphData> {
@@ -545,17 +643,24 @@ async function fetchMetagraphFromRPC(): Promise<MetagraphData> {
   const startTime = Date.now()
   const chainTelemetryPromise = fetchChainTelemetryFromRPC()
 
-  const resp = await fetch(SUBTENSOR_RPC, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      method: 'neuronInfo_getNeuronsLite',
-      params: [NETUID],
-      id: 1
+  const [resp, totalStakeRao] = await Promise.all([
+    fetch(SUBTENSOR_RPC, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'neuronInfo_getNeuronsLite',
+        params: [NETUID],
+        id: 1
+      }),
+      signal: AbortSignal.timeout(60000)
     }),
-    signal: AbortSignal.timeout(60000)
-  })
+    fetchSubnetStateTotalStakeFromRPC(),
+  ])
+
+  if (!resp.ok) {
+    throw new Error(`neuronInfo_getNeuronsLite returned HTTP ${resp.status}`)
+  }
 
   const json = await resp.json() as { result?: number[], error?: { message: string } }
 
@@ -599,8 +704,6 @@ async function fetchMetagraphFromRPC(): Promise<MetagraphData> {
     incentives[n.hotkey] = n.incentive / 65535
     // Emission in rao (convert to TAO: divide by 1e9)
     emissions[n.hotkey] = n.emission / 1e9
-    // Stake in rao (convert to TAO: divide by 1e9)
-    stakes[n.hotkey] = n.totalStake / 1e9
     isValidator[n.hotkey] = n.validator_permit
     active[n.hotkey] = n.active
     ranks[n.hotkey] = n.rank / 65535
@@ -613,6 +716,17 @@ async function fetchMetagraphFromRPC(): Promise<MetagraphData> {
     if (n.validator_permit && n.active) {
       validatorKeys.push({ hotkey: n.hotkey, coldkey: n.coldkey })
     }
+  }
+
+  if (totalStakeRao.length !== numNeurons) {
+    throw new Error(
+      `Subnet-state returned ${totalStakeRao.length} stake weights for ${numNeurons} neuron-lite rows`,
+    )
+  }
+  for (const [hotkey, uid] of Object.entries(hotkeyToUid)) {
+    // SubnetState.total_stake is alpha stake plus root TAO stake weighted by
+    // the on-chain TaoWeight. This is the effective stake shown by explorers.
+    stakes[hotkey] = totalStakeRao[uid] / 1e9
   }
 
   const [chainTelemetry, names] = await Promise.all([

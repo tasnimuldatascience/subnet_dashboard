@@ -64,7 +64,7 @@ function neuronLitePayload() {
     ...compact(1),
     ...hotkey,
     ...coldkey,
-    ...compact(7),
+    ...compact(0),
     ...compact(71),
     1,
     ...fixedLittleEndian(100, 8), // axon serving block
@@ -89,10 +89,63 @@ function neuronLitePayload() {
   ])
 }
 
+function compactVector(values) {
+  return [
+    ...compact(values.length),
+    ...values.flatMap((value) => compact(value)),
+  ]
+}
+
+function accountVector(length, seed) {
+  return [
+    ...compact(length),
+    ...Array.from({ length }, (_, accountIndex) =>
+      Array.from(
+        { length: 32 },
+        (_, byteIndex) => (seed + accountIndex + byteIndex) % 256,
+      ),
+    ).flat(),
+  ]
+}
+
+function boolVector(values) {
+  return [...compact(values.length), ...values.map((value) => value ? 1 : 0)]
+}
+
+function subnetStatePayload(totalStakeRao) {
+  const length = totalStakeRao.length
+  const zeroes = Array.from({ length }, () => 0)
+  const active = Array.from({ length }, () => true)
+  const permits = Array.from({ length }, () => true)
+
+  return new Uint8Array([
+    1, // Some(SubnetState)
+    ...compact(71),
+    ...accountVector(length, 1),
+    ...accountVector(length, 65),
+    ...boolVector(active),
+    ...boolVector(permits),
+    ...compactVector([]), // pruning_score
+    ...compactVector(zeroes), // last_update
+    ...compactVector(zeroes), // emission
+    ...compactVector(zeroes), // dividends
+    ...compactVector(zeroes), // incentives
+    ...compactVector(zeroes), // consensus
+    ...compactVector([]), // trust
+    ...compactVector([]), // rank
+    ...compactVector(zeroes), // block_at_registration
+    ...compactVector(totalStakeRao), // alpha_stake
+    ...compactVector(zeroes), // tao_stake
+    ...compactVector(totalStakeRao), // total_stake
+    ...compactVector([]), // emission_history
+  ])
+}
+
 try {
   const tsc = spawnSync(process.execPath, [
     resolve('node_modules/typescript/bin/tsc'),
     resolve('src/lib/metagraph.ts'),
+    resolve('src/lib/metagraph-validator-roster.ts'),
     resolve('src/lib/types.ts'),
     resolve('src/lib/subnet-epoch.ts'),
     '--target',
@@ -120,6 +173,8 @@ try {
   let blockMode = 'finalized'
   let liveBestHeadCalls = 0
   const payload = neuronLitePayload()
+  const effectiveStakeRao = 9_876_543_210_000n
+  const subnetPayload = subnetStatePayload([effectiveStakeRao])
   const epochStorageValues = [
     storageUnsigned(360, 2),
     storageUnsigned(1_111_080, 8),
@@ -161,6 +216,14 @@ try {
       }
     }
 
+    if (request.method === 'subnetInfo_getSubnetState') {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ result: Array.from(subnetPayload) }),
+      }
+    }
+
     if (request.method === 'chain_getFinalizedHead') {
       return {
         ok: true,
@@ -196,13 +259,20 @@ try {
     fetchMetagraph,
     fetchMetagraphFresh,
     setMetagraphCache,
+    decodeSubnetStateTotalStakeRao,
   } = require(join(outDir, 'metagraph.js'))
+  const { validatorRosterUids } = require(join(outDir, 'metagraph-validator-roster.js'))
 
   const finalized = await fetchMetagraphFresh()
   const [hotkey] = Object.keys(finalized.hotkeyToUid)
   assert.ok(hotkey, 'synthetic neuron should decode to a hotkey')
-  assert.equal(finalized.hotkeyToUid[hotkey], 7)
+  assert.equal(finalized.hotkeyToUid[hotkey], 0)
   assert.equal(finalized.active[hotkey], true)
+  assert.equal(
+    finalized.stakes[hotkey],
+    Number(effectiveStakeRao) / 1e9,
+    'RPC fallback should use SubnetState.total_stake instead of neuron-lite direct stake',
+  )
   assert.equal(finalized.names[hotkey], 'Test Validator')
   assert.equal(finalized.axons[hotkey], '100.59.201.156:8093')
   assert.ok(Math.abs(finalized.validatorTrusts[hotkey] - (60_000 / 65_535)) < 1e-10)
@@ -214,6 +284,54 @@ try {
   assert.equal(finalized.subnetEpochIndex, 23_853, 'subnet epoch index should be retained')
   assert.equal(finalized.pendingEpochAt, 0, 'zero should represent no pending manual epoch')
   assert.equal(finalized.lastMechanismStepBlock, 1_111_080, 'last mechanism step should be retained')
+
+  const permittedUids = [0, 3, 28, 62, 100, 155, 202, 216, 224]
+  const hotkeyToUid = Object.fromEntries(permittedUids.map((uid) => [`hotkey-${uid}`, uid]))
+  const isValidator = Object.fromEntries(permittedUids.map((uid) => [`hotkey-${uid}`, true]))
+  const trusts = Object.fromEntries(permittedUids.map((uid) => [`hotkey-${uid}`, 0]))
+  const consensus = Object.fromEntries(permittedUids.map((uid) => [`hotkey-${uid}`, 0]))
+  const incentives = Object.fromEntries(permittedUids.map((uid) => [`hotkey-${uid}`, 0]))
+  consensus['hotkey-0'] = 0.365
+  consensus['hotkey-28'] = 0.039
+  incentives['hotkey-216'] = 0.008
+
+  const roster = validatorRosterUids({
+    hotkeyToUid,
+    isValidator,
+    trusts,
+    consensus,
+    incentives,
+  }).sort((left, right) => left - right)
+  assert.deepEqual(
+    roster,
+    [0, 3, 62, 100, 155, 202, 224],
+    'validator roster should keep seven expected UIDs and exclude non-owner miner activity',
+  )
+  assert.ok(
+    roster.includes(0),
+    'the subnet owner should remain in the validator roster when it also has miner metrics',
+  )
+
+  const taoStatsStakeRao = Array.from({ length: 225 }, () => 0n)
+  taoStatsStakeRao[0] = 1_755_655_861_661_019n
+  taoStatsStakeRao[202] = 1_008_004_298_105_023n
+  taoStatsStakeRao[3] = 829_685_776_356_653n
+  taoStatsStakeRao[155] = 280_737_350_154_398n
+  taoStatsStakeRao[100] = 178_557_253_754_481n
+  taoStatsStakeRao[62] = 106_906_309_488_308n
+  taoStatsStakeRao[224] = 1_375_087_005_248n
+  const decodedStakeRao = decodeSubnetStateTotalStakeRao(
+    Array.from(subnetStatePayload(taoStatsStakeRao)),
+  )
+  assert.ok(
+    Math.abs((decodedStakeRao[0] / 1e9) - 1_755_655.861661019) < 1e-9,
+    'effective stake decoder should retain the TaoStats-equivalent owner value',
+  )
+  assert.deepEqual(
+    [...roster].sort((left, right) => decodedStakeRao[right] - decodedStakeRao[left]),
+    [0, 202, 3, 155, 100, 62, 224],
+    'effective stake should reproduce the TaoStats validator ordering',
+  )
 
   blockMode = 'best'
   const best = await fetchMetagraphFresh()
@@ -301,6 +419,7 @@ class Metagraph:
     incentive = [Scalar(0.25), Scalar(0.75)]
     emission = [Scalar(1.5), Scalar(2.5)]
     alpha_stake = [Scalar(10), Scalar(20)]
+    total_stake = [Scalar(30), Scalar(40)]
     validator_permit = [Scalar(True), Scalar(False)]
     last_update = [Scalar(1999900), Scalar(1999950)]
 
@@ -323,6 +442,7 @@ class Subtensor:
     assert.equal(pythonResult.status, 0, pythonResult.stderr)
     const data = JSON.parse(pythonResult.stdout)
     assert.deepEqual(data.lastUpdates, { 'hotkey-a': 1_999_900, 'hotkey-b': 1_999_950 })
+    assert.deepEqual(data.stakes, { 'hotkey-a': 30, 'hotkey-b': 40 })
     assert.equal(data.currentBlock, 2_000_000)
   } else {
     const pythonSource = await readFile(resolve('scripts/fetch_metagraph.py'), 'utf8')
@@ -394,8 +514,7 @@ class Subtensor:
   )
   assert.match(blocksCardSource, /epochState\.blocksElapsed, 0\)\} elapsed/)
   assert.doesNotMatch(blocksCardSource, /epochState\.subnetEpochIndex/)
-  assert.match(metagraphUiSource, /const PRIMARY_VALIDATOR_UID = 0/)
-  assert.match(metagraphUiSource, /\.filter\(\(row\) => row\.uid === PRIMARY_VALIDATOR_UID \|\| !row\.isMiner\)/)
+  assert.match(metagraphUiSource, /isValidatorRosterMember\(data, hotkey, uid\)/)
   assert.match(metagraphUiSource, /const activeRows = rows\.filter\(\(row\) => row\.updated !== null && row\.updated < ACTIVE_VALIDATOR_MAX_BLOCKS\)/)
   assert.match(metagraphUiSource, /formatAmount\(activeRows\.length, 0\)\}\/\$\{formatAmount\(rows\.length, 0\)/)
   const tableHead = metagraphUiSource.slice(
@@ -420,7 +539,7 @@ class Subtensor:
     'Metagraph should render between Lab Ops and Daily Benchmark',
   )
 
-  console.log('metagraph-weight-freshness: telemetry, identity retention, freshness callouts, column order, and Lab placement passed')
+  console.log('metagraph-weight-freshness: effective stake, seven-UID roster, owner inclusion, telemetry, and UI wiring passed')
 } finally {
   globalThis.fetch = originalFetch
   if (originalPythonPath === undefined) delete process.env.PYTHON_PATH
