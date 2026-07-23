@@ -801,7 +801,10 @@ function ChampionDetailDialog({
   const [activeFile, setActiveFile] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'score' | 'code'>('score')
 
-  // Load code directly from champion data when dialog opens
+  // Resolve champion code when the dialog opens: inline codeContent when the
+  // payload carries it, otherwise LAZY-LOAD via /api/model-code (the minute
+  // refresh no longer ships champion/history code; the endpoint enforces the
+  // same evaluated-status + 24h lock).
   useEffect(() => {
     if (!champion || !isOpen) return
 
@@ -809,18 +812,38 @@ function ChampionDetailDialog({
     setCodeError(null)
     setLoadingCode(false)
     setActiveTab('score')
+    setCodeContent(null)
+    setActiveFile(null)
 
-    // Use code directly from champion data (already parsed in cache.ts)
-    if (champion.canShowCode && champion.codeContent) {
-      const code = champion.codeContent as Record<string, string>
+    const applyCode = (code: Record<string, string>) => {
       setCodeContent(code)
       const files = Object.keys(code)
-      if (files.length > 0) {
-        setActiveFile(files[0])
-      }
-    } else {
-      setCodeContent(null)
-      setActiveFile(null)
+      if (files.length > 0) setActiveFile(files[0])
+    }
+
+    if (champion.canShowCode && champion.codeContent) {
+      applyCode(champion.codeContent as Record<string, string>)
+      return
+    }
+    if (!champion.canShowCode) return
+
+    let cancelled = false
+    setLoadingCode(true)
+    fetch(`/api/model-code?modelId=${encodeURIComponent(champion.modelId)}`)
+      .then((res) => res.json())
+      .then((payload) => {
+        if (cancelled) return
+        if (payload?.success && payload.code) applyCode(payload.code)
+        else if (payload?.error) setCodeError(String(payload.error))
+      })
+      .catch(() => {
+        if (!cancelled) setCodeError('Could not load code')
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingCode(false)
+      })
+    return () => {
+      cancelled = true
     }
   }, [champion, isOpen])
 

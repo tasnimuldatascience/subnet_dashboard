@@ -335,9 +335,11 @@ async function fetchModelCompetitionData(): Promise<unknown> {
   })
 
   // Query qualification_leaderboard for today's evaluations
+  // Explicit metadata columns: code_content is never viewable for today's
+  // (<24h) models, so the every-60s refresh must not ship it.
   const { data: allModels, error: leaderboardError } = await supabase
     .from('qualification_leaderboard')
-    .select('*')
+    .select('model_id, miner_hotkey, model_name, status, score, score_breakdown, created_at, evaluated_at, is_champion')
     .limit(500)
 
   if (leaderboardError) {
@@ -360,7 +362,7 @@ async function fetchModelCompetitionData(): Promise<unknown> {
   // Fetch current champion from qualification_models (persistent, not cleared daily)
   const { data: champModel } = await supabase
     .from('qualification_models')
-    .select('id, miner_hotkey, model_name, score, score_breakdown, code_content, champion_at')
+    .select('id, miner_hotkey, model_name, score, score_breakdown, champion_at')
     .eq('is_champion', true)
     .limit(1)
     .single()
@@ -447,7 +449,6 @@ async function fetchModelCompetitionData(): Promise<unknown> {
           status: em.status,
           score: em.score,
           score_breakdown: em.score_breakdown,
-          code_content: null,
           created_at: em.created_at,
           evaluated_at: em.evaluated_at,
           is_champion: false,
@@ -464,23 +465,9 @@ async function fetchModelCompetitionData(): Promise<unknown> {
   // Map today's submissions
   const recentSubmissions = todaysModels
     .sort((a: { created_at: string }, b: { created_at: string }) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-    .map((m: { model_id: string; miner_hotkey: string; model_name: string | null; status: string; score: number | null; score_breakdown: unknown | null; code_content: unknown | null; created_at: string; evaluated_at: string | null; is_champion: boolean | null }) => {
+    .map((m: { model_id: string; miner_hotkey: string; model_name: string | null; status: string; score: number | null; score_breakdown: unknown | null; created_at: string; evaluated_at: string | null; is_champion: boolean | null }) => {
       const createdAt = new Date(m.created_at)
       const canShowCode = createdAt < twentyFourHoursAgo
-
-      // Only parse and include code_content if 24 hours have passed
-      let parsedCodeContent: Record<string, string> | null = null
-      if (canShowCode && m.code_content) {
-        try {
-          if (typeof m.code_content === 'string') {
-            parsedCodeContent = JSON.parse(m.code_content)
-          } else {
-            parsedCodeContent = m.code_content as Record<string, string>
-          }
-        } catch {
-          console.error('[Cache] Failed to parse code_content for submission:', m.model_id)
-        }
-      }
 
       return {
         id: m.model_id,
@@ -489,7 +476,8 @@ async function fetchModelCompetitionData(): Promise<unknown> {
         status: m.status,
         score: m.score,
         scoreBreakdown: m.score_breakdown,
-        codeContent: parsedCodeContent,
+        // Lazy-loaded by the dialog via /api/model-code when canShowCode.
+        codeContent: null,
         createdAt: m.created_at,
         evaluatedAt: m.evaluated_at,
         isChampion: champModel ? m.model_id === champModel.id : false,
@@ -535,9 +523,11 @@ async function fetchModelCompetitionData(): Promise<unknown> {
   // at the supabase query level so the row count stays bounded (old
   // history can grow large) and stale-row detection downstream sees a
   // clean post-cutover view.
+  // Metadata only: champion code is lazy-loaded by the dialog via
+  // /api/model-code (same 24h lock), never shipped in the minute refresh.
   const { data: championHistory, error: historyError } = await supabase
     .from('qualification_champion_history')
-    .select('*')
+    .select('model_id, miner_hotkey, model_name, score, champion_at, dethroned_at, reign_duration')
     .gt('score', 0)
     .gte('champion_at', MODEL_COMPETITION_V2_LIVE_AT)
     .order('champion_at', { ascending: false })
@@ -596,28 +586,12 @@ async function fetchModelCompetitionData(): Promise<unknown> {
     miner_hotkey: string
     model_name: string | null
     score: number
-    code_content: unknown | null
     champion_at: string
     dethroned_at: string | null
     reign_duration: string | null
   }) => {
     const championAt = new Date(c.champion_at)
     const canShowCode = championAt < twentyFourHoursAgo
-    const hasCode = c.code_content !== null
-
-    // Parse code_content if it's a JSON string
-    let parsedCodeContent: Record<string, string> | null = null
-    if (canShowCode && c.code_content) {
-      try {
-        if (typeof c.code_content === 'string') {
-          parsedCodeContent = JSON.parse(c.code_content)
-        } else {
-          parsedCodeContent = c.code_content as Record<string, string>
-        }
-      } catch {
-        console.error('[Cache] Failed to parse code_content for model:', c.model_id)
-      }
-    }
 
     return {
       modelId: c.model_id,
@@ -627,8 +601,9 @@ async function fetchModelCompetitionData(): Promise<unknown> {
       championAt: c.champion_at,
       dethronedAt: c.dethroned_at,
       reignDuration: c.reign_duration,
-      codeContent: parsedCodeContent,
-      hasCode,
+      // Lazy-loaded by the champion dialog via /api/model-code.
+      codeContent: null,
+      hasCode: canShowCode,
       canShowCode,
       scoreBreakdown: scoreBreakdownMap.get(c.model_id) || null,
     }
@@ -653,26 +628,10 @@ async function fetchModelCompetitionData(): Promise<unknown> {
       // Override history. qualification_models says this is champion.
       champEntry.dethronedAt = null
       champEntry.scoreBreakdown = champModel.score_breakdown || champEntry.scoreBreakdown
-      // Parse and set code from qualification_models if available
-      if (champModel.code_content) {
-        try {
-          const code = typeof champModel.code_content === 'string'
-            ? JSON.parse(champModel.code_content)
-            : champModel.code_content
-          champEntry.codeContent = code
-          champEntry.hasCode = true
-        } catch { /* keep existing */ }
-      }
+      // Code is lazy-loaded by the dialog via /api/model-code.
     } else {
-      // Champion not in history yet. Add it directly from qualification_models.
-      let parsedCode: Record<string, string> | null = null
-      if (champModel.code_content) {
-        try {
-          parsedCode = typeof champModel.code_content === 'string'
-            ? JSON.parse(champModel.code_content)
-            : champModel.code_content as Record<string, string>
-        } catch { /* skip */ }
-      }
+      // Champion not in history yet. Add it directly from qualification_models
+      // (metadata only; the dialog lazy-loads code via /api/model-code).
       championsList.unshift({
         modelId: champModel.id,
         minerHotkey: champModel.miner_hotkey,
@@ -681,8 +640,8 @@ async function fetchModelCompetitionData(): Promise<unknown> {
         championAt: champModel.champion_at,
         dethronedAt: null,
         reignDuration: null,
-        codeContent: parsedCode,
-        hasCode: parsedCode !== null,
+        codeContent: null,
+        hasCode: true,
         canShowCode: true,
         scoreBreakdown: champModel.score_breakdown || null,
       })

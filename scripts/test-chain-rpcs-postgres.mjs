@@ -121,8 +121,9 @@ try {
   // --- apply both migrations verbatim ---
   const migDir = resolve('supabase/migrations')
   const migs = (await readdir(migDir)).filter((f) =>
-    f.endsWith('_batch_chain_summaries.sql') || f.endsWith('_rejection_reason_histogram.sql'))
-  assert.equal(migs.length, 2, 'both migrations present')
+    f.endsWith('_batch_chain_summaries.sql') || f.endsWith('_rejection_reason_histogram.sql')
+    || f.endsWith('_fulfillment_graph_summary.sql'))
+  assert.equal(migs.length, 3, 'all three RPC migrations present')
   for (const f of migs.sort()) {
     const out = psql(['-f', join(migDir, f)])
     assert.equal(out.status, 0, `migration ${f} failed: ${out.stderr}`)
@@ -231,6 +232,19 @@ try {
   assert.equal(jsReason('role_mismatch', null), 'role_mismatch')
   assert.equal(jsReason('  ', 'wrong Location '), 'geography_mismatch')
   assert.equal(jsReason(null, null), 'not_selected')
+
+  // --- graph summary: per-(request,miner) aggregates with chain-winner override ---
+  const gs = mustSql(
+    `SELECT miner_hotkey || '=' || lead_count || ':' || win_count
+       FROM public.get_fulfillment_graph_summary(ARRAY['${A}']::uuid[]) ORDER BY miner_hotkey`,
+    'graph summary for A')
+  // Request A's rows: hkA leads L-a1(win) L-a2 L-a3 -> 3:1 ; chain winner L-b1
+  // belongs to request B, not A's base rows, so it is not a group here.
+  const gsLines = gs.split('\n').filter(Boolean)
+  assert.deepEqual(gsLines, ['hkA=3:1'], `graph summary groups: ${JSON.stringify(gsLines)}`)
+  // Oversized flood rejected before unnest.
+  const gsOver = psql(['-c', `SELECT count(*) FROM public.get_fulfillment_graph_summary(ARRAY[${flood}]::uuid[])`])
+  assert.notEqual(gsOver.status, 0, 'graph summary rejects a 101-dup flood')
 
   console.log('test-chain-rpcs-postgres: OK')
 } finally {

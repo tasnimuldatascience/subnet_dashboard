@@ -18,9 +18,9 @@ function getSupabase() {
 //  1. Leaderboard scan is now time-bounded (LEADERBOARD_WINDOW_DAYS)
 //     and capped (LEADERBOARD_ROW_LIMIT). Previously this scanned the
 //     entire `fulfillment_score_consensus` table on every cache miss.
-//  2. `allConsensus` is now bounded by CONSENSUS_ROW_LIMIT with an
-//     explicit ORDER BY computed_at DESC, so we degrade gracefully to
-//     "most recent N" rather than timing out as the table grows.
+//  2. Consensus ships as per-(request, miner) aggregates from SQL
+//     (get_fulfillment_graph_summary, 25k-row window inside the RPC);
+//     raw lead rows are served per request only when a dialog opens.
 //  3. Response includes an ETag derived from a hash of the payload.
 //     Clients sending `If-None-Match` get a 304 (no body) when nothing
 //     has changed since their last poll. This is the lightweight
@@ -38,7 +38,6 @@ function getSupabase() {
 const CACHE_TTL = 60_000
 const LEADERBOARD_WINDOW_DAYS = 7
 const LEADERBOARD_ROW_LIMIT = 10_000
-const CONSENSUS_ROW_LIMIT = 25_000
 // Only the consensus columns the response mapper reads (audited end to end).
 // Selecting these instead of '*' drops the four large JSONB columns
 // (intent_signal_mapping, intent_details, intent_breakdown,
@@ -47,11 +46,6 @@ const CONSENSUS_COLUMNS =
   'consensus_id,request_id,miner_hotkey,lead_id,consensus_final_score,' +
   'consensus_rep_score,any_fabricated,is_winner,reward_pct,computed_at,' +
   'consensus_email_verified,consensus_person_verified,consensus_company_verified'
-// The every-60s base refresh only feeds the cosmos graph and aggregate tallies,
-// which consume these fields; the full detail rows (rep score, verification
-// flags, reward) are loaded on demand per request when a dialog opens.
-const CONSENSUS_SUMMARY_COLUMNS =
-  'consensus_id,request_id,miner_hotkey,lead_id,is_winner,consensus_final_score,computed_at'
 // Detail rows for one request, cached briefly so dialog reopen/spam does not
 // re-query; bounded to keep the module map small.
 const DETAIL_CACHE_TTL = 30_000
@@ -224,82 +218,49 @@ async function fetchFulfillmentData() {
   const dbTotalWinners = totalWinnersResult.count ?? 0
   const dbTotalDelivered = totalDeliveredResult.count ?? 0
 
-  // Fetch consensus data + chain-side metadata for ALL active requests.
+  // Fetch aggregated consensus + chain-side metadata for ALL active requests.
   const allRequestIds = activeRequests.map(r => r.request_id)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let consensusData: any[] = []
+  // One row per (request, miner): every consumer of the former raw rows -- the
+  // cosmos constellation, request cards, miner directory, and stat strips --
+  // aggregates per (request, miner), so the database returns those aggregates
+  // directly (verified byte-identical to the raw-row aggregation on live data:
+  // ~10.4k raw rows -> ~715 group rows, 0 mismatches). Raw lead rows are
+  // fetched only when a request dialog opens (?requestId=...).
+  let consensusSummary: Array<{
+    request_id: string
+    miner_hotkey: string
+    lead_count: number
+    win_count: number
+    last_computed_at: string | null
+  }> = []
   if (allRequestIds.length > 0) {
-    // 1) Pull consensus rows (winners and non-winners) for visible requests
-    //    from `fulfillment_score_consensus`. `get_chain_winners` only returns
-    //    canonical winners, which would give an artificial 100% win-rate.
-    //    Capped by CONSENSUS_ROW_LIMIT with a stable ORDER BY so the response
-    //    degrades to "most recent" rather than timing out at scale.
-    // 2) Pull chain-side winners + num_leads + held_count for ALL requests in a
-    //    single RPC. Previously this fired get_chain_winners / _root_num_leads /
-    //    _held_count once per request id (3xN calls, each re-walking the same
-    //    recursive chain) — the dominant weekly PostgREST volume.
-    //    get_chain_summaries walks each chain once and returns all three per id.
-    const [scoreConsensusResult, chainSummariesResult] = await Promise.all([
-      supabase
-        .from('fulfillment_score_consensus')
-        .select(CONSENSUS_SUMMARY_COLUMNS)
-        .in('request_id', allRequestIds)
-        .order('computed_at', { ascending: false })
-        .limit(CONSENSUS_ROW_LIMIT),
+    const [graphSummaryResult, chainSummariesResult] = await Promise.all([
+      supabase.rpc('get_fulfillment_graph_summary', { p_request_ids: allRequestIds }),
       supabase.rpc('get_chain_summaries', { p_request_ids: allRequestIds }),
     ])
 
-    if (scoreConsensusResult.error) {
-      console.error('[Fulfillment API] score_consensus error:', scoreConsensusResult.error)
+    if (graphSummaryResult.error) {
+      console.error('[Fulfillment API] get_fulfillment_graph_summary error:', graphSummaryResult.error)
     }
     if (chainSummariesResult.error) {
       console.error('[Fulfillment API] get_chain_summaries error:', chainSummariesResult.error)
     }
 
-    // Reshape the one batched response into the per-request arrays downstream
-    // consumes, and derive the winner keys / lead_id map / chain-canonical rows
-    // directly from the full winner rows -- no supplemental `lead_id IN (...)`
-    // query (previously ~3.46M cumulative calls). Pure + unit-tested
-    // (scripts/test-chain-summaries.mjs).
-    const {
-      rootLeadsResults,
-      heldResults,
-      chainWinnerKeys,
-      leadIdToVisibleRid,
-      chainCanonicalRows,
-    } = reshapeChainSummaries(
+    consensusSummary = ((graphSummaryResult.data || []) as Array<Record<string, unknown>>).map(
+      (g) => ({
+        request_id: String(g.request_id),
+        miner_hotkey: String(g.miner_hotkey ?? ''),
+        lead_count: Number(g.lead_count ?? 0),
+        win_count: Number(g.win_count ?? 0),
+        last_computed_at: (g.last_computed_at as string | undefined) ?? null,
+      }),
+    )
+
+    // num_leads/held_count per request from the batched chain RPC.
+    const { rootLeadsResults, heldResults } = reshapeChainSummaries(
       allRequestIds,
       (chainSummariesResult.data || []) as ChainSummaryRow[],
     )
-
-    // Use score_consensus rows as the primary consensus dataset, with is_winner
-    // overridden by the chain-canonical set when chain data is available.
-    // Normalize column names so the client receives a stable shape regardless
-    // of whether the table uses `consensus_*` or un-prefixed column names.
-    // A non-literal .select(column list) loses supabase-js's row typing, so
-    // normalize the rows to the shape the mapper below expects.
-    const rawConsensusBase = (scoreConsensusResult.data || []) as unknown as Array<Record<string, unknown>>
-    // Merge in chain-canonical winners that aren't already represented under
-    // the visible request_id, rewriting their request_id to the visible rid
-    // so they show up in the dialog. Dedup by (visibleRid, lead_id).
-    const seenKeys = new Set<string>(
-      rawConsensusBase.map((r) => `${r.request_id}|${r.lead_id}`),
-    )
-    const supplemental: Array<Record<string, unknown>> = []
-    for (const row of chainCanonicalRows) {
-      const leadId = (row.lead_id as string | undefined) ?? ''
-      if (!leadId) continue
-      const visibleRid = leadIdToVisibleRid.get(leadId)
-      if (!visibleRid) continue
-      const key = `${visibleRid}|${leadId}`
-      if (seenKeys.has(key)) continue
-      seenKeys.add(key)
-      supplemental.push({ ...row, request_id: visibleRid })
-    }
-    const rawConsensus = [...rawConsensusBase, ...supplemental]
-    consensusData = rawConsensus.map((row) => mapConsensusRow(row, chainWinnerKeys))
-
-    // Override num_leads with chain root value and add held count.
     for (let i = 0; i < allRequestIds.length; i++) {
       const req = activeRequests.find(r => r.request_id === allRequestIds[i])
       if (req) {
@@ -310,12 +271,12 @@ async function fetchFulfillmentData() {
   }
   // Cumulative stats come from DB COUNT queries above — no row limits.
 
-  // Winner / non-winner tallies are a cheap in-memory count (no extra fetch).
+  // Winner / non-winner tallies from the aggregates (no raw-row fetch).
   let fulfilledEvaluatedCount = 0
   let unfulfilledEvaluatedCount = 0
-  for (const c of consensusData) {
-    if (c.is_winner) fulfilledEvaluatedCount++
-    else unfulfilledEvaluatedCount++
+  for (const g of consensusSummary) {
+    fulfilledEvaluatedCount += g.win_count
+    unfulfilledEvaluatedCount += g.lead_count - g.win_count
   }
   // Rejection histogram is aggregated in SQL (get_rejection_reason_histogram)
   // instead of downloading ~12.5k fulfillment_scores rows every minute and
@@ -344,7 +305,7 @@ async function fetchFulfillmentData() {
   // Fetch request details for any consensus rows whose request_id isn't in the
   // active set. This keeps the cosmos and dialogs able to resolve ICP details
   // even for older requests still referenced by recent scoring.
-  const requestIds = new Set(consensusData.map(c => c.request_id))
+  const requestIds = new Set(consensusSummary.map(g => g.request_id))
   const requestMap: Record<string, { icp_details: unknown; num_leads: number; status: string }> = {}
   if (requestIds.size > 0) {
     const { data: allRequests } = await supabase
@@ -398,7 +359,7 @@ async function fetchFulfillmentData() {
 
   return {
     activeRequests,
-    allConsensus: consensusData,
+    consensusSummary,
     minerScores: null,
     requestMap,
     rejectionBreakdown,
@@ -472,7 +433,7 @@ export async function GET(request: NextRequest) {
     }
 
     if (minerHotkey) {
-      const base = baseEntry.data as { activeRequests: unknown[]; allConsensus: unknown[]; minerScores: unknown; requestMap: Record<string, unknown>; stats: unknown }
+      const base = baseEntry.data as { activeRequests: unknown[]; consensusSummary: unknown[]; minerScores: unknown; requestMap: Record<string, unknown>; stats: unknown }
       const result = { ...base, requestMap: { ...base.requestMap } }
       const supabase = getSupabase()
       const { data: scores, error: scoresError } = await supabase

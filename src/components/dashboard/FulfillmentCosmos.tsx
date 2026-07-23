@@ -2,12 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 
-export interface CosmosConsensusLead {
+// Aggregated per-(request, miner) consensus link — the shape the layout math
+// always reduced raw lead rows to; now delivered pre-aggregated by the API so
+// the every-60s payload no longer carries raw rows.
+export interface CosmosMinerLink {
   request_id: string
   miner_hotkey: string
-  lead_id: string
-  is_winner: boolean
-  consensus_final_score?: number
+  lead_count: number
+  win_count: number
 }
 
 export interface CosmosRequest {
@@ -135,7 +137,7 @@ function renderedNodeRadius(n: GraphNode): number {
     : MINER_RADIUS + Math.min(3, (n.winCount || 0) * 0.5)
 }
 
-function computeLayout(requests: CosmosRequest[], leads: CosmosConsensusLead[]): LayoutResult {
+function computeLayout(requests: CosmosRequest[], leads: CosmosMinerLink[]): LayoutResult {
   const nodeById = new Map<string, GraphNode>()
   const edges: GraphEdge[] = []
   const clusters: IndustryCluster[] = []
@@ -226,24 +228,26 @@ function computeLayout(requests: CosmosRequest[], leads: CosmosConsensusLead[]):
     { totalLeads: number; totalWins: number; requestIds: Set<string> }
   >()
 
-  for (const lead of leads) {
-    if (!relevantRequestIds.has(lead.request_id)) continue
-    const key = `${lead.request_id}|${lead.miner_hotkey}`
+  // Links arrive pre-aggregated per (request, miner) — sum them into the same
+  // pair/miner structures the raw-row loop used to build.
+  for (const link of leads) {
+    if (!relevantRequestIds.has(link.request_id)) continue
+    const key = `${link.request_id}|${link.miner_hotkey}`
     const cur = pairAgg.get(key) || { count: 0, winCount: 0 }
-    cur.count++
-    if (lead.is_winner) cur.winCount++
+    cur.count += link.lead_count
+    cur.winCount += link.win_count
     pairAgg.set(key, cur)
 
     const info =
-      minerInfo.get(lead.miner_hotkey) || {
+      minerInfo.get(link.miner_hotkey) || {
         totalLeads: 0,
         totalWins: 0,
         requestIds: new Set<string>(),
       }
-    info.totalLeads++
-    if (lead.is_winner) info.totalWins++
-    info.requestIds.add(lead.request_id)
-    minerInfo.set(lead.miner_hotkey, info)
+    info.totalLeads += link.lead_count
+    info.totalWins += link.win_count
+    info.requestIds.add(link.request_id)
+    minerInfo.set(link.miner_hotkey, info)
   }
 
   // === 5. Place miners using gravity toward their request centroids ===
@@ -462,7 +466,7 @@ function computeLayout(requests: CosmosRequest[], leads: CosmosConsensusLead[]):
 
 interface CosmosProps {
   requests: CosmosRequest[]
-  leads: CosmosConsensusLead[]
+  leads: CosmosMinerLink[]
   visibleNodeIds?: Set<string> | null
   forceLabelIds?: Set<string> | null
   emphasizedNodeIds?: Set<string> | null
@@ -535,7 +539,7 @@ export function FulfillmentCosmos({
     const leadSig = leads
       .map(
         (l) =>
-          `${l.request_id}:${l.miner_hotkey}:${l.lead_id}:${l.is_winner ? 1 : 0}`
+          `${l.request_id}:${l.miner_hotkey}:${l.lead_count}:${l.win_count}`
       )
       .sort()
       .join('|')

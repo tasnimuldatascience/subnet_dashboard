@@ -39,12 +39,11 @@ interface ActiveRequest {
   held_count?: number
 }
 
-interface ConsensusResult {
-  consensus_id: string
+interface ConsensusSummaryRow {
   request_id: string
   miner_hotkey: string
-  lead_id: string
-  is_winner: boolean
+  lead_count: number
+  win_count: number
 }
 
 interface LeaderboardEntry {
@@ -65,7 +64,7 @@ const PENDING_STATUSES = ['pending', 'open', 'continued_open', 'commit_closed', 
 
 interface Props {
   activeRequests: ActiveRequest[]
-  allConsensus: ConsensusResult[]
+  consensusSummary: ConsensusSummaryRow[]
   leaderboard: LeaderboardEntry[]
   leaderboardWindowDays: number
   totalSubmittedLeads: number
@@ -167,7 +166,7 @@ function usePullToRefresh(
 
 export function FulfillmentMobile({
   activeRequests,
-  allConsensus,
+  consensusSummary,
   leaderboard,
   leaderboardWindowDays,
   totalSubmittedLeads,
@@ -205,14 +204,14 @@ export function FulfillmentMobile({
     // Count unique miners that have shown up in any consensus row in the
     // current snapshot. This reflects "miners actively contributing".
     const miners = new Set(
-      allConsensus.map((c) => c.miner_hotkey).filter((h): h is string => Boolean(h)),
+      consensusSummary.map((g) => g.miner_hotkey).filter((h): h is string => Boolean(h)),
     ).size
     return {
       fulfilledLeads: totalDeliveredLeads,
       miners,
       submittedLeads: totalSubmittedLeads,
     }
-  }, [allConsensus, totalDeliveredLeads, totalSubmittedLeads])
+  }, [consensusSummary, totalDeliveredLeads, totalSubmittedLeads])
 
   // Filtered + sorted request list
   const filteredRequests = useMemo(() => {
@@ -239,12 +238,12 @@ export function FulfillmentMobile({
   // Winner counts per request, used by the leads column on each card
   const winnersByRequest = useMemo(() => {
     const m = new Map<string, number>()
-    for (const c of allConsensus) {
-      if (!c.is_winner) continue
-      m.set(c.request_id, (m.get(c.request_id) || 0) + 1)
+    for (const g of consensusSummary) {
+      if (!g.win_count) continue
+      m.set(g.request_id, (m.get(g.request_id) || 0) + g.win_count)
     }
     return m
-  }, [allConsensus])
+  }, [consensusSummary])
 
   return (
     <div
