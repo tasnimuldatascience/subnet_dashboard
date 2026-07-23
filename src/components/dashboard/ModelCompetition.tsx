@@ -47,6 +47,7 @@ interface ChampionHistoryEntry {
   minerHotkey: string
   modelName: string
   score: number
+  createdAt?: string
   championAt: string
   dethronedAt: string | null
   reignDuration: string | null
@@ -708,12 +709,14 @@ function CodeViewer({
   codeContent,
   loadingCode,
   codeError,
+  onRetry,
   activeFile,
   setActiveFile,
 }: {
   codeContent: Record<string, string> | null
   loadingCode: boolean
   codeError: string | null
+  onRetry?: () => void
   activeFile: string | null
   setActiveFile: (file: string) => void
 }) {
@@ -729,8 +732,19 @@ function CodeViewer({
   if (codeError) {
     return (
       <div className="p-8 text-center">
-        <Lock className="h-6 w-6 text-amber-warm mx-auto mb-2" aria-hidden />
+        <AlertTriangle className="h-6 w-6 text-amber-warm mx-auto mb-2" aria-hidden />
         <p className="text-sm text-slate-400">{codeError}</p>
+        {onRetry && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onRetry}
+            className="mt-4 border-slate-700 bg-transparent text-slate-200 hover:bg-slate-900 hover:text-slate-100"
+          >
+            Try again
+          </Button>
+        )}
       </div>
     )
   }
@@ -800,6 +814,11 @@ function ChampionDetailDialog({
   const [codeError, setCodeError] = useState<string | null>(null)
   const [activeFile, setActiveFile] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'score' | 'code'>('score')
+  const [codeRetryNonce, setCodeRetryNonce] = useState(0)
+
+  useEffect(() => {
+    if (isOpen) setActiveTab('score')
+  }, [champion?.modelId, isOpen])
 
   // Resolve champion code when the dialog opens: inline codeContent when the
   // payload carries it, otherwise LAZY-LOAD via /api/model-code (the minute
@@ -811,7 +830,6 @@ function ChampionDetailDialog({
     // Reset state
     setCodeError(null)
     setLoadingCode(false)
-    setActiveTab('score')
     setCodeContent(null)
     setActiveFile(null)
 
@@ -830,14 +848,21 @@ function ChampionDetailDialog({
     let cancelled = false
     setLoadingCode(true)
     fetch(`/api/model-code?modelId=${encodeURIComponent(champion.modelId)}`)
-      .then((res) => res.json())
+      .then(async (res) => {
+        const payload = await res.json().catch(() => null)
+        if (!res.ok || !payload?.success) {
+          throw new Error(payload?.error || 'Could not load code')
+        }
+        return payload
+      })
       .then((payload) => {
         if (cancelled) return
-        if (payload?.success && payload.code) applyCode(payload.code)
-        else if (payload?.error) setCodeError(String(payload.error))
+        if (payload.code) applyCode(payload.code)
       })
-      .catch(() => {
-        if (!cancelled) setCodeError('Could not load code')
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setCodeError(error instanceof Error ? error.message : 'Could not load code')
+        }
       })
       .finally(() => {
         if (!cancelled) setLoadingCode(false)
@@ -845,7 +870,7 @@ function ChampionDetailDialog({
     return () => {
       cancelled = true
     }
-  }, [champion, isOpen])
+  }, [champion, isOpen, codeRetryNonce])
 
   if (!champion) return null
 
@@ -864,8 +889,6 @@ function ChampionDetailDialog({
       scoreBreakdown = champion.scoreBreakdown
     }
   }
-
-  const hasCode = champion.canShowCode && codeContent && Object.keys(codeContent).length > 0
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -946,22 +969,18 @@ function ChampionDetailDialog({
             <ScoreBreakdownTab breakdown={scoreBreakdown} score={champion.score} />
           ) : !champion.canShowCode ? (
             <CodeLockedState
-              unlockAt={new Date(new Date(champion.championAt).getTime() + CODE_UNLOCK_HOURS * 60 * 60 * 1000).toISOString()}
+              unlockAt={new Date(new Date(champion.createdAt ?? champion.championAt).getTime() + CODE_UNLOCK_HOURS * 60 * 60 * 1000).toISOString()}
               context="champion"
             />
-          ) : hasCode && codeContent && activeFile ? (
+          ) : (
             <CodeViewer
               codeContent={codeContent}
               loadingCode={loadingCode}
               codeError={codeError}
+              onRetry={() => setCodeRetryNonce((nonce) => nonce + 1)}
               activeFile={activeFile}
               setActiveFile={setActiveFile}
             />
-          ) : (
-            <div className="flex flex-col items-center justify-center py-12 text-center">
-              <Code className="h-10 w-10 text-slate-600 mb-3" aria-hidden />
-              <p className="text-sm text-slate-500">No code available</p>
-            </div>
           )}
         </div>
       </DialogContent>
@@ -1082,7 +1101,14 @@ function SubmissionDetailDialog({
 }) {
   const [activeTab, setActiveTab] = useState<'score' | 'code'>('score')
   const [codeContent, setCodeContent] = useState<Record<string, string> | null>(null)
+  const [loadingCode, setLoadingCode] = useState(false)
+  const [codeError, setCodeError] = useState<string | null>(null)
   const [activeFile, setActiveFile] = useState<string | null>(null)
+  const [codeRetryNonce, setCodeRetryNonce] = useState(0)
+
+  useEffect(() => {
+    if (isOpen) setActiveTab('score')
+  }, [submission?.id, isOpen])
 
   // Resolve code when the dialog opens: use inline codeContent if the payload
   // carries it, otherwise LAZY-LOAD from /api/model-code (the minute cache no
@@ -1092,8 +1118,9 @@ function SubmissionDetailDialog({
     if (!submission || !isOpen) return
 
     // Reset state
-    setActiveTab('score')
     setCodeContent(null)
+    setCodeError(null)
+    setLoadingCode(false)
     setActiveFile(null)
 
     const applyCode = (raw: unknown) => {
@@ -1116,19 +1143,31 @@ function SubmissionDetailDialog({
     if (!submission.canShowCode) return
 
     let cancelled = false
+    setLoadingCode(true)
     fetch(`/api/model-code?modelId=${encodeURIComponent(submission.id)}`)
-      .then((res) => res.json())
+      .then(async (res) => {
+        const payload = await res.json().catch(() => null)
+        if (!res.ok || !payload?.success) {
+          throw new Error(payload?.error || 'Could not load code')
+        }
+        return payload
+      })
       .then((payload) => {
         if (cancelled) return
-        if (payload?.success && payload.code) applyCode(payload.code)
+        if (payload.code) applyCode(payload.code)
       })
-      .catch(() => {
-        // Leave the code tab in its "unavailable" state on fetch failure.
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setCodeError(error instanceof Error ? error.message : 'Could not load code')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingCode(false)
       })
     return () => {
       cancelled = true
     }
-  }, [submission, isOpen])
+  }, [submission, isOpen, codeRetryNonce])
 
   if (!submission) return null
 
@@ -1148,8 +1187,6 @@ function SubmissionDetailDialog({
       scoreBreakdown = submission.scoreBreakdown
     }
   }
-
-  const hasCode = canShowCode && codeContent && Object.keys(codeContent).length > 0
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -1224,25 +1261,20 @@ function SubmissionDetailDialog({
         <div className="flex-1 overflow-y-auto px-5 py-4">
           {activeTab === 'score' ? (
             <ScoreBreakdownTab breakdown={scoreBreakdown} score={submission.score} />
-          ) : hasCode && codeContent && activeFile ? (
-            <CodeViewer
-              codeContent={codeContent}
-              loadingCode={false}
-              codeError={null}
-              activeFile={activeFile}
-              setActiveFile={setActiveFile}
-            />
           ) : !canShowCode ? (
             <CodeLockedState
               unlockAt={new Date(new Date(submission.createdAt).getTime() + CODE_UNLOCK_HOURS * 60 * 60 * 1000).toISOString()}
               context="submission"
             />
           ) : (
-            <div className="flex flex-col items-center justify-center py-12 text-center">
-              <Code className="h-10 w-10 text-slate-600 mb-3" aria-hidden />
-              <p className="text-sm font-medium text-slate-100">No code available</p>
-              <p className="text-xs text-slate-500 mt-1">Code is not available for this submission.</p>
-            </div>
+            <CodeViewer
+              codeContent={codeContent}
+              loadingCode={loadingCode}
+              codeError={codeError}
+              onRetry={() => setCodeRetryNonce((nonce) => nonce + 1)}
+              activeFile={activeFile}
+              setActiveFile={setActiveFile}
+            />
           )}
         </div>
       </DialogContent>

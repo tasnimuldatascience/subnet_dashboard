@@ -362,7 +362,7 @@ async function fetchModelCompetitionData(): Promise<unknown> {
   // Fetch current champion from qualification_models (persistent, not cleared daily)
   const { data: champModel } = await supabase
     .from('qualification_models')
-    .select('id, miner_hotkey, model_name, score, score_breakdown, champion_at')
+    .select('id, miner_hotkey, model_name, score, score_breakdown, champion_at, created_at')
     .eq('is_champion', true)
     .limit(1)
     .single()
@@ -555,30 +555,37 @@ async function fetchModelCompetitionData(): Promise<unknown> {
   // Previously we only built the map from (2), which is a today-only,
   // 500-row working set, so past champions almost always missed their
   // breakdown and the detail dialog showed "Score breakdown not available."
-  const scoreBreakdownMap = new Map<string, unknown>()
+  const championModelMetadata = new Map<string, { scoreBreakdown: unknown; createdAt: string }>()
   const championModelIds = champions
     .map((c: { model_id: string }) => c.model_id)
     .filter((id: string) => Boolean(id))
   if (championModelIds.length > 0) {
     const { data: pastChampModels, error: pastChampError } = await supabase
       .from('qualification_models')
-      .select('id, score_breakdown')
+      .select('id, score_breakdown, created_at')
       .in('id', championModelIds)
     if (pastChampError) {
       console.error('[Cache] Error fetching qualification_models for champions:', pastChampError)
     }
-    for (const row of (pastChampModels || []) as Array<{ id: string; score_breakdown: unknown }>) {
-      if (row.score_breakdown) {
-        scoreBreakdownMap.set(row.id, row.score_breakdown)
-      }
+    for (const row of (pastChampModels || []) as Array<{ id: string; score_breakdown: unknown; created_at: string }>) {
+      championModelMetadata.set(row.id, {
+        scoreBreakdown: row.score_breakdown,
+        createdAt: row.created_at,
+      })
     }
   }
   // Fallback: anything not found above, try the today-only leaderboard.
   for (const m of models) {
     const mid = (m as { model_id: string }).model_id
-    if (!mid || scoreBreakdownMap.has(mid)) continue
+    if (!mid || championModelMetadata.get(mid)?.scoreBreakdown) continue
     const sb = (m as { score_breakdown: unknown }).score_breakdown
-    if (sb) scoreBreakdownMap.set(mid, sb)
+    if (sb) {
+      const existing = championModelMetadata.get(mid)
+      championModelMetadata.set(mid, {
+        scoreBreakdown: sb,
+        createdAt: existing?.createdAt ?? (m as { created_at: string }).created_at,
+      })
+    }
   }
 
   const championsList = champions.map((c: {
@@ -590,14 +597,16 @@ async function fetchModelCompetitionData(): Promise<unknown> {
     dethroned_at: string | null
     reign_duration: string | null
   }) => {
-    const championAt = new Date(c.champion_at)
-    const canShowCode = championAt < twentyFourHoursAgo
+    const metadata = championModelMetadata.get(c.model_id)
+    const createdAt = metadata?.createdAt ?? c.champion_at
+    const canShowCode = new Date(createdAt) < twentyFourHoursAgo
 
     return {
       modelId: c.model_id,
       minerHotkey: c.miner_hotkey,
       modelName: c.model_name || 'Unnamed',
       score: c.score,
+      createdAt,
       championAt: c.champion_at,
       dethronedAt: c.dethroned_at,
       reignDuration: c.reign_duration,
@@ -605,7 +614,7 @@ async function fetchModelCompetitionData(): Promise<unknown> {
       codeContent: null,
       hasCode: canShowCode,
       canShowCode,
-      scoreBreakdown: scoreBreakdownMap.get(c.model_id) || null,
+      scoreBreakdown: metadata?.scoreBreakdown || null,
     }
   })
 
@@ -628,21 +637,26 @@ async function fetchModelCompetitionData(): Promise<unknown> {
       // Override history. qualification_models says this is champion.
       champEntry.dethronedAt = null
       champEntry.scoreBreakdown = champModel.score_breakdown || champEntry.scoreBreakdown
+      champEntry.createdAt = champModel.created_at
+      champEntry.canShowCode = new Date(champModel.created_at) < twentyFourHoursAgo
+      champEntry.hasCode = champEntry.canShowCode
       // Code is lazy-loaded by the dialog via /api/model-code.
     } else {
       // Champion not in history yet. Add it directly from qualification_models
       // (metadata only; the dialog lazy-loads code via /api/model-code).
+      const canShowCode = new Date(champModel.created_at) < twentyFourHoursAgo
       championsList.unshift({
         modelId: champModel.id,
         minerHotkey: champModel.miner_hotkey,
         modelName: champModel.model_name || 'Unnamed',
         score: champModel.score,
+        createdAt: champModel.created_at,
         championAt: champModel.champion_at,
         dethronedAt: null,
         reignDuration: null,
         codeContent: null,
-        hasCode: true,
-        canShowCode: true,
+        hasCode: canShowCode,
+        canShowCode,
         scoreBreakdown: champModel.score_breakdown || null,
       })
     }

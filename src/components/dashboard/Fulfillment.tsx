@@ -681,25 +681,43 @@ export function Fulfillment({ onSync }: { onSync?: () => void } = {}) {
   // The 60s payload carries per-(request, miner) aggregates only; the full
   // lead rows for a request load on demand when its dialog opens.
   const [detailLeads, setDetailLeads] = useState<ConsensusResult[] | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailError, setDetailError] = useState<string | null>(null)
+  const [detailRetryNonce, setDetailRetryNonce] = useState(0)
   useEffect(() => {
     setDetailLeads(null)
-    if (!dialogRequest) return
+    setDetailError(null)
+    if (!dialogRequest) {
+      setDetailLoading(false)
+      return
+    }
+
     let cancelled = false
+    setDetailLoading(true)
     fetch(`/api/fulfillment?requestId=${encodeURIComponent(dialogRequest.request_id)}`)
-      .then((res) => res.json())
+      .then(async (res) => {
+        const payload = await res.json().catch(() => null)
+        if (!res.ok || !payload?.success || !Array.isArray(payload.leads)) {
+          throw new Error(payload?.error || 'Could not load scored leads')
+        }
+        return payload
+      })
       .then((payload) => {
         if (cancelled) return
-        if (payload?.success && Array.isArray(payload.leads)) {
-          setDetailLeads(payload.leads as ConsensusResult[])
+        setDetailLeads(payload.leads as ConsensusResult[])
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setDetailError(error instanceof Error ? error.message : 'Could not load scored leads')
         }
       })
-      .catch(() => {
-        // Keep the summary rows on fetch failure.
+      .finally(() => {
+        if (!cancelled) setDetailLoading(false)
       })
     return () => {
       cancelled = true
     }
-  }, [dialogRequest])
+  }, [dialogRequest, detailRetryNonce])
 
   const dialogLeads = detailLeads ?? []
 
@@ -955,6 +973,9 @@ export function Fulfillment({ onSync }: { onSync?: () => void } = {}) {
       <RequestDetailDialog
         request={dialogRequest}
         leads={dialogLeads}
+        loading={detailLoading}
+        error={detailError}
+        onRetry={() => setDetailRetryNonce((nonce) => nonce + 1)}
         onOpenChange={(open) => !open && setDialogRequest(null)}
       />
 
@@ -1675,10 +1696,16 @@ function readableStatus(status: string): string {
 function RequestDetailDialog({
   request,
   leads,
+  loading,
+  error,
+  onRetry,
   onOpenChange,
 }: {
   request: ActiveRequest | null
   leads: ConsensusResult[]
+  loading: boolean
+  error: string | null
+  onRetry: () => void
   onOpenChange: (open: boolean) => void
 }) {
   const open = request !== null
@@ -1742,11 +1769,15 @@ function RequestDetailDialog({
               <>
                 <span>
                   <span className="text-slate-500">Submitted</span>{' '}
-                  <span className="text-slate-200 tabular-nums">{leads.length}</span>
+                  <span className="text-slate-200 tabular-nums">
+                    {loading || error ? '—' : leads.length}
+                  </span>
                 </span>
                 <span>
                   <span className="text-slate-500">Fulfilled</span>{' '}
-                  <span className="text-gold tabular-nums">{winners}</span>
+                  <span className="text-gold tabular-nums">
+                    {loading || error ? '—' : winners}
+                  </span>
                 </span>
               </>
             ) : (
@@ -1837,7 +1868,24 @@ function RequestDetailDialog({
         </DialogHeader>
 
         <div className="flex-1 overflow-y-auto px-5 py-3">
-          {!isFulfilled ? (
+          {loading ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <Loader2 className="h-6 w-6 animate-spin text-gold" aria-hidden />
+              <p className="mt-2 text-sm text-slate-500">Loading scored leads...</p>
+            </div>
+          ) : error ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <AlertCircle className="h-6 w-6 text-amber-warm" aria-hidden />
+              <p className="mt-2 text-sm text-slate-300">{error}</p>
+              <button
+                type="button"
+                onClick={onRetry}
+                className="mt-4 inline-flex h-8 items-center rounded border border-slate-700 px-3 text-xs font-medium text-slate-200 transition-colors hover:border-slate-600 hover:bg-slate-900"
+              >
+                Try again
+              </button>
+            </div>
+          ) : !isFulfilled ? (
             <PendingRequestBody
               heldCount={heldCount}
               requested={request.num_leads}
